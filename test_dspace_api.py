@@ -16,23 +16,28 @@ if not authenticated:
     print(f'Error logging in! Giving up.')
     exit(1)
 
-
+## Retrieve record from wos
 wos_id = "WOS:000817300200003"
-collection_id = "89c8823b-78c9-45c0-8ba8-b381922ee0a5"
+external_records = d.fetch_external_records(source="wos", query=wos_id)
+print(external_records)
+print(len(external_records))
+
+## Detect duplicate
 query = f"(itemidentifier:{str(wos_id[4:]).strip()})"
-
-
 dsos = d.search_objects(
     query=query, page=0, size=1, dso_type="item", configuration="researchoutputs"
 )
 for dso in dsos:
     print(dso.metadata.get("dc.title"))
 
+## Create workspace from external source
+collection_id = "89c8823b-78c9-45c0-8ba8-b381922ee0a5"
 response = d.create_workspaceitem_from_external_source("wos", wos_id, collection_id)
 
 workspace_id = response.get("id")
 print(workspace_id)
 
+## Update workspace item
 units = [{"acro": "SISB-AIR"}, {"acro": "SISB-SOAR"}]
 sponsorships = []
 for unit in units:
@@ -106,3 +111,6 @@ patch_operations = [
 
 update_response = d.update_workspaceitem(workspace_id, patch_operations) 
 
+## Pass workspace item to workflow
+if update_response:
+    wf_response =  d.create_workflowitem(workspace_id)
