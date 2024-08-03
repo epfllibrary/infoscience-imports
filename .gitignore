@@ -1,0 +1,38 @@
+# Ignore virtual env folder#
+###################
+**/*venv*/**
+
+# Ignore data folder#
+###################
+harvested-data/**
+marcxml-infoscience-data/**
+
+# Ignore pyinstaller build folder#
+###################
+build/**
+dist/**
+
+# Ignore archived version of notebooks and python stuffs #
+###################
+*.ipynb_checkpoints
+__pycache__
+
+# Ignore some local dev stuffs
+###################
+.scannerwork
+.log
+sonar-project.properties
+**/*test_*/**
+template.py
+**/.DS_Store
+
+
+# Ignore local windows batch files and internal documentation #
+###################
+**/*.docx
+**/*.bat
+
+# Ignore env & config files #
+###################
+**/.env
+**/config.ini

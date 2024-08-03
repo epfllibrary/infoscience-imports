@@ -1,0 +1,4 @@
+api-client
+pymarc
+itables
+python-dotenv
