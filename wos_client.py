@@ -133,6 +133,13 @@ class Client(APIClient):
             else:
                 record["doctype"] = data_doctypes
             result.append(record)
+
+            # Extract publication year
+            pub_info = x["static_data"]["summary"].get("pub_info", {})
+            pubyear = pub_info.get("pubyear")
+            if pubyear and not isinstance(pubyear, list):
+                record["pubyear"] = pubyear
+
         return result
 
     @retry_request
