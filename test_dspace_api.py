@@ -17,7 +17,7 @@ if not authenticated:
     exit(1)
 
 ## Retrieve record from wos
-wos_id = "WOS:000817300200003"
+wos_id = "WOS:000760256600001"
 external_records = d.fetch_external_records(source="wos", query=wos_id)
 print(external_records)
 print(len(external_records))
@@ -31,7 +31,7 @@ for dso in dsos:
     print(dso.metadata.get("dc.title"))
 
 ## Create workspace from external source
-collection_id = "89c8823b-78c9-45c0-8ba8-b381922ee0a5"
+collection_id = "8a8d3310-6535-4d3a-90b6-2a4428097b5b"
 response = d.create_workspaceitem_from_external_source("wos", wos_id, collection_id)
 
 workspace_id = response.get("id")
@@ -111,6 +111,12 @@ patch_operations = [
 
 update_response = d.update_workspaceitem(workspace_id, patch_operations) 
 
-## Pass workspace item to workflow
+## GET FULL TEXT FROM UPW
 if update_response:
-    wf_response =  d.create_workflowitem(workspace_id)
+    ft = d.import_unpaywall_fulltext(workspace_id)
+    if ft:
+        print("import unpaywall réussie")
+    else:
+        print("Échec de l'import unpaywall.")
+    ## PASS DRAFT TO WORKFLOW
+    wf_response = d.create_workflowitem(workspace_id)
