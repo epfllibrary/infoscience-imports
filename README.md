@@ -60,7 +60,7 @@ custom_queries = {
     "openalex": "YOUR_CUSTOM_OPENALEX_QUERY",
     "zenodo": "YOUR_CUSTOM_ZENODO_QUERY"
 }
-df_metadata, df_authors = main(start_date="2023-01-01", end_date="2023-12-31", queries=custom_queries)
+df_metadata, df_authors, df_unloaded = main(start_date="2023-01-01", end_date="2023-12-31", queries=custom_queries)
 ```
 
 ### Test the Python scripts
