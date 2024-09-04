@@ -2,7 +2,7 @@
 
 ## General workflow : Modular Python Scripts
 
-THe data pipeline is breaked down into separate Python scripts, each responsible for a specific task
+The data pipeline is breaked down into separate Python scripts, each responsible for a specific task
 
 1. **Harvesting**: Regularly fetch publications from Wos and Scopus based on a publication date range.
 2. **Deduplication**: Merge the fetched data into a single dataframe with unique dedupicated metadata.
@@ -19,19 +19,31 @@ THe data pipeline is breaked down into separate Python scripts, each responsible
 They are stored in data_pipeline folder.
 
 1. `harvester.py`: Fetch publications from different sources (Wos and Scopus for the moment). 
-   Each soure is harvested with a dedicated client,  which are runned in a `Harvester` class that can be easily extended to support multiple sources. This approach allows to separate the harvesting logic from the source-specific implementation details.
+   Each source is harvested with a dedicated client, one client by sources in the `clients` folder. They all are runned in a `Harvester` class that can be easily extended to support multiple sources. This approach allows to separate the harvesting logic from the source-specific implementation details.
 2. `deduplicator.py`: Merge and deduplicate the fetched data.
+
    The final dataframe contains following metadata :
+
    `source` : source KB (wos, scopus)
+
    `internal_id`: publication Id in the source KB (WOS:xxxx, SCOPUS_ID:xxxx)
+
    `doi`
+
    `title`
+
    `doi`
+
    `doctype`: the doctype in the source KB
+
    `pubyear`
+
    `ifs3_doctype`: the Infoscience doctype
+
    `ifs3_collection_id`: the Infoscience collection Id (depending on doctype)
+
    `authors, and affiliations`
+
 3. `enricher.py`: Enrich the authors and affiliations dataframe with local laboratory information.
 4. `integrator.py`: Push the metadata into Dspace-CRIS using the Dspace API client.
 
@@ -79,7 +91,7 @@ data_pipeline/
 
 All mappings are in `mappings.py`
 
-To create the mapping dictionary between Infoscience collection labels and Infoscience collection id
+Internal script used (one shot) to create the mapping dictionary between Infoscience collection labels and Infoscience collection id
 
 ```
 url = "https://infoscience.epfl.ch/server/api/core/collections"
