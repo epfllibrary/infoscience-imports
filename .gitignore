@@ -31,6 +31,9 @@ template.py
 ###################
 **/*.docx
 **/*.bat
+preprocessings.ipynb
+test.py
+test.csv
 
 # Ignore env & config files #
 ###################

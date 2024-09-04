@@ -1,4 +1,9 @@
 api-client
-pymarc
+fuzzywuzzy
+ipywidgets
 itables
+pandas
+plotly
 python-dotenv
+python-Levenshtein
+requests

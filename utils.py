@@ -23,6 +23,62 @@ headers = {
     'REFERER' : 'https://www.google.com/'
 }
 
+def deduplicate_dataframes(df_wos, df_scopus):
+    # Combine the two dataframes into one
+    combined_df = pd.concat([df_wos, df_scopus], ignore_index=True)
+    
+    # Create a unique identifier for rows where 'doi' is missing
+    combined_df['unique_id'] = combined_df.apply(
+        lambda row: row['doi'] if pd.notna(row['doi']) else row['title'] + str(row['pubyear']),
+        axis=1
+    )
+    
+    # Sort the combined dataframe to prioritize 'scopus' source in case of duplicates
+    combined_df.sort_values(by=['unique_id', 'source'], ascending=[True, False], inplace=True)
+    
+    # Drop duplicates based on the 'unique_id' column, keeping the first occurrence (which will be 'scopus' if duplicate exists)
+    deduplicated_df = combined_df.drop_duplicates(subset='unique_id', keep='first')
+    
+    # Drop the helper column 'unique_id' as it's no longer needed
+    deduplicated_df.drop(columns=['unique_id'], inplace=True)
+    
+    return deduplicated_df
+
+def generate_main_dataframes(df):
+    # Step 1: Add an incremental row_id to the DataFrame
+    df['row_id'] = range(1, len(df) + 1)
+    new_rows = []
+
+    # Iterate through each row in the DataFrame
+    for _, row in df.iterrows():
+        row_id = row['row_id']  # Extract the row_id
+        source = row['source']  # Extract the source
+        authors = row['authors']  # Extract the authors list
+
+        # Iterate through each dictionary in the authors list
+        for author_data in authors:
+            # Create a new row with the row_id and author data
+            new_row = {
+                'row_id': row_id,
+                'source': source,
+                'author': author_data.get('author', None),
+                'orcid_id': author_data.get('orcid_id', None),
+                'internal_author_id': author_data.get('internal_author_id', None),
+                'organizations': author_data.get('organizations', None),
+                'suborganization': author_data.get('suborganization', None)
+            }
+            # Append the new row to the list of new rows
+            new_rows.append(new_row)
+
+    # Convert the list of new rows into a new DataFrame
+    df_authors = pd.DataFrame(new_rows)
+    
+    # Step 2: Split the DataFrame into two parts
+    # Non-author columns dataframe
+    df_metadata= df.drop(columns=['authors'])
+    
+    return df_metadata, df_authors
+
 def get_doctype_mapping():
     return {
     "Article": {

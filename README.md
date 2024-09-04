@@ -1,93 +1,123 @@
-# Infoscience Imports
+# Infoscience imports documentation
+
+## General workflow : Modular Python Scripts
+
+THe data pipeline is breaked down into separate Python scripts, each responsible for a specific task
+
+1. **Harvesting**: Regularly fetch publications from Wos and Scopus based on a publication date range.
+2. **Deduplication**: Merge the fetched data into a single dataframe with unique dedupicated metadata.
+   Deduplicate on the existing publicatioins in Infoscience
+3. **Enrichment**: Separate authors and affiliations into a second dataframe and enrich it with local laboratory and author informations using api.epfl.ch 
+4. **Integration**: Push the new metadata in Infoscience using the Dspace API client to create/enrich new works and persons entities.
 
 
+**`main.py`** : acts as an orchestrator
 
-## Getting started
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+### Python scripts
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+They are stored in data_pipeline folder.
 
-## Add your files
+1. `harvester.py`: Fetch publications from different sources (Wos and Scopus for the moment). 
+   Each soure is harvested with a dedicated client,  which are runned in a `Harvester` class that can be easily extended to support multiple sources. This approach allows to separate the harvesting logic from the source-specific implementation details.
+2. `deduplicator.py`: Merge and deduplicate the fetched data.
+   The final dataframe contains following metadata :
+   `source` : source KB (wos, scopus)
+   `internal_id`: publication Id in the source KB (WOS:xxxx, SCOPUS_ID:xxxx)
+   `doi`
+   `title`
+   `doi`
+   `doctype`: the doctype in the source KB
+   `pubyear`
+   `ifs3_doctype`: the Infoscience doctype
+   `ifs3_collection_id`: the Infoscience collection Id (depending on doctype)
+   `authors, and affiliations`
+3. `enricher.py`: Enrich the authors and affiliations dataframe with local laboratory information.
+4. `integrator.py`: Push the metadata into Dspace-CRIS using the Dspace API client.
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+**`main.py`** : chains the operations.
+**Contains the deafult queries for the external sources. These default queries can be overwritten 
+
+### Test the Python scripts
+
+In `run_pipeline.ipynb`
+
+## Detailed pipeline
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.epfl.ch/infoscience-team/infoscience-imports.git
-git branch -M main
-git push -uf origin main
+data_pipeline/
+│
+├── harvester.py
+│   ├── class Harvester
+│   │   ├── def __init__(self, source_name)
+│   │   ├── def fetch_and_parse_publications(self)
+│   │   └── def harvest(self)
+│   │
+│   └── class WosHarvester(Harvester)
+│   |   ├── def __init__(self)
+│   |   └── def fetch_and_parse_publications(self)
+│   |
+│   └── class ScopusHarvester(Harvester)
+│       ├── def __init__(self)
+│       └── def fetch_and_parse_publications(self)
+│
+├── deduplicator.py
+│   ├── class DataFrameProcessor
+│       ├── def __init__(self)
+│       ├── def deduplicate_dataframes(self)
+│       └── def deduplicate_infoscience(self, df)
+|       ├── def generate_main_dataframes(self,df)
+│
+└── main.py
+    ├── def main()
+
 ```
 
-## Integrate with your tools
+### Clients
 
-- [ ] [Set up project integrations](https://gitlab.epfl.ch/infoscience-team/infoscience-imports/-/settings/integrations)
+## Mappings
 
-## Collaborate with your team
+All mappings are in `mappings.py`
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+To create the mapping dictionary between Infoscience collection labels and Infoscience collection id
 
-## Test and Deploy
+```
+url = "https://infoscience.epfl.ch/server/api/core/collections"
+params = {"page":0, "size": 25}
+response = requests.get(url, params=params).json()
+#[{"collection_uuid":x["uuid"],"entity_type":x["metadata"]["dc.title"][0]["value"]} for x in response["_embedded"]["collections"]]
+collections_mapping = {}
+for x in response["_embedded"]["collections"]:
+    collections_mapping[x["metadata"]["dc.title"][0]["value"]] = x["uuid"]
+collections_mapping
+```
 
-Use the built-in continuous integration in GitLab.
+Returns
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+```
+{'Patents': 'ce5a1b89-cfb3-40eb-bdd2-dcb021e755b7',
+ 'Projects': '49ec7e96-4645-4bc0-a015-ba4b81669bbc',
+ 'Teaching Materials': 'c7e018d4-2349-46dd-a8a4-c32cf5f5f9a1',
+ 'Images, Videos, Interactive resources, and Design': '329f8cd3-dc1a-4228-9557-b27366d71d41',
+ 'Newspaper, Magazine, or Blog post': '971cc7fa-b177-46e3-86a9-cfac93042e9d',
+ 'Funding': '8b185e36-0f99-4669-9a46-26a19d4f3eab',
+ 'Other': '0066acb2-d5c0-49a0-b273-581df34961cc',
+ 'Datasets and Code': '33a1cd32-7980-495b-a2bb-f34c478869d8',
+ 'Student works': '305e3dad-f918-48f6-9309-edbeb7cced14',
+ 'Units': 'bc85ee71-84b0-4f78-96a1-bab2c50b7ac9',
+ 'Contents': 'e8dea11e-a080-461b-82ee-6d9ab48404f3',
+ 'Virtual collections': '78f331d1-ee55-48ef-bddf-508488493c90',
+ 'EPFL thesis': '4af344ef-0fb2-4593-a234-78d57f3df621',
+ 'Reports, Documentation, and Standards': 'd5ec2987-2ee5-4754-971b-aca7ab4f9ab7',
+ 'Preprints and Working Papers': 'd8dada3a-c4bd-4c6f-a6d7-13f1b4564fa4',
+ 'Books and Book parts': '1a71fba2-2fc5-4c02-9447-f292e25ce6c1',
+ 'Persons': '6acf237a-90d7-43e2-82cf-c3591e50c719',
+ 'Events': '6e2af01f-8b92-461e-9d08-5e1961b9a97b',
+ 'Conferences, Workshops, Symposiums, and Seminars': 'e91ecd9f-56a2-4b2f-b7cc-f03e03d2643d',
+ 'Journals': '9ada82da-bb91-4414-a480-fae1a5c02d1c',
+ 'Journal articles': '8a8d3310-6535-4d3a-90b6-2a4428097b5b'}
+```
 
-***
 
-# Editing this README
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
 
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
