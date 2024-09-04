@@ -48,7 +48,20 @@ They are stored in data_pipeline folder.
 4. `integrator.py`: Push the metadata into Dspace-CRIS using the Dspace API client.
 
 **`main.py`** : chains the operations.
-**Contains the deafult queries for the external sources. These default queries can be overwritten 
+
+**Contains the default queries for the external sources. These default queries can be overwritten by passing new queries as parameter of the main function**
+
+For example :
+
+```
+custom_queries = {
+    "wos": "OG=(Your Custom Query for WOS)",
+    "scopus": "AF-ID(Your Custom Scopus ID)",
+    "openalex": "YOUR_CUSTOM_OPENALEX_QUERY",
+    "zenodo": "YOUR_CUSTOM_ZENODO_QUERY"
+}
+df_metadata, df_authors = main(start_date="2023-01-01", end_date="2023-12-31", queries=custom_queries)
+```
 
 ### Test the Python scripts
 
