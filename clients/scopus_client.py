@@ -124,7 +124,6 @@ class Client(APIClient):
         self.params = {**param_kwargs}
         return [x["dc:identifier"] for x in self.search_query(**self.params)["search-results"]["entry"]]
 
-
     @retry_decorator
     def fetch_records(self, format="digest",**param_kwargs):
         """
@@ -155,6 +154,7 @@ class Client(APIClient):
         """
         param_kwargs.setdefault('count', 10)
         param_kwargs.setdefault('start', 1)
+
         self.params = {**param_kwargs}
         result = self.search_query(**self.params)
         if int(result["search-results"]["opensearch:totalResults"]) > 0:
@@ -183,15 +183,15 @@ class Client(APIClient):
 
     def _process_fetch_records(self, format,**param_kwargs):
         if format == "digest":
-            param_kwargs.setdefault('field', "dc:identifier,prism:doi,dc:title,subtypeDescription,prism:coverDate")
+            param_kwargs.setdefault('field', "eid,dc:identifier,prism:doi,dc:title,subtypeDescription,prism:coverDate")
             self.params = param_kwargs
             return [self._extract_digest_record_info(x) for x in self.search_query(**self.params)["search-results"]["entry"]]
         elif format == "digest-ifs3":
-            param_kwargs.setdefault('field', "dc:identifier,prism:doi,dc:title,subtypeDescription,prism:coverDate")
+            param_kwargs.setdefault('field', "eid,dc:identifier,prism:doi,dc:title,subtypeDescription,prism:coverDate")
             self.params = param_kwargs
             return [self._extract_ifs3_digest_record_info(x) for x in self.search_query(**self.params)["search-results"]["entry"]]
         elif format == "ifs3":
-            param_kwargs.setdefault('field', "dc:identifier,prism:doi,dc:title,subtypeDescription,prism:coverDate,author,affiliation")
+            param_kwargs.setdefault('field', "eid,dc:identifier,prism:doi,dc:title,subtypeDescription,prism:coverDate,author,affiliation")
             self.params = param_kwargs
             return [self._extract_ifs3_record_info(x) for x in self.search_query(**self.params)["search-results"]["entry"]]
         elif format == "scopus":
@@ -215,11 +215,11 @@ class Client(APIClient):
         """
         record = {
             "source": "scopus",
-            "internal_id": x["dc:identifier"],
+            "internal_id": x["eid"],
             "doi": self._extract_doi(x),
             "title": self._extract_title(x),
-            "doctype": self._extract_first_doctype(x),            
-            "pubyear": self._extract_pubyear(x)
+            "doctype": self._extract_first_doctype(x),
+            "pubyear": self._extract_pubyear(x),
         }
         return record
 
