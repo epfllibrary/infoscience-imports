@@ -318,7 +318,8 @@ class Client(APIClient):
                     # Safely extract organizations and suborganizations
                     organization_list = address_entry.get("address_spec", {}).get("organizations", {}).get("organization", [])
                     suborganization = address_entry.get("address_spec", {}).get("suborganizations", {}).get("suborganization", None)
-
+                    if isinstance(suborganization, list):
+                        suborganization = '|'.join(suborganization)  # Join list elements with "|"
                     # Handle cases where organizations might be a single dictionary instead of a list
                     if isinstance(organization_list, dict):
                         organization_list = [organization_list]

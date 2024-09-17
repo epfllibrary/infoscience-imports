@@ -6,6 +6,7 @@
 ###################
 harvested-data/**
 marcxml-infoscience-data/**
+logs/**
 
 # Ignore pyinstaller build folder#
 ###################

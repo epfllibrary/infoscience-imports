@@ -1,5 +1,6 @@
 from .harvester import WosHarvester, ScopusHarvester
 from .deduplicator import DataFrameProcessor
+from .enricher import Processor
 import os
 import logging
 # Configure logging to display messages in the notebook

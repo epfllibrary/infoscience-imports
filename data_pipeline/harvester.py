@@ -11,17 +11,19 @@ class Harvester(abc.ABC):
     Abstract base class for harvesters.
     """
 
-    def __init__(self, source_name: str, start_date: str, end_date: str, query: str):
+    def __init__(self, source_name: str, start_date: str, end_date: str, query: str, format: str):
         """
         Initialize the harvester.
 
         :param source_name: Name of the source (e.g. WOS, Scopus)
         :param publication_date_range: Tuple of (start_date, end_date) for the publication date range
+        :param format: output format form metadata
         """
         self.source_name = source_name
         self.start_date = start_date
         self.end_date = end_date
         self.query = query
+        self.format = format
         self.logger = logging.getLogger(__name__)
 
     @abc.abstractmethod
@@ -50,14 +52,14 @@ class WosHarvester(Harvester):
     WOS Harvester.
     """
 
-    def __init__(self, start_date: str, end_date: str, query: str):
-        super().__init__("WOS", start_date, end_date, query)
+    def __init__(self, start_date: str, end_date: str, query: str, format: str = "ifs3"):
+        super().__init__("WOS", start_date, end_date, query, format)
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
         """
         Returns a pandas DataFrame containing the harvested publications.
 
-        The DataFrame includes the following columns:
+        According to the "ifs3" default param, the DataFrame includes the following columns:
         - `source`: The source database of the publication's metadata (value "wos")
         - `internal_id`: The internal ID of the publication in the source KB (WOS:xxxxx).
         - `title`: The title of the publication.
@@ -83,7 +85,7 @@ class WosHarvester(Harvester):
               f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
             )
             h_recs = WosClient.fetch_records(
-              format="ifs3",
+              format=self.format,
               usrQuery=self.query,
               count=count,
               firstRecord=i,
@@ -101,14 +103,14 @@ class ScopusHarvester(Harvester):
     Scopus Harvester.
     """
 
-    def __init__(self, start_date: str, end_date: str, query: str):
-        super().__init__("Scopus", start_date, end_date, query)
+    def __init__(self, start_date: str, end_date: str, query: str, format: str = "ifs3"):
+        super().__init__("Scopus", start_date, end_date, query, format)
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
         """
         Returns a pandas DataFrame containing the harvested publications from Scopus.
 
-        The DataFrame includes the following columns:
+        According to the "ifs3" default param, the DataFrame includes the following columns:
         - `source`: The source database of the publication's metadata (value "scopus")
         - `internal_id`: The internal ID of the publication in the source KB (SCOPUS_ID:xxxxx).
         - `title`: The title of the publication.
@@ -135,7 +137,7 @@ class ScopusHarvester(Harvester):
               f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
             )
             h_recs = ScopusClient.fetch_records(
-              format="ifs3",
+              format=self.format,
               query=updated_query,
               count=count,
               start=i

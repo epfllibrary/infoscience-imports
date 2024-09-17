@@ -19,7 +19,7 @@ class DataFrameProcessor:
         # Check for fuzzy matches against existing IDs
         for existing_id in existing_ids:
             if fuzz.token_set_ratio(title_pubyear, existing_id) > 80:  # Adjust threshold as needed
-                logging.info(
+                self.logger.info(
                  f"Déjà présente dans Infoscience {existing_ids}"
                 )
                 return existing_id  # Return the existing DOI if a match is found

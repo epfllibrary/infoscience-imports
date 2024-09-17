@@ -1,7 +1,9 @@
 api-client
 fuzzywuzzy
 ipywidgets
+ipykernel
 itables
+nameparser
 pandas
 plotly
 python-dotenv
