@@ -38,28 +38,56 @@ retry_decorator = tenacity.retry(
 @endpoint(base_url=api_epfl_base_url)
 class Endpoint:
     base = ""
-    persons = "persons?query={query}"
+    personsQuery = "persons?query={query}"
+    personsFirstnameLastname = "persons?firstname={firstname}&lastname={lastname}"
     accredsId = "accreds?persid={sciperID}"
 
 class Client(APIClient):
     @retry_decorator
-    def query_person(self, query, format="sciper"):
+    def query_person(self, query, firstname=None, lastname=None, format="sciper", use_firstname_lastname=False, firstname_lastname_request_first=False):
         logger.info(f"Initiating search for person with query: '{query}' using format: '{format}'")
-        result = self.get(Endpoint.persons.format(query=query))
-        
-        logger.debug(f"Received response for {query}: {result}")
 
-        # Process the result based on the count
-        if result["count"] == 1:
-            logger.info(f"Single record found for {query}. Processing record.")
-            return self._process_person_record(result, query, format)
-        if result["count"] == 0:
-            logger.warning(f"No record found for {query}: {result['count']} results.")
-            return "0 résultat dans api.epfl.ch"
-        elif result["count"] > 1:
-            logger.warning(f"Multiple records found for {query}: {result['count']} results.")
-            return "Plus de 1 résultat dans api.epfl.ch"
-        
+        # If first_request_first is True, attempt firstname/lastname request first
+        if firstname_lastname_request_first and use_firstname_lastname:
+            logger.info(f"Attempting personsFirstnameLastname for {firstname} {lastname}.")
+            result1 = self.get(Endpoint.personsFirstnameLastname.format(firstname=firstname, lastname=lastname))
+            logger.debug(f"Received response for {firstname} {lastname} from personsFirstnameLastname: {result1}")
+
+            logger.info(f"Attempting personsFirstnameLastname for {lastname} {firstname}.")
+            result2 = self.get(Endpoint.personsFirstnameLastname.format(firstname=lastname, lastname=firstname))
+            logger.debug(f"Received response for {lastname} {firstname} from personsFirstnameLastname: {result2}")
+
+            # Check the results
+            if result1["count"] == 1:
+                logger.info(f"Single record found for {query} in personsFirstnameLastname (first request). Processing record.")
+                return self._process_person_record(result1, query, format)
+            elif result2["count"] == 1:
+                logger.info(f"Single record found for {query} in personsFirstnameLastname (second request). Processing record.")
+                return self._process_person_record(result2, query, format)
+            elif result1["count"] > 1 or result2["count"] > 1:
+                logger.warning(f"Multiple records found for {query} in personsFirstnameLastname.")
+                return "Plus de 1 résultat dans api.epfl.ch"
+            else:
+                logger.warning(f"No valid record found for {query} in personsFirstnameLastname.")
+                return "0 résultat dans api.epfl.ch"
+
+        # If not using firstname/lastname or if the first request was not successful, make the personsQuery request
+        if not use_firstname_lastname or (not firstname_lastname_request_first):
+            logger.info(f"Attempting personsQuery for {query}.")
+            result = self.get(Endpoint.personsQuery.format(query=query))
+            logger.debug(f"Received response for {query} from personsQuery: {result}")
+
+            # Process the result based on the count
+            if result["count"] == 1:
+                logger.info(f"Single record found for {query} in personsQuery. Processing record.")
+                return self._process_person_record(result, query, format)
+            elif result["count"] == 0:
+                logger.warning(f"No record found for {query} in personsQuery: {result['count']} results.")
+                return "0 résultat dans api.epfl.ch"
+            elif result["count"] > 1:
+                logger.warning(f"Multiple records found for {query} in personsQuery: {result['count']} results.")
+                return "Plus de 1 résultat dans api.epfl.ch"
+
         logger.warning(f"No valid result found for {query}. Response: {result}")
         return None
     

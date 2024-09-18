@@ -1,11 +1,12 @@
 from .harvester import WosHarvester, ScopusHarvester
 from .deduplicator import DataFrameProcessor
 from .enricher import Processor
+from .loader import Loader
 import os
 import logging
 # Configure logging to display messages in the notebook
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-
+        
 def main(start_date="2022-01-01", end_date="2024-01-01", queries=None):
     
       # Set default queries if none provided
@@ -33,8 +34,21 @@ def main(start_date="2022-01-01", end_date="2024-01-01", queries=None):
     df_final,df_unloaded = deduplicator.deduplicate_infoscience(deduplicated_sources_df)
     # Generate main dataframes
     df_metadata, df_authors = deduplicator.generate_main_dataframes(df_final)
-    # returns the separated metadata and authors dataframe + the dataframe of unloaded duplicate publications
-    return df_metadata, df_authors, df_unloaded
+    # Generate EPFL authors enriched dataframe
+    processor = Processor(df_authors)
+    df_epfl_authors = (processor
+                        .process()
+                        .filter_epfl_authors()
+                        .clean_authors()
+                        .nameparse_authors()
+                        .api_epfl_reconciliation()
+                        .generate_dspace_uuid(return_df=True)
+                    ) 
+    return df_metadata, df_authors, df_epfl_authors, df_unloaded
+    # Create publications in Dspace
+    #Loader.create_complete_publication(df_metadata)
+    # Create or update person entities in Dspace
+    #Loader.manage_person(df_epfl_authors)
 
 if __name__ == "__main__":
     main()

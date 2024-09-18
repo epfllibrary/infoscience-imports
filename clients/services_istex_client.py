@@ -42,9 +42,9 @@ class Client(APIClient):
         -----------
         id : int
             The ID of the author (default is 1).
-        firstName : str
+        firstname : str
             The first name of the author.
-        lastName : str
+        lastname : str
             The last name of the author.
 
         Returns:
@@ -54,7 +54,7 @@ class Client(APIClient):
 
         Usage Example:
         ---------------
-        response = ServicesIstexClient.get_orcid_id(firstName="S", lastName="Forrer", id=1)
+        response = ServicesIstexClient.get_orcid_id(firstname="S", lastname="Forrer", id=1)
         """
         logger.info("Starting ORCID ID retrieval process.")
         
@@ -69,8 +69,8 @@ class Client(APIClient):
                 "id": self.params["id"],
                 "value": [
                     {
-                        "firstName": self.params["firstName"],
-                        "lastName": self.params["lastName"],
+                        "firstName": self.params["firstname"],
+                        "lastName": self.params["lastname"],
                         "affiliations": [
                             self.params["affiliation"]
                         ]
