@@ -3,6 +3,7 @@ from fuzzywuzzy import fuzz, process
 import nameparser
 import string
 from clients.api_epfl_client import ApiEpflClient
+from clients.unpaywall_client import UnpaywallClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
@@ -10,8 +11,9 @@ import time
 import mappings
 import logging
 
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-class Processor:
+class AuthorProcessor:
     """
     This class is designed to process a DataFrame containing research publications and enrich it with information about EPFL affiliations.
     It supports processing for publications from Scopus and Web of Science (WOS) sources. For each publication, it checks if the organization
@@ -30,6 +32,7 @@ class Processor:
     """
     def __init__(self, df):
         self.df = df
+        self.logger = logging.getLogger(__name__)
 
     def process(self, return_df=False):
         
@@ -103,8 +106,7 @@ class Processor:
                 firstname=firstname,
                 lastname=lastname,
                 format="sciper",
-                use_firstname_lastname=True,
-                firstname_lastname_request_first=False
+                use_firstname_lastname=True
             )
         
         # Query the ApiEpflClient for each cleaned author and store the sciper_id
@@ -113,9 +115,17 @@ class Processor:
         # Function to fetch accreditation info and store in new columns
         def fetch_accred_info(sciper_id):
             if pd.notna(sciper_id):
-                record = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="mainUnit")
-                if isinstance(record, dict) and 'unit_id' in record and 'unit_name' in record:
-                    return record['unit_id'], record['unit_name']
+                records = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="digest")
+                if isinstance(records, list):
+                    for record in records:
+                        if record.get('unit_type') == 'Laboratoire':
+                            return record['unit_id'], record['unit_name']
+                    
+                    # If no 'Laboratoire' found, return the first record
+                    self.logger.warning("No 'Laboratoire' unit_type found. Returning the first record.")
+                    first_record = records[0]  # Get the first record
+                    return first_record['unit_id'], first_record['unit_name']
+                    
             return None, None
 
         # Request ApiEpflClient.fetch_accred_by_unique_id for each row with a non-null sciper_id
@@ -137,7 +147,7 @@ class Processor:
         )
         return self.df if return_df else self
                 
-    
+    ##### Inutilisé #####################
     def services_istex_orcid_reconciliation(self, return_df=False):
         def fetch_orcid(row):
             # Request ORCID ID without condition
@@ -153,6 +163,7 @@ class Processor:
         self.df['orcid_id'] = self.df.apply(fetch_orcid, axis=1)
         return self.df if return_df else self
     
+    ##### Inutilisé #####################
     def orcid_data_reconciliation(self, return_df=False):
         
         self.df = self.df.copy()
@@ -179,7 +190,22 @@ class Processor:
 
         return self.df if return_df else self
         
+class PublicationProcessor:
+
+    def __init__(self, df):
+        self.df = df
+        self.logger = logging.getLogger(__name__)
+
+    def process(self, return_df=True):
+        self.df = self.df.copy()
         
+        for index, row in self.df.iterrows():
+            if pd.notna(row['doi']):
+                unpaywall_data = UnpaywallClient.fetch_by_doi(row['doi'], format="oa-locations")
+                self.df.at[index, 'upw_is_oa'] = unpaywall_data.get('is_oa')
+                self.df.at[index, 'upw_oa_status'] = unpaywall_data.get('oa_status')
+                self.df.at[index, 'upw_pdf_urls'] = unpaywall_data.get('pdf_urls')
+        return self.df if return_df else self      
         
         
         

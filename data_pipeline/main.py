@@ -1,6 +1,6 @@
 from .harvester import WosHarvester, ScopusHarvester
 from .deduplicator import DataFrameProcessor
-from .enricher import Processor
+from .enricher import AuthorProcessor, PublicationProcessor
 from .loader import Loader
 import os
 import logging
@@ -35,16 +35,21 @@ def main(start_date="2022-01-01", end_date="2024-01-01", queries=None):
     # Generate main dataframes
     df_metadata, df_authors = deduplicator.generate_main_dataframes(df_final)
     # Generate EPFL authors enriched dataframe
-    processor = Processor(df_authors)
-    df_epfl_authors = (processor
+    author_processor = AuthorProcessor(df_authors)
+    df_epfl_authors = (author_nameprocessor
                         .process()
                         .filter_epfl_authors()
                         .clean_authors()
                         .nameparse_authors()
                         .api_epfl_reconciliation()
                         .generate_dspace_uuid(return_df=True)
-                    ) 
-    return df_metadata, df_authors, df_epfl_authors, df_unloaded
+                    )
+    # Generate publications dataframe enriched with OA attributes
+    publication_processor = PublicationProcessor(df_metadata)
+    df_oa_metadata = (publication_nameprocessor
+                        .process(return_df=True)
+                    )
+    return df_oa_metadata, df_authors, df_epfl_authors, df_unloaded
     # Create publications in Dspace
     #Loader.create_complete_publication(df_metadata)
     # Create or update person entities in Dspace

@@ -114,7 +114,8 @@ class Loader:
 
             else:
                 logger.error(f"Failed to push publication with source: {row['source']}, internal_id: {row['internal_id']}, and collection_id: {row['collection_id']}")
-            
+    
+    ##### Do not use, only a unfinished test #########      
     def manage_person(self):
         for index, row in self.df.iterrows():
             if pd.notna(row['sciper_id']):
