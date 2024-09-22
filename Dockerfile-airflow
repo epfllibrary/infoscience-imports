@@ -1,0 +1,21 @@
+FROM apache/airflow:latest
+
+ENV _AIRFLOW_DB_MIGRATE=true
+ENV _AIRFLOW_WWW_USER_CREATE=true
+ENV _AIRFLOW_WWW_USER_USERNAME=airflow
+ENV _AIRFLOW_WWW_USER_PASSWORD=admin
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends vim curl \
+    && apt-get autoremove -yqq --purge \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --chown=airflow:root . /opt/airflow/dags/
+RUN mkdir -p /opt/airflow/dags/logs
+RUN mkdir -p /opt/airflow/dags/harvested-data
+USER airflow  
+COPY requirements.txt /
+RUN pip install -r /requirements.txt
+VOLUME ["/opt/airflow/dags"]
+ENTRYPOINT ["/usr/bin/dumb-init"]

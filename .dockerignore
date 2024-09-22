@@ -1,6 +1,10 @@
 # Ignore virtual env folder#
 ###################
-**/*venv*/**
+venv_ifs3_imports
+
+# Ignore submodules#
+###################
+dspace-rest-python
 
 # Ignore data folder#
 ###################
@@ -26,11 +30,11 @@ template.py
 ###################
 **/*.docx
 **/*.bat
-preprocessings.ipynb
+**/*.ipynb
 test.py
 test.csv
 
 # Ignore env & config files #
 ###################
-**/.env
+**/.sample.env
 **/config.ini

@@ -1,6 +1,6 @@
 # Infoscience imports documentation
 
-## General workflow : Modular Python Scripts
+## General workflow : Modular Python Scripts based on tailored Python clients
 
 The data pipeline is breaked down into separate Python scripts, each responsible for a specific task
 
@@ -8,15 +8,14 @@ The data pipeline is breaked down into separate Python scripts, each responsible
 2. **Deduplication**: Merge the fetched data into a single dataframe with unique dedupicated metadata.
    Deduplicate on the existing publicatioins in Infoscience
 3. **Enrichment**: Separate authors and affiliations into a second dataframe and enrich it with local laboratory and author informations using api.epfl.ch 
-4. **Integration**: Push the new metadata in Infoscience using the Dspace API client to create/enrich new works and persons entities.
+4. **Loading**: Push the new metadata in Infoscience using the Dspace API client to create/enrich new works and persons entities.
 
 
 **`main.py`** : acts as an orchestrator
 
-
 ### Python scripts
 
-They are stored in data_pipeline folder.
+Located in `./data_pipeline` folder.
 
 1. `harvester.py`: Fetch publications from different sources (Wos and Scopus for the moment). 
    Each source is harvested with a dedicated client, one client by sources in the `clients` folder. They all are runned in a `Harvester` class that can be easily extended to support multiple sources. This approach allows to separate the harvesting logic from the source-specific implementation details.
@@ -26,7 +25,7 @@ They are stored in data_pipeline folder.
 
    `source` : source KB (wos, scopus)
 
-   `internal_id`: publication Id in the source KB (WOS:xxxx, SCOPUS_ID:xxxx)
+   `internal_id`: publication Id in the source KB (WOS:xxxx, eid)
 
    `doi`
 
@@ -44,14 +43,22 @@ They are stored in data_pipeline folder.
 
    `authors, and affiliations`
 
-3. `enricher.py`: Enrich the authors and affiliations dataframe with local laboratory information.
-4. `integrator.py`: Push the metadata into Dspace-CRIS using the Dspace API client.
+3. `enricher.py`: Enrich the authors and affiliations dataframe with local laboratory information (for authors) and Unpaywall OA attributes (for publications).
+4. `loader.py`: Push the metadata into Dspace-CRIS using the Dspace API client.
 
-**`main.py`** : chains the operations.
+### Orchestrator 
+
+**`main.py`** in `./data_pipeline` folder : chains the operations.
 
 **Contains the default queries for the external sources. These default queries can be overwritten by passing new queries as parameter of the main function**
 
 For example :
+
+```
+df_metadata, df_authors, df_epfl_authors, df_unloaded = main(start_date="2023-01-01", end_date="2023-12-31")
+```
+
+Or
 
 ```
 custom_queries = {
@@ -60,47 +67,24 @@ custom_queries = {
     "openalex": "YOUR_CUSTOM_OPENALEX_QUERY",
     "zenodo": "YOUR_CUSTOM_ZENODO_QUERY"
 }
-df_metadata, df_authors, df_unloaded = main(start_date="2023-01-01", end_date="2023-12-31", queries=custom_queries)
-```
-
-### Test the Python scripts
-
-In `run_pipeline.ipynb`
-
-## Detailed pipeline
-
-```
-data_pipeline/
-│
-├── harvester.py
-│   ├── class Harvester
-│   │   ├── def __init__(self, source_name)
-│   │   ├── def fetch_and_parse_publications(self)
-│   │   └── def harvest(self)
-│   │
-│   └── class WosHarvester(Harvester)
-│   |   ├── def __init__(self)
-│   |   └── def fetch_and_parse_publications(self)
-│   |
-│   └── class ScopusHarvester(Harvester)
-│       ├── def __init__(self)
-│       └── def fetch_and_parse_publications(self)
-│
-├── deduplicator.py
-│   ├── class DataFrameProcessor
-│       ├── def __init__(self)
-│       ├── def deduplicate_dataframes(self)
-│       └── def deduplicate_infoscience(self, df)
-|       ├── def generate_main_dataframes(self,df)
-│
-└── main.py
-    ├── def main()
-
+df_metadata, df_authors, df_epfl_authors, df_unloaded = main(start_date="2023-01-01", end_date="2023-12-31", queries=custom_queries)
 ```
 
 ### Clients
 
-## Mappings
+Located in `./clients` folder.
+
+Each source of metadata is harvested and parsed by a specific client, before the data being processed in the python scripts.
+
+1. **wos_client_v2.py**: contains the WosClient with all methods to parse the results of the WoS search API
+2. **scopus_client_v2.py**: contains the ScopusClient with all methods to parse the results of the Scopus search API
+3. **api_epfl_client.py** : contains the ApiEpflClient for local EPFL informations retrieving (author sciper Id, accreds and units)
+4. **unpaywall_client.py** : contains the UnpaywallClient with methos to request teh Unpaywall API
+5. **dsapce_client_wrapper.py**: contains the DSpaceClientWrapper with methods to search and update objects in Dspace using the Dspace Rest Client
+
+Others : some tests with Orcid API and Istex API for managing authors names.
+
+### Mappings
 
 All mappings are in `mappings.py`
 
@@ -141,6 +125,27 @@ Returns
  'Conferences, Workshops, Symposiums, and Seminars': 'e91ecd9f-56a2-4b2f-b7cc-f03e03d2643d',
  'Journals': '9ada82da-bb91-4414-a480-fae1a5c02d1c',
  'Journal articles': '8a8d3310-6535-4d3a-90b6-2a4428097b5b'}
+```
+
+## Tests and examples
+
+**Documentation on using clients and scripts** : `documentation_and_examples.ipynb`
+
+**To test the Python scripts** : `demo_pipeline.ipynb`
+
+## Airflow
+
+### Docker installation
+
+```
+docker build . -f Dockerfile-airflow --pull --tag airflow:custom
+docker run -it --name=airflow -p 8081:8080 -v $PWD/clients:/opt/airflow/dags/clients  -v $PWD/data_pipeline:/opt/airflow/dags/data_pipeline  -v $PWD/imports_dag.py:/opt/airflow/dags/imports_dag.py -it airflow:custom airflow webserver
+docker exec -it airflow airflow scheduler
+```
+
+**Important** : la crétaion du user admin ne semble pas fonctionner depuis le Dockerfile, il faut exécuter en depuis le container
+
+```airflow users create --username admin --password admin --firstname GG --lastname GG --role Admin --email admin@example.org
 ```
 
 
