@@ -127,6 +127,15 @@ Returns
  'Journal articles': '8a8d3310-6535-4d3a-90b6-2a4428097b5b'}
 ```
 
+### Configs
+
+Some pipeline's configurations are in `config.py`
+
+- default_queries (on datasources) : queries used by the harvesters
+- source_order : order of preferred item (according datasource) for deduplicate operation
+- scopus_epfl_afids: list of structures Scopus Ids in Scopus referential (used for discriminate EPFL authors for Scopus datasource)
+- LICENSE_CONDITIONS : dict of conditions for parsing the best_oa_location from Unpaywall
+
 ## Tests and examples
 
 **Documentation on using clients and scripts** : `documentation_and_examples.ipynb`
@@ -145,7 +154,8 @@ docker exec -it airflow airflow scheduler
 
 **Important** : la crétaion du user admin ne semble pas fonctionner depuis le Dockerfile, il faut exécuter en depuis le container
 
-```airflow users create --username admin --password admin --firstname GG --lastname GG --role Admin --email admin@example.org
+```
+airflow users create --username admin --password admin --firstname GG --lastname GG --role Admin --email admin@example.org
 ```
 
 

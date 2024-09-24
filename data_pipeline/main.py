@@ -2,20 +2,14 @@ from .harvester import WosHarvester, ScopusHarvester
 from .deduplicator import DataFrameProcessor
 from .enricher import AuthorProcessor, PublicationProcessor
 from .loader import Loader
+from config import default_queries
 import os
 import logging
 # Configure logging to display messages in the notebook
 logging.basicConfig(level=logging.INFO, format='%(message)s')
         
 def main(start_date="2022-01-01", end_date="2024-01-01", queries=None):
-    
-      # Set default queries if none provided
-    default_queries = {
-        "wos": "OG=(Ecole Polytechnique Federale de Lausanne)",
-        "scopus": "AF-ID(60028186) OR AF-ID(60210159) OR AF-ID(60070536) OR AF-ID(60204330) OR AF-ID(60070531) OR AF-ID(60070534) OR AF-ID(60070538) OR AF-ID(60014951) OR AF-ID(60070529) OR AF-ID(60070532) OR AF-ID(60070535) OR AF-ID(60122563) OR AF-ID(60210160) OR AF-ID(60204331)",
-        "openalex": "OPENALEX_QUERY_HERE",  # Placeholder for OpenAlex query
-        "zenodo": "ZENODO_QUERY_HERE"      # Placeholder for Zenodo query
-    }
+
      # Merge provided queries with default queries
     if queries:
         default_queries.update(queries)

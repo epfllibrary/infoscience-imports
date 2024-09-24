@@ -8,7 +8,7 @@ from clients.dspace_client_wrapper import DSpaceClientWrapper
 from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
 import time
-import mappings
+from config import scopus_epfl_afids
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -50,7 +50,6 @@ class AuthorProcessor:
     
     
     def _process_scopus(self, text):
-        scopus_epfl_afids = mappings.scopus_epfl_afids
         return any(value in text for value in scopus_epfl_afids)
 
     def _process_wos(self, text):
@@ -201,7 +200,8 @@ class PublicationProcessor:
         
         for index, row in self.df.iterrows():
             if pd.notna(row['doi']):
-                unpaywall_data = UnpaywallClient.fetch_by_doi(row['doi'], format="oa-locations")
+                print(row['doi'])
+                unpaywall_data = UnpaywallClient.fetch_by_doi(row['doi'], format="best-oa-location")
                 self.df.at[index, 'upw_is_oa'] = unpaywall_data.get('is_oa')
                 self.df.at[index, 'upw_oa_status'] = unpaywall_data.get('oa_status')
                 self.df.at[index, 'upw_pdf_urls'] = unpaywall_data.get('pdf_urls')

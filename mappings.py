@@ -1,5 +1,4 @@
-# Define the order of the sources during the deduplication process
-source_order = ["scopus", "wos"]
+
 
 # Scopus : EPFL labs internal IDs
 scopus_epfl_afids = ["60028186","60210159","60070536","60204330","60070531",
