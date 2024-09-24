@@ -152,10 +152,10 @@ docker run -it --name=airflow -p 8081:8080 -v $PWD/clients:/opt/airflow/dags/cli
 docker exec -it airflow airflow scheduler
 ```
 
-**Important** : la crétaion du user admin ne semble pas fonctionner depuis le Dockerfile, il faut exécuter en depuis le container
+**Important** : la création du user admin ne semble pas fonctionner depuis le Dockerfile, il faut exécuter en depuis le container
 
 ```
-airflow users create --username admin --password admin --firstname GG --lastname GG --role Admin --email admin@example.org
+airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.org
 ```
 
 
