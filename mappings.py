@@ -1,10 +1,4 @@
 
-
-# Scopus : EPFL labs internal IDs
-scopus_epfl_afids = ["60028186","60210159","60070536","60204330","60070531",
-                     "60070534","60070538","60014951","60070529","60070532",
-                     "60070535","60122563","60210160","60204331"]
-
 doctypes_mapping_dict = {
     "source_wos": {
         "Article": "Journal articles",

@@ -200,7 +200,6 @@ class PublicationProcessor:
         
         for index, row in self.df.iterrows():
             if pd.notna(row['doi']):
-                print(row['doi'])
                 unpaywall_data = UnpaywallClient.fetch_by_doi(row['doi'], format="best-oa-location")
                 self.df.at[index, 'upw_is_oa'] = unpaywall_data.get('is_oa')
                 self.df.at[index, 'upw_oa_status'] = unpaywall_data.get('oa_status')
