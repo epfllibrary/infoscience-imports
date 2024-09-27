@@ -1,4 +1,4 @@
-#from dspace.client import DSpaceClient
+from dspace.client import DSpaceClient
 import logging
 import os, re
 from dotenv import load_dotenv
