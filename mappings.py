@@ -1,4 +1,3 @@
-
 doctypes_mapping_dict = {
     "source_wos": {
         "Article": "Journal articles",
@@ -53,6 +52,9 @@ doctypes_mapping_dict = {
         
     }
 }
+
+# Define the order of the sources during the deduplication process
+source_order = ["scopus", "wos"]
 
 collections_mapping = {
     "Patents": "ce5a1b89-cfb3-40eb-bdd2-dcb021e755b7",
