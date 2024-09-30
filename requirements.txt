@@ -9,3 +9,6 @@ plotly
 python-dotenv
 python-Levenshtein
 requests
+pylint
+flake8
+nbqa
