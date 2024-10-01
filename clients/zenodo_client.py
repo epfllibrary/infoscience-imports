@@ -24,7 +24,7 @@ load_dotenv(os.path.join(os.getcwd(), ".env"))
 zenodo_api_key = os.environ.get("ZENODO_API_KEY")
 
 # TODO define doctype mappings
-#accepted_doctypes = mappings.doctypes_mapping_dict["source_zenodo"].keys()
+accepted_doctypes = mappings.doctypes_mapping_dict["source_zenodo"].keys()
 
 zenodo_authentication_method = HeaderAuthentication(
     token=zenodo_api_key,

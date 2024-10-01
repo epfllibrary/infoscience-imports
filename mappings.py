@@ -50,6 +50,13 @@ doctypes_mapping_dict = {
     },
     "source_crossref": {
         
+    },
+    "source_zenodo": {
+        "Dataset": "Datasets and Code",
+        "Software": "Datasets and Code",
+        "Video/Audio": "Images, Videos, Interactive resources, and Design",
+        "Image": "Images, Videos, Interactive resources, and Design"
+
     }
 }
 
