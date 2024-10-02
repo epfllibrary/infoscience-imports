@@ -194,7 +194,7 @@ class Client(APIClient):
 
     def _process_fetch_records(self, format, **param_kwargs):
         self.params = param_kwargs
-        entries = self.search_query(**self.params)["search-results"]["entry"]
+        entries = self.search_query(**self.params)["hits"]["hits"]
         if format == "digest":
             return [self._extract_digest_record_info(x) for x in entries]
         elif format == "digest-ifs3":
@@ -223,7 +223,7 @@ class Client(APIClient):
         record = {
             "source": "zenodo",
             "internal_id": x["id"],
-            "doi": x["doi"],
+            "doi": x["doi"].lower(),
             "title": x["metadata"]["title"],
             "doctype": x["metadata"]["resource_type"]["title"],
             "pubyear": x["metadata"]["publication_date"][0:4],

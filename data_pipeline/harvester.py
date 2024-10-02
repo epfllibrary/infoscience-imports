@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
+from clients.zenodo_client import ZenodoClient
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
@@ -146,5 +147,65 @@ class ScopusHarvester(Harvester):
         # Keep only valid ifs3 doctypes
         df = (pd.DataFrame(recs)
                           .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
-                          .reset_index(drop=True)) 
+                          .reset_index(drop=True))
+        return df
+
+
+class ZenodoHarvester(Harvester):
+    """
+    Zenodo Harvester.
+    """
+
+    def __init__(self, start_date: str, end_date: str,
+                 query: str, format: str = "ifs3"):
+        super().__init__("Scopus", start_date, end_date, query, format)
+
+    def fetch_and_parse_publications(self) -> pd.DataFrame:
+        """
+        Returns a pandas DataFrame containing objeczs harvested from Zenodo.
+
+        Using the "ifs3" default format, the DataFrame includes the following:
+        - `source`: source database of the objecz's metadata (value "zenodo")
+        - `internal_id`: internal ID of the object in the source DB (xxxxx).
+        - `title`: The title of the object.
+        - `doi`: Digital Object Identifier of the object.
+        - `doctype`: type of the object (e.g., Dataset, Article, etc.).
+        - `pubyear`: year of publication.
+        - `ifs3_doctype`: IFS3 doctype of the object.
+        - `ifs3_collection_id`: IFS3 collection ID of the object.
+        - `authors`: list of creators, each represented as a dict containing:
+           - `author`
+           - `orcid_id`
+           - `internal_author_id` (empty for Zenoodo)
+           - `organizations`
+           - `suborganization`
+        """
+
+        updated_query = ' AND '.join([self.query,
+                                  f'created:[{self.start_date} TO {self.end_date}]'])
+
+        total = ZenodoClient.count_results(q=updated_query)
+        logging.info(f"- Nombre d'objets trouvées dans Zenodo: {total}")
+        if total == "0":  # Zenodo API returns 0 as string
+            logging.info("No object found. Returning an empty DataFrame.")
+            return pd.DataFrame()
+        size = 50
+        recs = []
+        print(total)
+        for i in range(0, 1+int(total)//size):
+            logging.info(
+              f"Harvest objects {i*size*(int(total)//size)+1} to {i*size*(int(total)//size)} out of a total of {total} objects"
+            )
+            h_recs = ZenodoClient.fetch_records(
+              format=self.format,
+              q=updated_query,
+              size=size,
+              page=i+1)
+            #print(i, h_recs)
+            recs.extend(h_recs)
+        # Keep only valid ifs3 doctypes, filter out unknown_doctype
+        #print(recs)
+        df = (pd.DataFrame(recs)
+                .query('ifs3_doctype != "unknown_doctype"')
+                .reset_index(drop=True))
         return df
