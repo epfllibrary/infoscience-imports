@@ -52,10 +52,15 @@ doctypes_mapping_dict = {
         
     },
     "source_zenodo": {
-        "Dataset": "Datasets and Code",
-        "Software": "Datasets and Code",
-        "Video/Audio": "Images, Videos, Interactive resources, and Design",
-        "Image": "Images, Videos, Interactive resources, and Design"
+        "dataset": "Datasets and Code",
+        "publication/article": "Journal articles",
+        "publication/book": "Books and Book parts",
+        "publication/conferencepaper": "Conferences, Workshops, Symposiums, and Seminars",
+        "publication/report": "?",
+        "image/figure": "Images, Videos, Interactive resources, and Design",
+        "image/other": "Images, Videos, Interactive resources, and Design",
+        "software": "Datasets and Code",
+        "video": "Images, Videos, Interactive resources, and Design",
 
     }
 }

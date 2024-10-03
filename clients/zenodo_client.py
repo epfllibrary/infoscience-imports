@@ -255,7 +255,12 @@ class Client(APIClient):
         return rec
 
     def _extract_first_doctype(self, x):
-        return x["metadata"]["resource_type"]["title"]
+        print(x["metadata"]["resource_type"])
+        doctype = x["metadata"]["resource_type"]["type"]
+        if 'subtype' in x["metadata"]["resource_type"]:
+            doctype += f'/{x["metadata"]["resource_type"]["subtype"]}'
+        print(doctype)
+        return doctype
 
     def _extract_ifs3_doctype(self, x):
         doctype = self._extract_first_doctype(x)
