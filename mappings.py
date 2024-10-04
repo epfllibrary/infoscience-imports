@@ -53,11 +53,23 @@ doctypes_mapping_dict = {
     },
     "source_zenodo": {
         "dataset": "Datasets and Code",
+        # "lesson": "?????",
+        # "physicalobject": "????",
+        "presentation": "Conferences, Workshops, Symposiums, and Seminars",
+        "poster": "Conferences, Workshops, Symposiums, and Seminars",
         "publication/article": "Journal articles",
         "publication/book": "Books and Book parts",
         "publication/conferencepaper": "Conferences, Workshops, Symposiums, and Seminars",
-        "publication/report": "?",
+        "publication/deliverable": "Reports",
+        "publication/journal": "Journal articles",
+        "publication/report": "Reports",
+        "publication/section": "Books and Book parts",
+        # "publication/thesis": "????",
+        "image/diagram": "Images, Videos, Interactive resources, and Design",
+        "image/drawing": "Images, Videos, Interactive resources, and Design",
         "image/figure": "Images, Videos, Interactive resources, and Design",
+        "image/photo": "Images, Videos, Interactive resources, and Design",
+        "image/plot": "Images, Videos, Interactive resources, and Design",
         "image/other": "Images, Videos, Interactive resources, and Design",
         "software": "Datasets and Code",
         "video": "Images, Videos, Interactive resources, and Design",
@@ -66,7 +78,8 @@ doctypes_mapping_dict = {
 }
 
 # Define the order of the sources during the deduplication process
-source_order = ["scopus", "wos"]
+# Zenodo should have the least priority
+source_order = ["scopus", "wos", "zenodo"]
 
 collections_mapping = {
     "Patents": "ce5a1b89-cfb3-40eb-bdd2-dcb021e755b7",
