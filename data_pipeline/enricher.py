@@ -43,6 +43,8 @@ class AuthorProcessor:
                 self.df.at[index, 'epfl_affiliation'] = self._process_scopus(row['organizations'])
             elif row['source'] == 'wos':
                 self.df.at[index, 'epfl_affiliation'] = self._process_wos(row['organizations'])
+            elif row['source'] == 'zenodo':
+                self.df.at[index, 'epfl_affiliation'] = self._process_zenodo(row['organizations'])
             else:
                 print(f"Unknown source: {row['source']}")
                 self.df.at[index, 'epfl_affiliation'] = False  # Default to False for unknown sources
@@ -51,6 +53,15 @@ class AuthorProcessor:
     
     def _process_scopus(self, text):
         return any(value in text for value in scopus_epfl_afids)
+
+    def _process_zenodo(self, text):
+        if text is None:
+            return False
+        else:
+            # TODO use the same regex as in the curation checklist
+            keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
+            return any(value in text for value in keywords)
+
 
     def _process_wos(self, text):
         keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
