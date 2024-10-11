@@ -71,7 +71,7 @@ class WosHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
-  
+
         createdTimeSpan = f"{self.start_date}+{self.end_date}"
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
@@ -96,7 +96,7 @@ class WosHarvester(Harvester):
         # keep only valid ifs3 doctypes
         df = (pd.DataFrame(recs)
                           .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
-                          .reset_index(drop=True)) 
+                          .reset_index(drop=True))
         return df
 
 class ScopusHarvester(Harvester):

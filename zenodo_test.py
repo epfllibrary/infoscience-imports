@@ -1,3 +1,5 @@
+"""quick Zenodo harvester test"""
+
 import os
 
 from data_pipeline.harvester import ZenodoHarvester
