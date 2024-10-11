@@ -1,3 +1,5 @@
+"""Zenodo client for Infoscience imports"""
+
 from apiclient import (
     APIClient,
     endpoint,
@@ -7,6 +9,7 @@ from apiclient import (
     JsonResponseHandler,
     exceptions,
 )
+
 import tenacity
 from apiclient.retrying import retry_if_api_request_error
 from typing import List, Dict
@@ -23,7 +26,6 @@ zenodo_api_base_url = "https://zenodo.org/api/"
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 zenodo_api_key = os.environ.get("ZENODO_API_KEY")
 
-# TODO define doctype mappings
 accepted_doctypes = mappings.doctypes_mapping_dict["source_zenodo"].keys()
 
 zenodo_authentication_method = HeaderAuthentication(

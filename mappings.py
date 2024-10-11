@@ -1,3 +1,5 @@
+"""Mappings of source plateform doctypes to Infoscience collections"""
+
 doctypes_mapping_dict = {
     "source_wos": {
         "Article": "Journal articles",
@@ -23,7 +25,7 @@ doctypes_mapping_dict = {
         "Review": "Journal articles",
         "Business Article": "Journal articles",
         #"Erratum": "",
-        #"Note": "",        
+        #"Note": "",
         #"Short Survey": "",
         #"Press Release": "",
         #"Other": ""
@@ -41,15 +43,15 @@ doctypes_mapping_dict = {
         "standard": "Reports, Documentation, and Standards",
         "preprint": "Preprints and Working Papers"
         #"erratum": "",
-        #"grant": "",       
+        #"grant": "",
         #"other": "",
         #"paratext": "",
         #"peer-review": "",
         #"reference-entry": "",
-        
+
     },
     "source_crossref": {
-        
+
     },
     "source_zenodo": {
         "dataset": "Datasets and Code",
