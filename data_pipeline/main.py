@@ -3,10 +3,6 @@ from .deduplicator import DataFrameProcessor
 from .enricher import AuthorProcessor, PublicationProcessor
 from .loader import Loader
 from config import default_queries
-import os
-import logging
-# Configure logging to display messages in the notebook
-logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 def main(start_date="2022-01-01", end_date="2024-01-01", queries=None):
 

@@ -1,13 +1,14 @@
 import abc
-import logging
+
 import pandas as pd
 from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
 from clients.zenodo_client import ZenodoClient
+from utils import manage_logger
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 class Harvester(abc.ABC):
+
     """
     Abstract base class for harvesters.
     """
@@ -25,7 +26,8 @@ class Harvester(abc.ABC):
         self.end_date = end_date
         self.query = query
         self.format = format
-        self.logger = logging.getLogger(__name__)
+        # Create a logger
+        self.logger = manage_logger("./logs/harvesting.log")  
 
     @abc.abstractmethod
     def fetch_and_parse_publications(self) -> pd.DataFrame:
@@ -44,7 +46,9 @@ class Harvester(abc.ABC):
         """
         self.logger.info(f"Harvesting publications from {self.source_name}...")
         publications = self.fetch_and_parse_publications()
-        self.logger.info(f"- Nombre de publications {self.source_name} avec un doctype compatible Infoscience {len(publications)}")
+        self.logger.info(
+            f"- Nombre de publications {self.source_name} avec un doctype compatible Infoscience {len(publications)}"
+        )
         return publications
 
 
@@ -71,19 +75,19 @@ class WosHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
-  
+
         createdTimeSpan = f"{self.start_date}+{self.end_date}"
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
         )
-        logging.info(f"- Nombre de publications trouvées dans le WOS: {total}")
+        self.logger.info(f"- Nombre de publications trouvées dans le WOS: {total}")
         if total == 0:
             return pd.DataFrame()
         recs = []
         count = 50
         for i in range(1, int(total), int(count)):
-            logging.info(
-              f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
+            self.logger.info(
+                f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
             )
             h_recs = WosClient.fetch_records(
               format=self.format,
@@ -122,20 +126,20 @@ class ScopusHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
-        #updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
+        # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(
                 query= updated_query
         )
-        logging.info(f"- Nombre de publications trouvées dans Scopus: {total}")
+        self.logger.info(f"- Nombre de publications trouvées dans Scopus: {total}")
         if total == "0": #scopus API returns 0 as string
-            logging.info("No publications found. Returning an empty DataFrame.")
+            self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
         count = 50
         recs = []
         for i in range(1, int(total), int(count)):
-            logging.info(
-              f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
+            self.logger.info(
+                f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
             )
             h_recs = ScopusClient.fetch_records(
               format=self.format,
@@ -185,26 +189,26 @@ class ZenodoHarvester(Harvester):
                                   f'created:[{self.start_date} TO {self.end_date}]'])
 
         total = ZenodoClient.count_results(q=updated_query)
-        logging.info(f"- Nombre d'objets trouvées dans Zenodo: {total}")
+        self.logger.info(f"- Nombre d'objets trouvées dans Zenodo: {total}")
         if total == "0":  # Zenodo API returns 0 as string
-            logging.info("No object found. Returning an empty DataFrame.")
+            self.logger.warning("No object found. Returning an empty DataFrame.")
             return pd.DataFrame()
         size = 50
         recs = []
         print(total)
         for i in range(0, 1+int(total)//size):
-            logging.info(
-              f"Harvest objects {i*size*(int(total)//size)+1} to {i*size*(int(total)//size)} out of a total of {total} objects"
+            self.logger.info(
+                f"Harvest objects {i*size*(int(total)//size)+1} to {i*size*(int(total)//size)} out of a total of {total} objects"
             )
             h_recs = ZenodoClient.fetch_records(
               format=self.format,
               q=updated_query,
               size=size,
               page=i+1)
-            #print(i, h_recs)
+            # print(i, h_recs)
             recs.extend(h_recs)
         # Keep only valid ifs3 doctypes, filter out unknown_doctype
-        #print(recs)
+        # print(recs)
         df = (pd.DataFrame(recs)
                 .query('ifs3_doctype != "unknown_doctype"')
                 .reset_index(drop=True))

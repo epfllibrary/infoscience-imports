@@ -15,6 +15,7 @@ import ast
 import os
 import traceback
 from dotenv import load_dotenv
+from utils import manage_logger
 import mappings
 
 wos_api_base_url = "https://api.clarivate.com/api/wos"
@@ -47,6 +48,8 @@ class Endpoint:
 
 
 class Client(APIClient):
+
+    logger = manage_logger("./logs/wos_client.log")
 
     @retry_request
     def search_query(self, **param_kwargs):
