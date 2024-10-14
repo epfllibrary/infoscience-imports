@@ -8,7 +8,7 @@ from clients.dspace_client_wrapper import DSpaceClientWrapper
 from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
 import time
-from config import scopus_epfl_afids
+from config import scopus_epfl_afids, unit_types
 from utils import manage_logger
 
 class AuthorProcessor:
@@ -115,12 +115,12 @@ class AuthorProcessor:
                 records = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="digest")
                 if isinstance(records, list):
                     for record in records:
-                        if record.get('unit_type') == 'Laboratoire':
+                        if record.get('unit_type') in unit_types:
                             return record['unit_id'], record['unit_name']
                     
-                    # If no 'Laboratoire' found, return the first record
-                    self.logger.warning("No 'Laboratoire' unit_type found. Returning the first record.")
-                    first_record = records[0]  # Get the first record
+                    # Si aucun type d'unité autorisé n'est trouvé, retourner le premier enregistrement
+                    self.logger.warning("No authorized unit type found. Returning the first record.")
+                    first_record = records[0]  # Obtenir le premier enregistrement
                     return first_record['unit_id'], first_record['unit_name']
                     
             return None, None

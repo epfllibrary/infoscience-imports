@@ -13,6 +13,9 @@ default_queries = {
 # Define the order of the sources during the deduplication process
 source_order = ["scopus", "wos"]
 
+# Define types of unit to retrieve from api.epfl.ch
+unit_types = ["Laboratoire", "Groupe", "Chaire"]
+
 # Scopus : EPFL labs internal IDs
 scopus_epfl_afids = ["60028186","60210159","60070536","60204330","60070531",
                      "60070534","60070538","60014951","60070529","60070532",
