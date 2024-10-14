@@ -9,9 +9,7 @@ from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
 import time
 from config import scopus_epfl_afids
-import logging
-
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+from utils import manage_logger
 
 class AuthorProcessor:
     """
@@ -32,7 +30,7 @@ class AuthorProcessor:
     """
     def __init__(self, df):
         self.df = df
-        self.logger = logging.getLogger(__name__)
+        self.logger = manage_logger("./logs/enriching_authors.log") 
 
     def process(self, return_df=False):
         
@@ -188,23 +186,26 @@ class AuthorProcessor:
                         self.df.at[index, key] = None
 
         return self.df if return_df else self
-        
+
 class PublicationProcessor:
 
     def __init__(self, df):
         self.df = df
-        self.logger = logging.getLogger(__name__)
+        self.logger = manage_logger("./logs/enriching_publications.log")
 
     def process(self, return_df=True):
         self.df = self.df.copy()
-        
+
         for index, row in self.df.iterrows():
             if pd.notna(row['doi']):
                 unpaywall_data = UnpaywallClient.fetch_by_doi(row['doi'], format="best-oa-location")
-                self.df.at[index, 'upw_is_oa'] = unpaywall_data.get('is_oa')
-                self.df.at[index, 'upw_oa_status'] = unpaywall_data.get('oa_status')
-                self.df.at[index, 'upw_pdf_urls'] = unpaywall_data.get('pdf_urls')
+                if unpaywall_data is not None:
+                    self.df.at[index, 'upw_is_oa'] = unpaywall_data.get('is_oa')
+                    self.df.at[index, 'upw_oa_status'] = unpaywall_data.get('oa_status')
+                    self.df.at[index, "upw_license"] = unpaywall_data.get("license")
+                    self.df.at[index, "upw_version"] = unpaywall_data.get("version")
+                    self.df.at[index, 'upw_pdf_urls'] = unpaywall_data.get('pdf_urls')
+                    self.df.at[index, "upw_valid_pdf"] = unpaywall_data.get("valid_pdf")
+                else:
+                    self.logger.warning(f"No unpaywall data returned for DOI {row['doi']}.")
         return self.df if return_df else self      
-        
-        
-        
