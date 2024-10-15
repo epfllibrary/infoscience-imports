@@ -121,7 +121,7 @@ class Client(APIClient):
         return self._process_unit_record(result, unit_id, format)
 
     def _process_person_record(self, record, query, format):
-        self.logger.info(
+        self.logger.debug(
             f"Processing person record for query: '{query}' with format: '{format}'"
         )
         if format == "sciper":
@@ -137,7 +137,7 @@ class Client(APIClient):
             return record
 
     def _process_accred_record(self, record, sciper_id, format):
-        self.logger.info(
+        self.logger.debug(
             f"Processing accred record for sciper_id: '{sciper_id}' with format: '{format}'"
         )
 
