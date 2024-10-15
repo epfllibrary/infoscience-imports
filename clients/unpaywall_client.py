@@ -27,6 +27,8 @@ logger = manage_logger("./logs/unpaywall_client.log")
 
 unpaywall_base_url = "https://api.unpaywall.org/v2"
 
+els_api_key = os.environ.get("ELS_API_KEY")
+
 retry_decorator = tenacity.retry(
     retry=retry_if_api_request_error(status_codes=[429]),
     wait=tenacity.wait_fixed(2),
@@ -141,37 +143,50 @@ class Client(APIClient):
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            #'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             "Accept": "application/pdf,application/x-pdf,application/octet-stream,*/*",
             "Accept-Language": "en-US,en;q=0.5",
             "Referer": "https://www.google.com/",
         }
 
-        # First, check URLs from the initial list
-        for url in urls:
-            pdf_url, filename = self._check_and_download_pdf(
-                url, doi, pdf_folder, headers
-            )
-            if pdf_url and filename:
-                return pdf_url, filename
+        # Regroupe toutes les URLs
+        all_urls = list(dict.fromkeys(urls + self._get_crossref_pdf_links(doi)))
 
-        # If no PDF found, try Crossref URLs
-        crossref_urls = self._get_crossref_pdf_links(doi)
-        for url in crossref_urls:
-            pdf_url, filename = self._check_and_download_pdf(
-                url, doi, pdf_folder, headers
-            )
-            if pdf_url and filename:
-                return pdf_url, filename
+        for url in all_urls:
+            try:
+                # Vérification de l'URL et téléchargement du PDF si valide
+                pdf_url, filename = self._check_and_download_pdf(
+                    url, doi, pdf_folder, headers
+                )
 
-        # If no PDF found after checking all URLs
-        logger.warning(f"No valid PDF found for DOI: {doi}")
+                if pdf_url and filename:
+                    # Vérification du fichier téléchargé (est-ce bien un PDF ?)
+                    if filename.lower().endswith(".pdf") and os.path.isfile(
+                        os.path.join(pdf_folder, filename)
+                    ):
+                        logger.info(f"PDF validé et téléchargé avec succès depuis {url}")
+                        return pdf_url, filename
+                    else:
+                        logger.warning(f"Fichier non valide téléchargé depuis {url}")
+            except Exception as e:
+                # Gestion des exceptions pour ne pas interrompre le processus
+                logger.error(f"Erreur lors du téléchargement de {url}: {e}")
+
+        # Si aucun PDF n'est trouvé
+        logger.warning(f"Aucun PDF valide trouvé pour le DOI: {doi}")
         return None, None
 
     def _check_and_download_pdf(
         self, url: str, doi: str, pdf_folder: str, headers: dict
     ) -> Tuple[Optional[str], Optional[str]]:
         def try_download(attempt_url):
+            # Vérification si l'URL contient "api.elsevier.com"
+            if "api.elsevier.com" in attempt_url:
+                logger.info(
+                    f"Elsevier PDF detected : {attempt_url}. Download attempt via dedicated API."
+                )
+                return self._get_elsevier_pdf(doi, els_api_key, pdf_folder)
+
+            # Processus normal pour les autres URLs
             try:
                 response = requests.get(
                     attempt_url, headers=headers, stream=True, timeout=30
@@ -218,6 +233,37 @@ class Client(APIClient):
                 file.write(chunk)
         logger.info(f"PDF successfully downloaded and saved to {file_path}")
         return url, filename
+
+    def _get_elsevier_pdf(self, doi, api_key, pdf_folder):
+        """
+        Downloads a PDF article from Elsevier's API using the DOI (Digital Object Identifier) of the article.
+
+        Parameters:
+        doi (str): The DOI of the article to download.
+        api_key (str): Your Elsevier API key for authentication.
+
+        Notes:
+        ------
+        - Make sure to replace 'your_api_key_here' with a valid Elsevier API key.
+        - The DOI should be a valid DOI for an article available in the Elsevier database.
+        """
+
+        url = f"https://api.elsevier.com/content/article/doi/{doi}"
+
+        headers = {"Accept": "application/pdf", "X-ELS-APIKey": api_key}
+
+        # Créer le dossier s'il n'existe pas
+        if not os.path.exists(pdf_folder):
+            os.makedirs(pdf_folder)
+
+        response = requests.get(url, headers=headers, stream=True, timeout=30)
+
+        if response.status_code == 200:
+            return self._download_pdf(response, url, doi, pdf_folder)
+        else:
+            logger.error(f"Error Elsevier downloading PDF : {response.status_code}")
+            logger.error(response.text)
+            return None
 
     @staticmethod
     def _get_crossref_pdf_links(doi: str) -> List[str]:
