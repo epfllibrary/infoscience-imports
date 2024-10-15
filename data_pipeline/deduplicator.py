@@ -2,16 +2,15 @@ import pandas as pd
 from fuzzywuzzy import fuzz
 from mappings import source_order
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-import logging
+from utils import manage_logger
 import re
 import string
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 class DataFrameProcessor:
     def __init__(self, *dfs):
         self.dataframes = dfs
-        self.logger = logging.getLogger(__name__)
+        self.logger = manage_logger("./logs/deduplicate.log")
 
     def clean_title(title):
         # Remove HTML tags

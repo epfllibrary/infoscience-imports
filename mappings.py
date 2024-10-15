@@ -113,5 +113,5 @@ def normalize_doctype_value(source, value):
     # print(normalize_doctype_value("source_B", "RESEARCH_PAPER"))    # Output: Article
     # print(normalize_doctype_value("source_C", "article-journal"))    # Output: Article
     # print(normalize_doctype_value("source_D", "final_report"))       # Output: Report
-    # print(normalize_doctype_value("source_A", "thesis"))  
+    # print(normalize_doctype_value("source_A", "thesis"))
     return mapping.get(source, {}).get(value, None)

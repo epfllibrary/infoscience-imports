@@ -14,6 +14,7 @@ from collections import defaultdict
 import ast
 import os
 from dotenv import load_dotenv
+from utils import manage_logger
 import mappings
 
 scopus_api_base_url = "https://api.elsevier.com/content"
@@ -48,6 +49,8 @@ class Endpoint:
 
 
 class Client(APIClient):
+
+    logger = manage_logger("./logs/scopus_client.log")
 
     @retry_request
     def search_query(self, **param_kwargs):
@@ -285,14 +288,14 @@ class Client(APIClient):
         try:
             # Ensure the input is a dictionary
             if not isinstance(x, dict):
-                print(x)
-                print("Input data must be a dictionary.")
+                self.logger.debug(x)
+                self.logger.warning(f"Input data must be a dictionary.")
                 return result  # Return an empty result
 
             # Ensure required keys are present in the input
             if "affiliation" not in x or "author" not in x:
-                print(x)
-                print("Input data must contain 'affiliation' and 'author' keys.")
+                self.logger.debug(x)
+                self.logger.warning(f"Input data must contain 'affiliation' and 'author' keys.")
                 return result  # Return an empty result
 
             # Create a dictionary to map afid to their corresponding organization name and affiliation details
@@ -301,7 +304,9 @@ class Client(APIClient):
                 try:
                     # Check if required keys are present in the affiliation
                     if "afid" not in affiliation or "affilname" not in affiliation:
-                        print("Each 'affiliation' item must contain 'afid' and 'affilname' keys.")
+                        self.logger.warning(
+                            f"Each 'affiliation' item must contain 'afid' and 'affilname' keys."
+                        )
                         continue  # Skip this affiliation and continue
 
                     # Map afid to organization
@@ -310,7 +315,7 @@ class Client(APIClient):
                     affiliation_map[afid] = organization
 
                 except KeyError as e:
-                    print(f"Skipping affiliation due to missing key: {e}")
+                    self.logger.warning(f"Skipping affiliation due to missing key: {e}")
                     continue  # Skip this affiliation and continue
 
             # Process authors
@@ -318,7 +323,7 @@ class Client(APIClient):
                 try:
                     # Check if required keys are present in the author
                     if "authname" not in author or "afid" not in author:
-                        print("Each 'author' item must contain 'authname' and 'afid' keys.")
+                        self.logger.warning(f"Each 'author' item must contain 'authname' and 'afid' keys.")
                         continue  # Skip this author and continue
 
                     # Extract author details
@@ -328,14 +333,16 @@ class Client(APIClient):
 
                     # Ensure 'afid' is a list
                     if not isinstance(author["afid"], list):
-                        print("'afid' must be a list of affiliation IDs.")
+                        self.logger.warning(
+                            f"'afid' must be a list of affiliation IDs."
+                        )
                         continue  # Skip this author and continue
 
                     # Safely map affiliations to organizations
                     try:
                         affiliations = [affiliation_map[af["$"]] for af in author["afid"]]
                     except KeyError as e:
-                        print(f"Affiliation ID {e.args[0]} not found in affiliation map.")
+                        self.logger.warning(f"Affiliation ID {e.args[0]} not found in affiliation map.")
                         continue  # Skip this author and continue
 
                     # Combine organizations
@@ -350,11 +357,11 @@ class Client(APIClient):
                     })
 
                 except KeyError as e:
-                    print(f"Skipping author due to missing key: {e}")
+                    self.logger.warning(f"Skipping author due to missing key: {e}")
                     continue  # Skip this author and continue
 
         except Exception as e:
-            print(f"An error occurred during processing: {e}")
+            self.logger.error(f"An error occurred during processing: {e}")
 
         return result
 
