@@ -1,15 +1,18 @@
+"""Metadata enrichment: processors for authors and publications"""
+
+import string
+import time
+import re
+
 import pandas as pd
 from fuzzywuzzy import fuzz, process
 import nameparser
-import string
+
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
-import time
-import re
-
 from config import scopus_epfl_afids, unit_types
 from utils import manage_logger
 
@@ -32,7 +35,7 @@ class AuthorProcessor:
     """
     def __init__(self, df):
         self.df = df
-        self.logger = manage_logger("./logs/enriching_authors.log") 
+        self.logger = manage_logger("./logs/enriching_authors.log")
 
     def process(self, return_df=False):
 
@@ -63,7 +66,9 @@ class AuthorProcessor:
 
     def _process_wos(self, text):
         keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
-        return any(process.extractOne(keyword, [text], scorer=fuzz.partial_ratio)[1] >= 80 for keyword in keywords)
+        return any(process.extractOne(keyword,
+                                     [text],
+                                     scorer=fuzz.partial_ratio)[1] >= 80 for keyword in keywords)
 
     def filter_epfl_authors(self, return_df=False):
         self.df = self.df.copy()
@@ -128,7 +133,7 @@ class AuthorProcessor:
                     for record in records:
                         if record.get('unit_type') in unit_types:
                             return record['unit_id'], record['unit_name']
-                   
+
                     # Si aucun type d'unité autorisé n'est trouvé, retourner le premier enregistrement
                     self.logger.warning("No authorized unit type found. Returning the first record.")
                     first_record = records[0]  # Obtenir le premier enregistrement
@@ -158,7 +163,8 @@ class AuthorProcessor:
     def services_istex_orcid_reconciliation(self, return_df=False):
         def fetch_orcid(row):
             # Request ORCID ID without condition
-            orcid_id = ServicesIstexClient.get_orcid_id(firstname=row['nameparse_firstname'], lastname=row['nameparse_lastname'])
+            orcid_id = ServicesIstexClient.get_orcid_id(firstname=row['nameparse_firstname'],
+                                                        lastname=row['nameparse_lastname'])
             time.sleep(5)
 
             # Update 'orcid_id' if the returned value is not None and the original is empty
@@ -219,4 +225,4 @@ class PublicationProcessor:
                     self.df.at[index, "upw_valid_pdf"] = unpaywall_data.get("valid_pdf")
                 else:
                     self.logger.warning(f"No unpaywall data returned for DOI {row['doi']}.")
-        return self.df if return_df else self      
+        return self.df if return_df else self

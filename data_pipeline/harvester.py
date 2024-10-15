@@ -27,7 +27,7 @@ class Harvester(abc.ABC):
         self.query = query
         self.format = format
         # Create a logger
-        self.logger = manage_logger("./logs/harvesting.log")  
+        self.logger = manage_logger("./logs/harvesting.log")
 
     @abc.abstractmethod
     def fetch_and_parse_publications(self) -> pd.DataFrame:
@@ -89,12 +89,11 @@ class WosHarvester(Harvester):
             self.logger.info(
                 f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
             )
-            h_recs = WosClient.fetch_records(
-              format=self.format,
-              usrQuery=self.query,
-              count=count,
-              firstRecord=i,
-              createdTimeSpan=createdTimeSpan,
+            h_recs = WosClient.fetch_records(format=self.format,
+                                             usrQuery=self.query,
+                                             count=count,
+                                             firstRecord=i,
+                                             createdTimeSpan=createdTimeSpan,
             )
             recs.extend(h_recs)
         # keep only valid ifs3 doctypes

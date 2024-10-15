@@ -1,10 +1,11 @@
+import re
+import string
+
 import pandas as pd
 from fuzzywuzzy import fuzz
 from mappings import source_order
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from utils import manage_logger
-import re
-import string
 
 
 class DataFrameProcessor:
@@ -12,7 +13,7 @@ class DataFrameProcessor:
         self.dataframes = dfs
         self.logger = manage_logger("./logs/deduplicate.log")
 
-    def clean_title(title):
+    def clean_title(self, title):
         # Remove HTML tags
         title = re.sub(r"<[^>]+>", "", title)
         # Replace non-alphanumeric characters (excluding whitespace) with spaces
@@ -22,7 +23,7 @@ class DataFrameProcessor:
         # Normalize title by converting to lowercase and removing punctuation
         title = title.lower()
         title = title.translate(str.maketrans("", "", string.punctuation))
-        return title    
+        return title
 
     def _generate_unique_ids(self, row, existing_ids):
         title = row["title"]
@@ -78,6 +79,7 @@ class DataFrameProcessor:
         combined_df.drop(columns=["dedup_keys"], inplace=True)
 
         # Sort the combined dataframe to prioritize 'scopus' and 'wos' sources in case of duplicates
+        # TODO AB should we use mappings.source_order instead of a new list?
         source_order = ["wos", "scopus"]  # Define the source order if not already done
         combined_df["source"] = pd.Categorical(
             combined_df["source"], categories=source_order, ordered=True
@@ -106,7 +108,7 @@ class DataFrameProcessor:
 
         return deduplicated_df
 
-    def deduplicate_infoscience(self,df):
+    def deduplicate_infoscience(self, df):
         """
         Deduplicate on existing Infoscience publications.
         """
