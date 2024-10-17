@@ -116,10 +116,10 @@ class DSpaceClientWrapper:
             return dsos_persons[0].uuid
         elif num_items_persons == 0:
             self.logger.warning(f"No record found for {query} in DspaceCris: {num_items_persons} results.")
-            return "0 résultat dans Dspace"
+            return "0 result on Infoscience"
         elif num_items_persons > 1:
             self.logger.warning(f"Multiple records found for {query} in DspaceCris: {num_items_persons} results.")
-            return "Plus de 1 résultat dans Dspace"
+            return "At least 1 result on Infoscience"
 
     def push_publication(self, source, wos_id, collection_id):
         try:
@@ -141,39 +141,13 @@ class DSpaceClientWrapper:
             return None
 
     def update_workspace(self, workspace_id, patch_operations):
-        try:
-            # Attempt to update the workspace item
-            update_response = self.client.update_workspaceitem(workspace_id, patch_operations)
-            if update_response:
-                self.logger.info(
-                    f"Successfully updated workspace item with ID: {workspace_id}"
-                )
+        return self.client.update_workspaceitem(workspace_id, patch_operations)
 
-                # Attempt to import Unpaywall fulltext
-                ft = self.client.import_unpaywall_fulltext(workspace_id)
-                if ft:
-                    self.logger.info("Import Unpaywall successful.")
-                else:
-                    self.logger.warning("Failed to import Unpaywall fulltext.")
+    def create_workflowitem(self, workspace_id): 
+        return self.client.create_workflowitem(workspace_id)
 
-                # Pass draft to workflow
-                wf_response = self.client.create_workflowitem(workspace_id)
-                if wf_response:
-                    self.logger.info(
-                        f"Successfully created workflow item for workspace ID: {workspace_id}"
-                    )
-                else:
-                    self.logger.error(
-                        f"Failed to create workflow item for workspace ID: {workspace_id}"
-                    )
-            else:
-                self.logger.error(
-                    f"Failed to update workspace item with ID: {workspace_id}. No response received."
-                )
-        except Exception as e:
-            self.logger.error(
-                f"An error occurred while updating the workspace: {str(e)}"
-            )
+    def upload_file_to_workspace(self, workspace_id, file_path):
+        return self.client.upload_file_to_workspace(workspace_id, file_path)
 
 
 def clean_title(title):
