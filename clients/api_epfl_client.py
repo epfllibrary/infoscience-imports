@@ -47,30 +47,62 @@ class Client(APIClient):
     logger = manage_logger("./logs/api_epfl_client.log")
 
     @retry_decorator
-    def query_person(self, query, firstname=None, lastname=None, format="sciper", use_firstname_lastname=False):
+    def query_person(
+        self,
+        query,
+        firstname=None,
+        lastname=None,
+        format="sciper",
+        use_firstname_lastname=False,
+    ):
+        """
+        Query a person's information from the API based on the provided parameters.
+
+        This function attempts to retrieve a person's details using either a general query or specific first and last names.
+        It supports retries in case of failures due to the `@retry_decorator`. The results are processed to identify a
+        unique person or the best candidate among multiple matches.
+
+        Args:
+            query (str): The search query, which can be a person's name or identifier.
+            firstname (str, optional): The person's first name. Required if `use_firstname_lastname` is True.
+            lastname (str, optional): The person's last name. Required if `use_firstname_lastname` is True.
+            format (str, optional): The format in which to return the person's details (default is "sciper").
+            use_firstname_lastname (bool, optional): A flag indicating whether to use the first and last names in the query.
+
+        Example:
+            >>> person_info = query_person(query="Doe J", firstname="John", lastname="Doe", use_firstname_lastname=True)
+            >>> print(person_info)
+        """
         self.logger.debug(
             f"Initiating search for person with query: '{query}' using format: '{format}'"
         )
-        # Initialize results
-        result1 = result2 = None
 
-        # If using firstname/lastname
+        def attempt_query(firstname, lastname):
+            """Helper function to query the API and log results."""
+            result = self.get(
+                Endpoint.personsFirstnameLastname.format(
+                    firstname=firstname, lastname=lastname
+                )
+            )
+            self.logger.debug(
+                f"Received response for {firstname} {lastname} from personsFirstnameLastname: {result}"
+            )
+            return result
+
+        # Initialize results
+        results = []
+
+        # If using firstname/lastname, perform both queries
         if use_firstname_lastname:
             self.logger.info(
                 f"Attempting personsFirstnameLastname for {firstname} {lastname}."
             )
-            result1 = self.get(Endpoint.personsFirstnameLastname.format(firstname=firstname, lastname=lastname))
-            self.logger.debug(
-                f"Received response for {firstname} {lastname} from personsFirstnameLastname: {result1}"
-            )
+            results.append(attempt_query(firstname, lastname))
 
             self.logger.info(
                 f"Attempting personsFirstnameLastname for {lastname} {firstname}."
             )
-            result2 = self.get(Endpoint.personsFirstnameLastname.format(firstname=lastname, lastname=firstname))
-            self.logger.debug(
-                f"Received response for {lastname} {firstname} from personsFirstnameLastname: {result2}"
-            )
+            results.append(attempt_query(lastname, firstname))
 
         # Always attempt personsQuery
         self.logger.info(f"Attempting personsQuery for {query}.")
@@ -78,31 +110,43 @@ class Client(APIClient):
         self.logger.debug(
             f"Received response for {query} from personsQuery: {result_query}"
         )
+        results.append(result_query)
 
         # Process results based on the count
-        if use_firstname_lastname:
-            if result1 and result1["count"] == 1:
-                self.logger.debug(
-                    f"Single record found for {query} in personsFirstnameLastname (first request). Processing record."
-                )
-                return self._process_person_record(result1, query, format)
-            elif result2 and result2["count"] == 1:
-                self.logger.debug(
-                    f"Single record found for {query} in personsFirstnameLastname (second request). Processing record."
-                )
-                return self._process_person_record(result2, query, format)
+        for result in results:
+            if result and result["count"] == 1:
+                self.logger.info(f"Single record found for {query}. Processing record.")
+                return self._process_person_record(result, query, format)
 
-        if result_query and result_query["count"] == 1:
-            self.logger.info(
-                f"Single record found for {query} in personsQuery. Processing record."
+        # Handle multiple records
+        combined_results = [
+            person for result in results if result for person in result.get("persons", [])
+        ]
+
+        if len(combined_results) > 1:
+            self.logger.warning(
+                f"Multiple records found for {query}. Attempting to identify the best candidate."
             )
-            return self._process_person_record(result_query, query, format)
-        elif (result1 and result1["count"] > 1) or (result2 and result2["count"] > 1):
-            self.logger.warning(f"Multiple records found for {query}.")
-            return "Plus de 1 résultat dans api.epfl.ch"
-        else:
-            self.logger.warning(f"No valid record found for {query}.")
-            return "0 résultat dans api.epfl.ch"
+
+            initial = query.split(" ")[1].upper() if " " in query else None
+
+            best_candidate = self._identify_best_candidate(
+                {"persons": combined_results}, lastname, initial
+            )
+
+            if best_candidate:
+                self.logger.info(f"Best candidate identified: {best_candidate['display']}")
+                return self._process_person_record(
+                    {"count": 1, "persons": [best_candidate]}, query, format
+                )
+            else:
+                self.logger.warning(
+                    "No suitable candidate found among the multiple records."
+                )
+                return "More than 1 result in api.epfl.ch"
+
+        # If no records found
+        self.logger.warning(f"No valid record found for {query}.")
 
     @retry_decorator
     def fetch_accred_by_unique_id(self, sciper_id: str, format="digest"):
@@ -201,6 +245,44 @@ class Client(APIClient):
         except (AttributeError, TypeError):
             self.logger.warning("Missing 'unittype' or 'label' in the record.")
         return unit_type
+
+    def _identify_best_candidate(self, results, lastname, initial=None):
+        """
+        Identifies the best candidate from the list of results based on the last name
+        and an optional initial of the first name.
+
+        :param results: List of person records returned from the API.
+        :param lastname: Last name to match against.
+        :param initial: Initial of the first name to match against (optional).
+        :return: The best candidate record or None if no match is found.
+        """
+        candidates = []
+
+        for person in results["persons"]:
+            if person["lastname"].lower() == lastname.lower():
+                if initial:
+                    # Check if the initial matches
+                    if person["firstname"].startswith(initial.upper()):
+                        candidates.append(person)
+                else:
+                    # No initial provided, consider all matches
+                    candidates.append(person)
+
+        # Return the best candidate based on additional criteria, if necessary
+        if candidates:
+            if len(candidates) == 1:
+                return candidates[0]  # Only one candidate found
+            else:
+                # If multiple candidates, apply further logic to determine the best candidate
+                # For this example, we can prioritize based on some custom logic, such as:
+                # 1. Prioritize based on the presence of an email
+                # 2. Prioritize based on known affiliations or roles
+                best_candidate = max(
+                    candidates, key=lambda x: ("email" in x) + ("org" in x)
+                )
+                return best_candidate
+
+        return None
 
 
 ApiEpflClient = Client(
