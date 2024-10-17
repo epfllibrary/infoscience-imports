@@ -53,15 +53,13 @@ class AuthorProcessor:
     def _process_wos(self, text):
         keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
         return any(process.extractOne(keyword, [text], scorer=fuzz.partial_ratio)[1] >= 80 for keyword in keywords)
-    
+
     def filter_epfl_authors(self,return_df=False):
         self.df = self.df.copy()
-        
         self.df = self.df[self.df['epfl_affiliation']]
         return self.df if return_df else self
-    
+
     def clean_authors(self, return_df=False):
-        
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
         # Function to clean author names
         def clean_author(author):
@@ -72,10 +70,9 @@ class AuthorProcessor:
 
         # Apply the cleaning function to the 'authors' column
         self.df['author_cleaned'] = self.df['author'].apply(clean_author)
-        
+
         return self.df if return_df else self
     
-            
     def nameparse_authors(self, return_df=False):
         parser = nameparser.HumanName               
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary        
@@ -86,29 +83,35 @@ class AuthorProcessor:
             lambda row: parser(row['author']).last if row['epfl_affiliation'] else None, axis=1
         )        
         return self.df if return_df else self
-    
+
     def api_epfl_reconciliation(self, return_df=False):
-        
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
-        
+
         def query_person(row):
             # Construct the query from the 'author_cleaned' column
-            query = row['author_cleaned']
-            firstname = row['nameparse_firstname']
-            lastname = row['nameparse_lastname']
-            
+            query = row["author_cleaned"]
+            firstname = row["nameparse_firstname"]
+            if firstname:
+                firstname = firstname.rstrip(string.punctuation)
+            lastname = row["nameparse_lastname"]
+
             # Call the query_person method with the appropriate parameters
             return ApiEpflClient.query_person(
                 query=query,
                 firstname=firstname,
                 lastname=lastname,
                 format="sciper",
-                use_firstname_lastname=True
+                use_firstname_lastname=True,
             )
-        
+
         # Query the ApiEpflClient for each cleaned author and store the sciper_id
-        self.df.loc[:, 'sciper_id'] = self.df['author_cleaned'].apply(ApiEpflClient.query_person)
-        
+        # Pass the entire row to the query_person function
+        self.df["sciper_id"] = self.df.apply(query_person, axis=1)
+
+        # Optionally return the modified DataFrame if required
+        if return_df:
+            return self.df
+
         # Function to fetch accreditation info and store in new columns
         def fetch_accred_info(sciper_id):
             if pd.notna(sciper_id):
@@ -117,21 +120,17 @@ class AuthorProcessor:
                     for record in records:
                         if record.get('unit_type') in unit_types:
                             return record['unit_id'], record['unit_name']
-                    
                     # Si aucun type d'unité autorisé n'est trouvé, retourner le premier enregistrement
                     self.logger.warning("No authorized unit type found. Returning the first record.")
                     first_record = records[0]  # Obtenir le premier enregistrement
                     return first_record['unit_id'], first_record['unit_name']
-                    
             return None, None
 
         # Request ApiEpflClient.fetch_accred_by_unique_id for each row with a non-null sciper_id
         self.df[['epfl_api_mainunit_id', 'epfl_api_mainunit_name']] = self.df['sciper_id'].apply(
             lambda sciper_id: fetch_accred_info(sciper_id)
         ).apply(pd.Series)
-        
         return self.df if return_df else self
-    
 
     def generate_dspace_uuid(self, return_df=False):
         self.df = self.df.copy()
@@ -143,7 +142,7 @@ class AuthorProcessor:
             axis=1
         )
         return self.df if return_df else self
-                
+
     ##### Inutilisé #####################
     def services_istex_orcid_reconciliation(self, return_df=False):
         def fetch_orcid(row):
@@ -159,18 +158,15 @@ class AuthorProcessor:
         # Fill the 'orcid_id' column with the fetched ORCID IDs where applicable
         self.df['orcid_id'] = self.df.apply(fetch_orcid, axis=1)
         return self.df if return_df else self
-    
+
     ##### Inutilisé #####################
     def orcid_data_reconciliation(self, return_df=False):
-        
         self.df = self.df.copy()
-        
         for index, row in self.df.iterrows():
             orcid_id = row['orcid_id']
             if pd.notna(orcid_id) and "|" not in orcid_id:
                 print(row)
                 response = OrcidClient.fetch_record_by_unique_id(orcid_id)
-                
                 if isinstance(response, dict):
                     for key, value in response.items():
                         if key != "orcid_id":  # Skip the orcid_id key
