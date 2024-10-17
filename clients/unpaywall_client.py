@@ -163,16 +163,16 @@ class Client(APIClient):
                     if filename.lower().endswith(".pdf") and os.path.isfile(
                         os.path.join(pdf_folder, filename)
                     ):
-                        logger.info(f"PDF validé et téléchargé avec succès depuis {url}")
+                        logger.info(f"PDF file successfully downloaded from {url}")
                         return pdf_url, filename
                     else:
-                        logger.warning(f"Fichier non valide téléchargé depuis {url}")
+                        logger.warning(f"Not valid file downloaded from {url}")
             except Exception as e:
                 # Gestion des exceptions pour ne pas interrompre le processus
-                logger.error(f"Erreur lors du téléchargement de {url}: {e}")
+                logger.error(f"Error downloading {url}: {e}")
 
         # Si aucun PDF n'est trouvé
-        logger.warning(f"Aucun PDF valide trouvé pour le DOI: {doi}")
+        logger.warning(f"No PDF file found for DOI: {doi}")
         return None, None
 
     def _check_and_download_pdf(
