@@ -3,22 +3,22 @@
 doctypes_mapping_dict = {
     "source_wos": {
         "Article": "Journal articles",
-        "Book Chapter": "Books and Book parts",
-        "Book": "Books and Book parts",
+        # "Book Chapter": "Books and Book parts",
+        # "Book": "Books and Book parts",
         # "Correction": "Journal articles",
         "Editorial Material":"Journal articles",
         "Letter": "Journal articles",
         # "Meeting Abstract": "Conferences, Workshops, Symposiums, and Seminars",
-        "Proceedings Paper": "Conferences, Workshops, Symposiums, and Seminars",
+        # "Proceedings Paper": "Conferences, Workshops, Symposiums, and Seminars",
         "Review": "Journal articles"
     },
     "source_scopus": {
         "Article": "Journal articles",
         "Article in Press": "Journal articles",
-        "Book": "Books and Book parts",
-        "Chapter": "Books and Book parts",
-        "Conference Paper": "Conferences, Workshops, Symposiums, and Seminars",
-        "Conference Review": "Conferences, Workshops, Symposiums, and Seminars",
+        # "Book": "Books and Book parts",
+        # "Chapter": "Books and Book parts",
+        # "Conference Paper": "Conferences, Workshops, Symposiums, and Seminars",
+        # "Conference Review": "Conferences, Workshops, Symposiums, and Seminars",
         "Data Paper": "Journal articles",  #?
         "Editorial": "Journal articles",
         "Letter": "Journal articles",
@@ -105,6 +105,62 @@ collections_mapping = {
     "Conferences, Workshops, Symposiums, and Seminars": "e91ecd9f-56a2-4b2f-b7cc-f03e03d2643d",
     "Journals": "9ada82da-bb91-4414-a480-fae1a5c02d1c",
     "Journal articles": "8a8d3310-6535-4d3a-90b6-2a4428097b5b",
+}
+
+# Mappings pour les licenses
+licenses_mapping = {
+    "cc-by": {
+        "value": "CC BY",
+        "display": "Creative Commons Attribution",
+    },
+    "cc-by-sa": {
+        "value": "CC BY-SA",
+        "display": "Creative Commons Attribution-ShareAlike",
+    },
+    "cc-by-nd": {
+        "value": "CC BY-ND",
+        "display": "Creative Commons Attribution-NoDerivatives",
+    },
+    "cc-by-nc": {
+        "value": "CC BY-NC",
+        "display": "Creative Commons Attribution-NoDerivs",
+    },
+    "cc-by-nc-sa": {
+        "value": "CC BY-NC-SA",
+        "display": "Creative Commons Attribution-NonCommercial-ShareAlike",
+    },
+    "cc-by-nc-nd": {
+        "value": "CC BY-NC-ND",
+        "display": "Creative Commons Attribution-NonCommercial-NoDerivs",
+    },
+    "public-domain": {
+        "value": "PDM",
+        "display": "Creative Commons Attribution-NonCommercial-NoDerivs",
+    },
+    "NA": {
+        "value": "N/A",
+        "display": "N/A (Copyrighted)",
+    },
+}
+
+# Mappings pour les versions
+versions_mapping = {
+    "publishedVersion": {
+        "value": "http://purl.org/coar/version/c_970fb48d4fbd8a85",
+        "display": "Published version",
+    },
+    "acceptedVersion": {
+        "value": "http://purl.org/coar/version/c_ab4af688f83e57aa",
+        "display": "Accepted version",
+    },
+    "submittedVersion": {
+        "value": "http://purl.org/coar/version/c_71e4c1898caa6e32",
+        "display": "Submitted version",
+    },
+    "NA": {
+        "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
+        "display": "Not Applicable (or Unknown)",
+    },
 }
 
 def normalize_doctype_value(source, value):

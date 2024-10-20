@@ -77,7 +77,6 @@ class AuthorProcessor:
         return self.df if return_df else self
 
     def clean_authors(self, return_df=False):
-
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
 
         # Function to clean author names
@@ -104,14 +103,15 @@ class AuthorProcessor:
         return self.df if return_df else self
 
     def api_epfl_reconciliation(self, return_df=False):
-
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
 
         def query_person(row):
             # Construct the query from the 'author_cleaned' column
-            query = row['author_cleaned']
-            firstname = row['nameparse_firstname']
-            lastname = row['nameparse_lastname']
+            query = row["author_cleaned"]
+            firstname = row["nameparse_firstname"]
+            if firstname:
+                firstname = firstname.rstrip(string.punctuation)
+            lastname = row["nameparse_lastname"]
 
             # Call the query_person method with the appropriate parameters
             return ApiEpflClient.query_person(
@@ -119,11 +119,16 @@ class AuthorProcessor:
                 firstname=firstname,
                 lastname=lastname,
                 format="sciper",
-                use_firstname_lastname=True
+                use_firstname_lastname=True,
             )
 
         # Query the ApiEpflClient for each cleaned author and store the sciper_id
-        self.df.loc[:, 'sciper_id'] = self.df['author_cleaned'].apply(ApiEpflClient.query_person)
+        # Pass the entire row to the query_person function
+        self.df["sciper_id"] = self.df.apply(query_person, axis=1)
+
+        # Optionally return the modified DataFrame if required
+        if return_df:
+            return self.df
 
         # Function to fetch accreditation info and store in new columns
         def fetch_accred_info(sciper_id):
@@ -178,7 +183,6 @@ class AuthorProcessor:
 
     ##### Inutilisé #####################
     def orcid_data_reconciliation(self, return_df=False):
-
         self.df = self.df.copy()
 
         for index, row in self.df.iterrows():
