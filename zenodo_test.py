@@ -7,7 +7,7 @@ from data_pipeline.deduplicator import DataFrameProcessor
 from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
 from data_pipeline.loader import Loader
 
-start_date = "2024-01-01"
+start_date = "2024-07-01"
 end_date = "2024-10-31"
 query = 'parent.communities.entries.id:"3c1383da-d7ab-4167-8f12-4d8aa0cc637f"'
 
@@ -25,14 +25,12 @@ df_epfl_authors = (
     .filter_epfl_authors()
     .clean_authors()
     .nameparse_authors()
-    #.api_epfl_reconciliation()
-    #.generate_dspace_uuid(return_df=True)
+    .api_epfl_reconciliation()
+    .generate_dspace_uuid(return_df=True)
 )
 
-
-
 df_metadata.to_csv(os.path.join('.', "ResearchOutput.csv"),
-		 		   index=False, encoding="utf-8")
+                   index=False, encoding="utf-8")
 
-df_authors.to_csv(os.path.join('.', "AddressesAndNames.csv"),
-		 		   index=False, encoding="utf-8")
+df_epfl_authors.to_csv(os.path.join('.', "AddressesAndNames.csv"),
+                       index=False, encoding="utf-8")
