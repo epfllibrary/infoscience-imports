@@ -1,93 +1,163 @@
-# Infoscience Imports
+# Infoscience imports documentation
+
+## General workflow : Modular Python Scripts based on tailored Python clients
+
+The data pipeline is breaked down into separate Python scripts, each responsible for a specific task
+
+1. **Harvesting**: Regularly fetch publications from Wos and Scopus based on a publication date range.
+2. **Deduplication**: Merge the fetched data into a single dataframe with unique dedupicated metadata.
+   Deduplicate on the existing publicatioins in Infoscience
+3. **Enrichment**: Separate authors and affiliations into a second dataframe and enrich it with local laboratory and author informations using api.epfl.ch 
+4. **Loading**: Push the new metadata in Infoscience using the Dspace API client to create/enrich new works and persons entities.
 
 
+**`main.py`** : acts as an orchestrator
 
-## Getting started
+### Python scripts
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+Located in `./data_pipeline` folder.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+1. `harvester.py`: Fetch publications from different sources (Wos and Scopus for the moment). 
+   Each source is harvested with a dedicated client, one client by sources in the `clients` folder. They all are runned in a `Harvester` class that can be easily extended to support multiple sources. This approach allows to separate the harvesting logic from the source-specific implementation details.
+2. `deduplicator.py`: Merge and deduplicate the fetched data.
 
-## Add your files
+   The final dataframe contains following metadata :
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+   `source` : source KB (wos, scopus)
+
+   `internal_id`: publication Id in the source KB (WOS:xxxx, eid)
+
+   `doi`
+
+   `title`
+
+   `doi`
+
+   `doctype`: the doctype in the source KB
+
+   `pubyear`
+
+   `ifs3_doctype`: the Infoscience doctype
+
+   `ifs3_collection_id`: the Infoscience collection Id (depending on doctype)
+
+   `authors, and affiliations`
+
+3. `enricher.py`: Enrich the authors and affiliations dataframe with local laboratory information (for authors) and Unpaywall OA attributes (for publications).
+4. `loader.py`: Push the metadata into Dspace-CRIS using the Dspace API client.
+
+### Orchestrator 
+
+**`main.py`** in `./data_pipeline` folder : chains the operations.
+
+**Contains the default queries for the external sources. These default queries can be overwritten by passing new queries as parameter of the main function**
+
+For example :
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.epfl.ch/infoscience-team/infoscience-imports.git
-git branch -M main
-git push -uf origin main
+df_metadata, df_authors, df_epfl_authors, df_unloaded = main(start_date="2023-01-01", end_date="2023-12-31")
 ```
 
-## Integrate with your tools
+Or
 
-- [ ] [Set up project integrations](https://gitlab.epfl.ch/infoscience-team/infoscience-imports/-/settings/integrations)
+```
+custom_queries = {
+    "wos": "OG=(Your Custom Query for WOS)",
+    "scopus": "AF-ID(Your Custom Scopus ID)",
+    "openalex": "YOUR_CUSTOM_OPENALEX_QUERY",
+    "zenodo": "YOUR_CUSTOM_ZENODO_QUERY"
+}
+df_metadata, df_authors, df_epfl_authors, df_unloaded = main(start_date="2023-01-01", end_date="2023-12-31", queries=custom_queries)
+```
 
-## Collaborate with your team
+### Clients
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+Located in `./clients` folder.
 
-## Test and Deploy
+Each source of metadata is harvested and parsed by a specific client, before the data being processed in the python scripts.
 
-Use the built-in continuous integration in GitLab.
+1. **wos_client_v2.py**: contains the WosClient with all methods to parse the results of the WoS search API
+2. **scopus_client_v2.py**: contains the ScopusClient with all methods to parse the results of the Scopus search API
+3. **api_epfl_client.py** : contains the ApiEpflClient for local EPFL informations retrieving (author sciper Id, accreds and units)
+4. **unpaywall_client.py** : contains the UnpaywallClient with methos to request teh Unpaywall API
+5. **dsapce_client_wrapper.py**: contains the DSpaceClientWrapper with methods to search and update objects in Dspace using the Dspace Rest Client
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+Others : some tests with Orcid API and Istex API for managing authors names.
 
-***
+### Mappings
 
-# Editing this README
+All mappings are in `mappings.py`
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Internal script used (one shot) to create the mapping dictionary between Infoscience collection labels and Infoscience collection id
 
-## Suggestions for a good README
+```
+url = "https://infoscience.epfl.ch/server/api/core/collections"
+params = {"page":0, "size": 25}
+response = requests.get(url, params=params).json()
+#[{"collection_uuid":x["uuid"],"entity_type":x["metadata"]["dc.title"][0]["value"]} for x in response["_embedded"]["collections"]]
+collections_mapping = {}
+for x in response["_embedded"]["collections"]:
+    collections_mapping[x["metadata"]["dc.title"][0]["value"]] = x["uuid"]
+collections_mapping
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+Returns
 
-## Name
-Choose a self-explaining name for your project.
+```
+{'Patents': 'ce5a1b89-cfb3-40eb-bdd2-dcb021e755b7',
+ 'Projects': '49ec7e96-4645-4bc0-a015-ba4b81669bbc',
+ 'Teaching Materials': 'c7e018d4-2349-46dd-a8a4-c32cf5f5f9a1',
+ 'Images, Videos, Interactive resources, and Design': '329f8cd3-dc1a-4228-9557-b27366d71d41',
+ 'Newspaper, Magazine, or Blog post': '971cc7fa-b177-46e3-86a9-cfac93042e9d',
+ 'Funding': '8b185e36-0f99-4669-9a46-26a19d4f3eab',
+ 'Other': '0066acb2-d5c0-49a0-b273-581df34961cc',
+ 'Datasets and Code': '33a1cd32-7980-495b-a2bb-f34c478869d8',
+ 'Student works': '305e3dad-f918-48f6-9309-edbeb7cced14',
+ 'Units': 'bc85ee71-84b0-4f78-96a1-bab2c50b7ac9',
+ 'Contents': 'e8dea11e-a080-461b-82ee-6d9ab48404f3',
+ 'Virtual collections': '78f331d1-ee55-48ef-bddf-508488493c90',
+ 'EPFL thesis': '4af344ef-0fb2-4593-a234-78d57f3df621',
+ 'Reports, Documentation, and Standards': 'd5ec2987-2ee5-4754-971b-aca7ab4f9ab7',
+ 'Preprints and Working Papers': 'd8dada3a-c4bd-4c6f-a6d7-13f1b4564fa4',
+ 'Books and Book parts': '1a71fba2-2fc5-4c02-9447-f292e25ce6c1',
+ 'Persons': '6acf237a-90d7-43e2-82cf-c3591e50c719',
+ 'Events': '6e2af01f-8b92-461e-9d08-5e1961b9a97b',
+ 'Conferences, Workshops, Symposiums, and Seminars': 'e91ecd9f-56a2-4b2f-b7cc-f03e03d2643d',
+ 'Journals': '9ada82da-bb91-4414-a480-fae1a5c02d1c',
+ 'Journal articles': '8a8d3310-6535-4d3a-90b6-2a4428097b5b'}
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+### Configs
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Some pipeline's configurations are in `config.py`
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+- default_queries (on datasources) : queries used by the harvesters
+- source_order : order of preferred item (according datasource) for deduplicate operation
+- scopus_epfl_afids: list of structures Scopus Ids in Scopus referential (used for discriminate EPFL authors for Scopus datasource)
+- LICENSE_CONDITIONS : dict of conditions for parsing the best_oa_location from Unpaywall
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## Tests and examples
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+**Documentation on using clients and scripts** : `documentation_and_examples.ipynb`
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+**To test the Python scripts** : `demo_pipeline.ipynb`
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## Airflow
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+### Docker installation
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```
+docker build . -f Dockerfile-airflow --pull --tag airflow:custom
+docker run -it --name=airflow -p 8081:8080 -v $PWD/clients:/opt/airflow/dags/clients  -v $PWD/data_pipeline:/opt/airflow/dags/data_pipeline  -v $PWD/imports_dag.py:/opt/airflow/dags/imports_dag.py -it airflow:custom airflow webserver
+docker exec -it airflow airflow scheduler
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+**Important** : la création du user admin ne semble pas fonctionner depuis le Dockerfile, il faut exécuter en depuis le container
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```
+airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.org
+```
 
-## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+
+
