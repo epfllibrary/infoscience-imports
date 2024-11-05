@@ -1,4 +1,4 @@
-from dspace.client import DSpaceClient
+from dspace.dspace_rest_client.client import DSpaceClient
 import logging
 import os, re
 from dotenv import load_dotenv
@@ -16,13 +16,28 @@ class DSpaceClientWrapper:
         authenticated = self.client.authenticate()
         self.logger.info(f"Authentication status {authenticated}.")
 
-    def _search_objects(self, query, page=0, size=1, configuration="researchoutputs", dso_type=None):
+    def _search_objects(
+        self,
+        query,
+        filters=None,
+        page=0,
+        size=1,
+        sort=None,
+        configuration="researchoutputs",
+        scope=None,
+        dso_type=None,
+        max_pages=None,
+    ):
         return self.client.search_objects(
             query=query,
+            filters=filters,
             page=page,
             size=size,
-            dso_type=dso_type,
+            sort=sort,
             configuration=configuration,
+            scope=scope,
+            dso_type=dso_type,
+            max_pages=max_pages,
         )
 
     def _create_object(self, data):
@@ -148,6 +163,9 @@ class DSpaceClientWrapper:
 
     def upload_file_to_workspace(self, workspace_id, file_path):
         return self.client.upload_file_to_workspace(workspace_id, file_path)
+
+    def delete_workspace(self, workspace_id):
+        return self.client.delete_workspace_item(workspace_id)
 
 
 def clean_title(title):
