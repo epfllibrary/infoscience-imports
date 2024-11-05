@@ -16,6 +16,7 @@ import os
 from dotenv import load_dotenv
 from utils import manage_logger
 import mappings
+from config import logs_dir
 
 scopus_api_base_url = "https://api.elsevier.com/content"
 # env var
@@ -49,8 +50,8 @@ class Endpoint:
 
 
 class Client(APIClient):
-
-    logger = manage_logger("./logs/scopus_client.log")
+    log_file_path = os.path.join(logs_dir, "scopus_client.log")
+    logger = manage_logger(log_file_path)
 
     @retry_request
     def search_query(self, **param_kwargs):

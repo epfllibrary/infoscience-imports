@@ -18,8 +18,10 @@ import json
 from typing import Optional
 from dotenv import load_dotenv
 from utils import manage_logger
+from config import logs_dir
 
-logger = manage_logger("./logs/orcid_client.log")
+log_file_path = os.path.join(logs_dir, "orcid_client.log")
+logger = manage_logger(log_file_path)
 
 orcid_prod_public_base_url = "https://pub.orcid.org/v3.0"
 # env var
@@ -153,10 +155,9 @@ def search_json(json_data, search_strings):
 
     # Perform the search
     return contains_search_string(json_data)
-    
+
 OrcidClient = Client(
     authentication_method=orcid_authentication_method,
     response_handler=JsonResponseHandler,
     request_formatter=OrcidJsonRequestFormatter
 )
-    

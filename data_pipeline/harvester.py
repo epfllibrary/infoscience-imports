@@ -1,10 +1,12 @@
 import abc
+import os
 
 import pandas as pd
 from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
 from clients.zenodo_client import ZenodoClient
 from utils import manage_logger
+from config import logs_dir
 
 
 class Harvester(abc.ABC):
@@ -27,7 +29,8 @@ class Harvester(abc.ABC):
         self.query = query
         self.format = format
         # Create a logger
-        self.logger = manage_logger("./logs/harvesting.log")
+        log_file_path = os.path.join(logs_dir, "harvesting.log")
+        self.logger = manage_logger(log_file_path)
 
     @abc.abstractmethod
     def fetch_and_parse_publications(self) -> pd.DataFrame:

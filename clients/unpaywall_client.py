@@ -20,10 +20,13 @@ from urllib.parse import urlparse, urljoin, unquote
 from config import LICENSE_CONDITIONS
 from utils import manage_logger
 from dotenv import load_dotenv
+from config import logs_dir
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 email = os.environ.get("UPW_EMAIL")
-logger = manage_logger("./logs/unpaywall_client.log")
+
+log_file_path = os.path.join(logs_dir, "unpaywall_client.log")
+logger = manage_logger(log_file_path)
 
 unpaywall_base_url = "https://api.unpaywall.org/v2"
 

@@ -15,8 +15,10 @@ import os
 import requests
 import json
 from utils import manage_logger
+from config import logs_dir
 
-logger = manage_logger("./logs/services_istex_client.log")
+log_file_path = os.path.join(logs_dir, "services_istex_client.log")
+logger = manage_logger(log_file_path)
 
 authors_tools_base_url = "https://authors-tools.services.istex.fr/v1"
 
@@ -31,7 +33,7 @@ retry_decorator = tenacity.retry(
 class Endpoint:
     base = ""
     orcid_disambiguation = "orcid-disambiguation/orcidDisambiguation"
-    
+
 class Client(APIClient):
     @retry_request
     def get_orcid_id(self, **param_kwargs): 
@@ -102,7 +104,7 @@ class Client(APIClient):
         logger.warning("No valid ORCID ID found in the response.")
         return None  # Return None for other cases
 
-                
+
 ServicesIstexClient = Client(
     response_handler=JsonResponseHandler,
 )

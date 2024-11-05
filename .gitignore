@@ -15,6 +15,7 @@ __pycache__
 ###################
 .scannerwork
 .log
+**/*logs*/**
 sonar-project.properties
 **/*test_*/**
 template.py

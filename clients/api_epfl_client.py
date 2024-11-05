@@ -17,6 +17,7 @@ import ast
 import os
 from dotenv import load_dotenv
 from utils import manage_logger
+from config import logs_dir
 
 
 api_epfl_base_url = "https://api.epfl.ch/v1"
@@ -44,7 +45,8 @@ class Endpoint:
 
 class Client(APIClient):
 
-    logger = manage_logger("./logs/api_epfl_client.log")
+    log_file_path = os.path.join(logs_dir, "api_epfl_client.log")
+    logger = manage_logger(log_file_path)
 
     @retry_decorator
     def query_person(

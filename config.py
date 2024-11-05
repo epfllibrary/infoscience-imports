@@ -1,6 +1,11 @@
 from datetime import date
+import os
 
 CURRENT_DATE = str(date.today())
+
+base_dir = os.path.dirname(os.path.abspath(__file__))
+logs_dir = os.path.join(base_dir, "logs")
+os.makedirs(logs_dir, exist_ok=True)
 
 # Default queries for harvest
 default_queries = {

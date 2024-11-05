@@ -4,9 +4,10 @@ from clients.dspace_client_wrapper import DSpaceClientWrapper
 from mappings import licenses_mapping, versions_mapping
 
 from utils import manage_logger
+from config import logs_dir
 
-logger = manage_logger("./logs/loader.log")
-
+log_file_path = os.path.join(logs_dir, "loader.log")
+logger = manage_logger(log_file_path)
 
 class Loader:
     def __init__(self, df_metadata, df_authors):

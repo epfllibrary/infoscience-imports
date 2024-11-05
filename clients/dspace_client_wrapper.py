@@ -3,6 +3,7 @@ import logging
 import os, re
 from dotenv import load_dotenv
 from utils import manage_logger
+from config import logs_dir
 
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
@@ -10,8 +11,9 @@ ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 
 class DSpaceClientWrapper:
     def __init__(self):
+        log_file_path = os.path.join(logs_dir, "dspace_client.log")
         self.client = DSpaceClient()
-        self.logger = manage_logger("./logs/dspace_client.log")
+        self.logger = manage_logger(log_file_path)
 
         authenticated = self.client.authenticate()
         self.logger.info(f"Authentication status {authenticated}.")

@@ -3,6 +3,7 @@
 import string
 import time
 import re
+import os
 
 import pandas as pd
 from fuzzywuzzy import fuzz, process
@@ -15,6 +16,7 @@ from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
 from config import scopus_epfl_afids, unit_types
 from utils import manage_logger
+from config import logs_dir
 
 class AuthorProcessor:
     """
@@ -35,7 +37,9 @@ class AuthorProcessor:
     """
     def __init__(self, df):
         self.df = df
-        self.logger = manage_logger("./logs/enriching_authors.log")
+
+        log_file_path = os.path.join(logs_dir, "enriching_authors.log")
+        self.logger = manage_logger(log_file_path)
 
     def process(self, return_df=False):
 
@@ -212,7 +216,8 @@ class PublicationProcessor:
 
     def __init__(self, df):
         self.df = df
-        self.logger = manage_logger("./logs/enriching_publications.log")
+        log_file_path = os.path.join(logs_dir, "enriching_publications.log")
+        self.logger = manage_logger(log_file_path)
 
     def process(self, return_df=True):
         self.df = self.df.copy()

@@ -1,17 +1,20 @@
 import re
 import string
+import os
 
 import pandas as pd
 from fuzzywuzzy import fuzz
 from mappings import source_order
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from utils import manage_logger
+from config import logs_dir
 
 
 class DataFrameProcessor:
     def __init__(self, *dfs):
         self.dataframes = dfs
-        self.logger = manage_logger("./logs/deduplicate.log")
+        log_file_path = os.path.join(logs_dir, "deduplicate.log")
+        self.logger = manage_logger(log_file_path)
 
     def clean_title(self, title):
         # Remove HTML tags
