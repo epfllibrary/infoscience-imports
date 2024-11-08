@@ -69,7 +69,7 @@ class Loader:
             },
             {"op": "add", "path": "/sections/license/granted", "value": "true"},
         ]
-        return self.dspace_wrapper.update_workspace(workspace_id, patch_operations)
+        return self.dspace_wrapper._update_workspace(workspace_id, patch_operations)
 
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
         # On vérifie si le mapping pour la license et la version existe
@@ -137,10 +137,10 @@ class Loader:
                 "value": [{"name": "openaccess"}],
             },
         ]
-        return self.dspace_wrapper.update_workspace(workspace_id, patch_operations)
+        return self.dspace_wrapper._update_workspace(workspace_id, patch_operations)
 
     def _add_file(self, workspace_id, file_path):
-        return self.dspace_wrapper.upload_file_to_workspace(workspace_id, file_path)
+        return self.dspace_wrapper._upload_file_to_workspace(workspace_id, file_path)
 
     def _filter_publications_by_valid_affilliations(self):
         # Find the 'row_id' of authors with a non-null 'epfl_api_mainunit_name'
@@ -225,7 +225,7 @@ class Loader:
                         )
 
                     # Create workflowitem and retrieve the workflow_id
-                    workflow_response = self.dspace_wrapper.create_workflowitem(
+                    workflow_response = self.dspace_wrapper._create_workflowitem(
                         workspace_id
                     )
                     if workflow_response and "id" in workflow_response:
