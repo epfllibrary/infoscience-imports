@@ -290,76 +290,76 @@ class Client(APIClient):
             # Ensure the input is a dictionary
             if not isinstance(x, dict):
                 self.logger.debug(x)
-                self.logger.warning(f"Input data must be a dictionary.")
+                self.logger.warning("Input data must be a dictionary.")
                 return result  # Return an empty result
 
             # Ensure required keys are present in the input
             if "affiliation" not in x or "author" not in x:
                 self.logger.debug(x)
-                self.logger.warning(f"Input data must contain 'affiliation' and 'author' keys.")
+                self.logger.warning(
+                    "Input data must contain 'affiliation' and 'author' keys."
+                )
                 return result  # Return an empty result
 
             # Create a dictionary to map afid to their corresponding organization name and affiliation details
-            affiliation_map = {}
-            for affiliation in x["affiliation"]:
-                try:
-                    # Check if required keys are present in the affiliation
-                    if "afid" not in affiliation or "affilname" not in affiliation:
-                        self.logger.warning(
-                            f"Each 'affiliation' item must contain 'afid' and 'affilname' keys."
-                        )
-                        continue  # Skip this affiliation and continue
-
-                    # Map afid to organization
-                    afid = affiliation["afid"]
-                    organization = f"{afid}:{affiliation['affilname']}"
-                    affiliation_map[afid] = organization
-
-                except KeyError as e:
-                    self.logger.warning(f"Skipping affiliation due to missing key: {e}")
-                    continue  # Skip this affiliation and continue
+            affiliation_map = {
+                affiliation.get(
+                    "afid"
+                ): f"{affiliation.get('afid')}:{affiliation.get('affilname')}"
+                for affiliation in x.get("affiliation", [])
+                if affiliation.get("afid") and affiliation.get("affilname")
+            }
 
             # Process authors
-            for author in x["author"]:
-                try:
-                    # Check if required keys are present in the author
-                    if "authname" not in author or "afid" not in author:
-                        self.logger.warning(f"Each 'author' item must contain 'authname' and 'afid' keys.")
-                        continue  # Skip this author and continue
+            for author in x.get("author", []):
+                # Check if required keys are present in the author
+                if not isinstance(author.get("afid"), list):
+                    self.logger.warning("Each 'author' item must contain 'afid' as a list.")
+                    continue  # Skip this author and continue
 
-                    # Extract author details
-                    author_name = author.get("authname", None)
-                    orcid_id = author.get("orcid", None)
-                    internal_author_id = author.get("authid", None)
+                # Determine author name using surname and given-name if both exist, otherwise fallback to authname
+                surname = author.get("surname")
+                given_name = author.get("given-name")
+                if surname and given_name:
+                    author_name = f"{surname}, {given_name}".strip()
+                else:
+                    author_name = author.get("authname", "")
 
-                    # Ensure 'afid' is a list
-                    if not isinstance(author["afid"], list):
-                        self.logger.warning(
-                            f"'afid' must be a list of affiliation IDs."
-                        )
-                        continue  # Skip this author and continue
+                if not author_name:
+                    self.logger.warning(
+                        "Author name could not be determined; skipping author."
+                    )
+                    continue
 
-                    # Safely map affiliations to organizations
-                    try:
-                        affiliations = [affiliation_map[af["$"]] for af in author["afid"]]
-                    except KeyError as e:
-                        self.logger.warning(f"Affiliation ID {e.args[0]} not found in affiliation map.")
-                        continue  # Skip this author and continue
+                # Extract additional author details
+                orcid_id = author.get("orcid")
+                internal_author_id = author.get("authid")
 
-                    # Combine organizations
-                    organizations = "|".join(affiliations)
+                # Safely map affiliations to organizations using 'afid'
+                affiliations = [
+                    affiliation_map.get(af.get("$"))
+                    for af in author["afid"]
+                    if affiliation_map.get(af.get("$")) is not None
+                ]
 
-                    # Add to result list
-                    result.append({
+                if not affiliations:
+                    self.logger.warning(
+                        f"No valid affiliations found for author '{author_name}' with provided 'afid'."
+                    )
+                    continue  # Skip this author if no valid affiliations are found
+
+                # Combine organizations
+                organizations = "|".join(affiliations)
+
+                # Add to result list
+                result.append(
+                    {
                         "author": author_name,
                         "internal_author_id": internal_author_id,
                         "orcid_id": orcid_id,
-                        "organizations": organizations
-                    })
-
-                except KeyError as e:
-                    self.logger.warning(f"Skipping author due to missing key: {e}")
-                    continue  # Skip this author and continue
+                        "organizations": organizations,
+                    }
+                )
 
         except Exception as e:
             self.logger.error(f"An error occurred during processing: {e}")
