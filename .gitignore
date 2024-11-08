@@ -5,6 +5,7 @@
 # Ignore data folder#
 ###################
 **/*harvested-data*/**
+**/*pdf*/**
 
 # Ignore archived version of notebooks and python stuffs #
 ###################
