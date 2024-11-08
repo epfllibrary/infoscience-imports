@@ -1,5 +1,4 @@
 from dspace.dspace_rest_client.client import DSpaceClient
-import logging
 import os, re
 from dotenv import load_dotenv
 from utils import manage_logger
@@ -12,11 +11,15 @@ ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 class DSpaceClientWrapper:
     def __init__(self):
         log_file_path = os.path.join(logs_dir, "dspace_client.log")
-        self.client = DSpaceClient()
         self.logger = manage_logger(log_file_path)
+
+        self.client = DSpaceClient()
 
         authenticated = self.client.authenticate()
         self.logger.info(f"Authentication status {authenticated}.")
+
+    def _get_item(self, uuid):
+        return self.client.get_item(uuid)
 
     def _search_objects(
         self,
@@ -157,17 +160,45 @@ class DSpaceClientWrapper:
             self.logger.error(f"An error occurred while pushing the publication: {str(e)}")
             return None
 
-    def update_workspace(self, workspace_id, patch_operations):
+    def _update_workspace(self, workspace_id, patch_operations):
         return self.client.update_workspaceitem(workspace_id, patch_operations)
 
-    def create_workflowitem(self, workspace_id): 
+    def _create_workflowitem(self, workspace_id): 
         return self.client.create_workflowitem(workspace_id)
 
-    def upload_file_to_workspace(self, workspace_id, file_path):
+    def _upload_file_to_workspace(self, workspace_id, file_path):
         return self.client.upload_file_to_workspace(workspace_id, file_path)
 
-    def delete_workspace(self, workspace_id):
+    def _delete_workspace(self, workspace_id):
         return self.client.delete_workspace_item(workspace_id)
+
+    def _search_authority(
+        self,
+        authority_type="AuthorAuthority",
+        metadata="dc.contributor.author",
+        filter_text="",
+        exact=False,
+    ):
+        return self.client.get_authority(authority_type, metadata, filter_text, exact)
+
+    def get_sciper_from_authority(self, response):
+        if response.get("page", {}).get("totalElements", 0) == 1:
+            entry = response.get("_embedded", {}).get("entries", [])[0]
+            auth_id = entry.get("authority") if entry else None
+
+            # Vérifier si auth_id commence par "will be generated"
+            if auth_id and auth_id.startswith("will be generated"):
+                # Extraire le nombre à la fin du format "UUID: will be generated::SCIPER-ID::123456"
+                match = re.search(r"::(\d+)$", auth_id)
+                if match:
+                    return int(match.group(1))  # Retourne l'ID en tant qu'entier
+            # Si auth_id ne correspond pas au format, appeler _get_item
+            else:
+                authority = self._get_item(auth_id)
+                if authority:
+                    return authority.metadata.get("epfl.sciperId")[0]["value"]
+
+        return None
 
 
 def clean_title(title):

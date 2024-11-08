@@ -16,7 +16,7 @@ from collections import defaultdict
 import ast
 import os
 from dotenv import load_dotenv
-from utils import manage_logger
+from utils import manage_logger, clean_value
 from config import logs_dir
 
 
@@ -97,14 +97,14 @@ class Client(APIClient):
         # If using firstname/lastname, perform both queries
         if use_firstname_lastname:
             self.logger.info(
-                f"Attempting personsFirstnameLastname for {firstname} {lastname}."
-            )
-            results.append(attempt_query(firstname, lastname))
-
-            self.logger.info(
                 f"Attempting personsFirstnameLastname for {lastname} {firstname}."
             )
             results.append(attempt_query(lastname, firstname))
+
+            self.logger.info(
+                f"Attempting personsFirstnameLastname for {firstname} {lastname}."
+            )
+            results.append(attempt_query(firstname, lastname))
 
         # Always attempt personsQuery
         self.logger.info(f"Attempting personsQuery for {query}.")
@@ -113,12 +113,23 @@ class Client(APIClient):
             f"Received response for {query} from personsQuery: {result_query}"
         )
         results.append(result_query)
-
+        self.logger.info(f"Response for personsQuery : {result_query}.")
         # Process results based on the count
         for result in results:
             if result and result["count"] == 1:
+                person_record = result["persons"][0]
                 self.logger.info(f"Single record found for {query}. Processing record.")
-                return self._process_person_record(result, query, format)
+                # Verify that the returned name matches the requested name
+                if (
+                    lastname
+                    and clean_value(person_record["lastname"]) == lastname
+                ):
+                    return self._process_person_record(result, query, format)
+                else:
+                    self.logger.warning(
+                        f"The single record found does not match the requested name: {lastname}."
+                    )
+                return "Single record found, but names do not match."
 
         # Handle multiple records
         combined_results = [

@@ -4,10 +4,13 @@ import string
 import time
 import re
 import os
+from unidecode import unidecode
 
 import pandas as pd
 from fuzzywuzzy import fuzz, process
 import nameparser
+from nameparser import HumanName
+from utils import manage_logger, remove_accents, clean_value
 
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
@@ -15,8 +18,10 @@ from clients.dspace_client_wrapper import DSpaceClientWrapper
 from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
 from config import scopus_epfl_afids, unit_types
-from utils import manage_logger
 from config import logs_dir
+
+
+dspace_wrapper = DSpaceClientWrapper()
 
 class AuthorProcessor:
     """
@@ -59,20 +64,24 @@ class AuthorProcessor:
         return self.df if return_df else self
 
     def _process_scopus(self, text):
+        if not isinstance(text, str):
+            return False
         return any(value in text for value in scopus_epfl_afids)
 
     def _process_zenodo(self, text):
-        if text is None:
+        if not isinstance(text, str):
             return False
-        else:
-            pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
-            return bool(re.search(pattern, text))
+        pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
+        return bool(re.search(pattern, text))
 
     def _process_wos(self, text):
         keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
-        return any(process.extractOne(keyword,
-                                     [text],
-                                     scorer=fuzz.partial_ratio)[1] >= 80 for keyword in keywords)
+        if not isinstance(text, str):  # Vérifie que text est bien une chaîne
+            return False
+        return any(
+            process.extractOne(keyword, [text], scorer=fuzz.partial_ratio)[1] >= 80
+            for keyword in keywords
+        )
 
     def filter_epfl_authors(self, return_df=False):
         self.df = self.df.copy()
@@ -85,37 +94,110 @@ class AuthorProcessor:
 
         # Function to clean author names
         def clean_author(author):
-            author = author.lower()  # Convert to lowercase
-            author = author.translate(str.maketrans('', '', string.punctuation))  # Remove punctuation
-            author = author.encode('ascii', 'ignore').decode('utf-8')  # Remove accents
+            author = author.lower()
+            author = author.translate(
+                str.maketrans(string.punctuation, " " * len(string.punctuation))
+            )
+            author = remove_accents(author)
+            author = author.encode("ascii", "ignore").decode("utf-8")
             return author
 
         # Apply the cleaning function to the 'authors' column
-        self.df['author_cleaned'] = self.df['author'].apply(clean_author)
+        self.df["author_cleaned"] = self.df["author"].apply(clean_author)
+
+        return self.df if return_df else self
+
+    def clean_authors(self, return_df=False):
+        self.df = self.df.copy()
+
+        def clean_author(author):
+            parsed_name = HumanName(author)
+
+            formatted_name = (
+                f"{parsed_name.last} {parsed_name.first} {parsed_name.middle} ".strip()
+            )
+
+            formatted_name = formatted_name.translate(
+                str.maketrans("", "", string.punctuation)
+            )
+            formatted_name = clean_value(formatted_name)
+            formatted_name = " ".join(formatted_name.split())
+
+            return formatted_name
+
+        # Appliquer la fonction de nettoyage à la colonne 'author'
+        self.df["author_cleaned"] = self.df["author"].apply(clean_author)
 
         return self.df if return_df else self
 
     def nameparse_authors(self, return_df=False):
         parser = nameparser.HumanName
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
-        self.df.loc[:, 'nameparse_firstname'] = self.df.apply(
-            lambda row: parser(row['author']).first if row['epfl_affiliation'] else None, axis=1
+
+        self.df.loc[:, "nameparse_firstname"] = self.df.apply(
+            lambda row: (
+                " ".join(
+                    [parser(row["author"]).first, parser(row["author"]).middle]
+                ).strip()
+                if row["epfl_affiliation"]
+                else None
+            ),
+            axis=1,
         )
-        self.df.loc[:, 'nameparse_lastname'] = self.df.apply(
-            lambda row: parser(row['author']).last if row['epfl_affiliation'] else None, axis=1
+
+        self.df.loc[:, "nameparse_lastname"] = self.df.apply(
+            lambda row: parser(row["author"]).last if row["epfl_affiliation"] else None,
+            axis=1,
         )
+
         return self.df if return_df else self
+
+    def _query_dspace_authority(self, query):
+        """
+        Attempts to retrieve author information from DSpace authority service.
+        If successful, returns sciper_id, epfl_api_mainunit_name, and dspace_uuid;
+        otherwise, returns None values.
+        """
+
+        try:
+            response = dspace_wrapper._search_authority(filter_text=query)
+            self.logger.info(f"Querying DSpace for author {query}")
+            sciper_id = dspace_wrapper.get_sciper_from_authority(response)
+            self.logger.info(f"Sciper {sciper_id} was retrieved in DSpace for author {query}")
+            return sciper_id
+        except Exception as e:
+            self.logger.error(
+                f"Error querying DSpace for author {query} - {e}"
+            )
+
+        return None    
 
     def api_epfl_reconciliation(self, return_df=False):
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
 
         def query_person(row):
+            # Attempt to retrieve author using ORICD first
+            orcid_id = row.get("orcid_id")
+            if orcid_id and pd.notna(orcid_id):
+                sciper_id = self._query_dspace_authority(orcid_id)
+                if sciper_id:
+                    return sciper_id
+
+            # Attempt to retrieve author info from DSpace by name
             # Construct the query from the 'author_cleaned' column
-            query = row["author_cleaned"]
+            query = row.get("author_cleaned")
+            if query and pd.notna(query):
+                sciper_id = self._query_dspace_authority(query)
+                if sciper_id:
+                    return sciper_id
+
             firstname = row["nameparse_firstname"]
             if firstname:
-                firstname = firstname.rstrip(string.punctuation)
+                firstname = clean_value(firstname)
+
             lastname = row["nameparse_lastname"]
+            if lastname:
+                lastname = clean_value(lastname)
 
             # Call the query_person method with the appropriate parameters
             return ApiEpflClient.query_person(
@@ -159,12 +241,15 @@ class AuthorProcessor:
 
     def generate_dspace_uuid(self, return_df=False):
         self.df = self.df.copy()
-        dspace_wrapper = DSpaceClientWrapper()
-        self.df['dspace_uuid'] = self.df.apply(
+        self.df["dspace_uuid"] = self.df.apply(
             lambda row: dspace_wrapper.find_person(
-                query=f"(epfl.sciperId:{row['sciper_id']})" if pd.notna(row['sciper_id']) else f"(title:{row['author_cleaned']})"
+                query=(
+                    f"epfl.sciperId:({row['sciper_id']})"
+                    if pd.notna(row["sciper_id"])
+                    else f"bestmatch_s:(*{row['author']}*)"
+                )
             ),
-            axis=1
+            axis=1,
         )
         return self.df if return_df else self
 
