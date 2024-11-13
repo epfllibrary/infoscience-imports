@@ -75,6 +75,7 @@ doctypes_mapping_dict = {
         "image/other": "Images, Videos, Interactive resources, and Design",
         "software": "Datasets and Code",
         "video": "Images, Videos, Interactive resources, and Design",
+        "model": "Datasets and Code"
 
     }
 }
