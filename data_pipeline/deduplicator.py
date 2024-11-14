@@ -4,7 +4,7 @@ import os
 
 import pandas as pd
 from fuzzywuzzy import fuzz
-from mappings import source_order
+from config import source_order
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from utils import manage_logger
 from config import logs_dir
@@ -82,8 +82,6 @@ class DataFrameProcessor:
         combined_df.drop(columns=["dedup_keys"], inplace=True)
 
         # Sort the combined dataframe to prioritize 'scopus' and 'wos' sources in case of duplicates
-        # TODO AB should we use mappings.source_order instead of a new list?
-        source_order = ["wos", "scopus"]  # Define the source order if not already done
         combined_df["source"] = pd.Categorical(
             combined_df["source"], categories=source_order, ordered=True
         )
