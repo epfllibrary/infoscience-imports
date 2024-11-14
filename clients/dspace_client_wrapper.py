@@ -53,6 +53,7 @@ class DSpaceClientWrapper:
         return self.client.update_dso(self, dso, params=data)
 
     def find_publication_duplicate(self, x):
+
         identifier_type = x["source"]
         cleaned_title = clean_title(x["title"])
         pubyear = x["pubyear"]
@@ -63,57 +64,63 @@ class DSpaceClientWrapper:
         previous_year = pubyear - 1
         next_year = pubyear + 1
 
-        # Build queries for each matching rule
-        if identifier_type == 'wos':
-            item_id = str(x['internal_id']).replace("WOS:","").strip()
-        elif identifier_type == 'scopus':
-            item_id = str(x['internal_id']).replace("SCOPUS_ID:","").strip() 
-        else:
-            raise ValueError("identifier_type must be 'wos' or 'scopus'")
+        # Construct the item ID based on identifier type
+        if identifier_type == "wos":
+            item_id = str(x["internal_id"]).replace("WOS:", "").strip()
+        elif identifier_type == "scopus":
+            item_id = str(x["internal_id"]).replace("SCOPUS_ID:", "").strip()
+        elif identifier_type == "openalex":
+            item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
 
-        query = f"(itemidentifier:\"*{item_id}*\")"
-        title_query = f"(title:({cleaned_title}) AND (dateIssued:{pubyear} OR dateIssued:{previous_year} OR dateIssued:{next_year}))"
-        doi_query = (
-            f"(itemidentifier:\"*{str(x['doi']).strip()}*\")" if "doi" in x else None
+        # Combine all criteria into a single query
+        query_parts = []
+
+        if item_id:
+            query_parts.append(f"(itemidentifier:\"*{item_id}\")")
+
+        query_parts.append(
+            f"(title:({cleaned_title}) AND (dateIssued:{pubyear} OR dateIssued:{previous_year} OR dateIssued:{next_year}))"
         )
 
-        # Check each identifier for duplicates
-        for query in [query, title_query, doi_query]:
-            if query is None:
-                continue
-            self.logger.debug(f"Searching archived researchoutput with query:{query}...")
-            # Check the researchoutput configuration
-            dsos_researchoutputs = self._search_objects(
-                query=query,
-                page=0,
-                size=1,
-                dso_type="item",
-                configuration="researchoutputs",
-            )
-            num_items_researchoutputs = len(dsos_researchoutputs)
-            self.logger.debug(f"Searching workflow items with query:{query}...")
-            # Check the supervision configuration
-            dsos_supervision = self._search_objects(
-                query=query,
-                page=0,
-                size=1,
-                configuration="supervision",
-            )
-            num_items_supervision = len(dsos_supervision)
+        if "doi" in x and x["doi"] not in ["", None]:
+            query_parts.append(f"(itemidentifier:\"*{str(x['doi']).strip()}\")")
 
-            # Determine if the item is a duplicate in either configuration
-            is_duplicate = (num_items_researchoutputs > 0) or (
-                num_items_supervision > 0
+        # Combine all query parts using OR
+        final_query = " OR ".join(query_parts)
+
+        # Search for duplicates using the combined query
+        self.logger.debug(f"Searching Infoscience researchoutput with query: {final_query}...")
+
+        # Check the researchoutput configuration
+        dsos_researchoutputs = self._search_objects(
+            query=final_query,
+            page=0,
+            size=1,
+            dso_type="item",
+            configuration="researchoutputs",
+        )
+        num_items_researchoutputs = len(dsos_researchoutputs)
+
+        self.logger.info(f"Searching workflow items with query: {final_query}...")
+
+        # Check the supervision configuration
+        dsos_supervision = self._search_objects(
+            query=final_query,
+            page=0,
+            size=1,
+            configuration="supervision",
+        )
+        num_items_supervision = len(dsos_supervision)
+
+        # Determine if the item is a duplicate in either configuration
+        if num_items_researchoutputs > 0 or num_items_supervision > 0:
+            self.logger.info(
+                f"Publication searched with id:{item_id} found in Infoscience."
             )
+            return True  # Duplicate found
 
-            if is_duplicate:
-                self.logger.info(
-                    f"Publication searched with id:{item_id} founded in Infoscience."
-                )
-                return True  # Duplicate found
-
-        self.logger.debug(
-            f"Publication searched with id:{item_id} not founded in Infoscience."
+        self.logger.info(
+            f"Publication searched with id:{item_id} not found in Infoscience."
         )
         return False  # No duplicates found
 
