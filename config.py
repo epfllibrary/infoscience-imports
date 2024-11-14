@@ -22,12 +22,25 @@ source_order = ["wos", "scopus", "openalex", "zenodo"]
 unit_types = ["Laboratoire", "Groupe", "Chaire"]
 
 # Scopus : EPFL labs internal IDs
-scopus_epfl_afids = ["60028186","60210159","60070536","60204330","60070531",
-                     "60070534","60070538","60014951","60070529","60070532",
-                     "60070535","60122563","60210160","60204331"]
+scopus_epfl_afids = [
+    "60028186",
+    "60210159",
+    "60070536",
+    "60204330",
+    "60070531",
+    "60070534",
+    "60070538",
+    "60014951",
+    "60070529",
+    "60070532",
+    "60070535",
+    "60122563",
+    "60210160",
+    "60204331",
+]
 
 # License conditions for Unpaywall
 LICENSE_CONDITIONS = {
     "allowed_licenses": ["cc-by", "public-domain"],
-    "allowed_oa_statuses": ["gold", "hybrid", "green"]  # Added allowed OA statuses
+    "allowed_oa_statuses": ["gold", "hybrid", "green"],  # Added allowed OA statuses
 }
