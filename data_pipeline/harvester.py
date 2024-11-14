@@ -5,6 +5,7 @@ import pandas as pd
 from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
 from clients.zenodo_client import ZenodoClient
+from clients.openalex_client import OpenAlexClient
 from utils import manage_logger
 from config import logs_dir
 
@@ -214,4 +215,77 @@ class ZenodoHarvester(Harvester):
         df = (pd.DataFrame(recs)
                 .query('ifs3_doctype != "unknown_doctype"')
                 .reset_index(drop=True))
+        return df
+
+
+class OpenAlexHarvester(Harvester):
+    """
+    OpenAlex Harvester.
+    """
+
+    def __init__(
+        self, start_date: str, end_date: str, query: str, format: str = "ifs3"
+    ):
+        super().__init__("OpenAlex", start_date, end_date, query, format)
+
+    def fetch_and_parse_publications(self) -> pd.DataFrame:
+        """
+        Returns a pandas DataFrame containing the harvested publications from OpenAlex.
+
+        The DataFrame includes columns based on the specified format, such as:
+        - `source`: The source database of the publication's metadata (value "openalex")
+        - `internal_id`: The internal ID of the publication in the source KB (OpenAlex ID).
+        - `title`: The title of the publication.
+        - `doi`: The Digital Object Identifier of the publication.
+        - `doctype`: The type of the publication (e.g., Article, Book Chapter, etc.).
+        - `pubyear`: The year of publication.
+        - `ifs3_doctype`: The IFS3 doctype of the publication.
+        - `ifs3_collection_id`: The IFS3 collection ID of the publication.
+        - `authors`: A list of authors, each represented as a dictionary.
+        """
+
+        # Formulate the filter for the query
+        filters = (
+            f"from_publication_date:{self.start_date},"
+            f"to_publication_date:{self.end_date},"
+            f"{self.query}"
+        )
+
+        # Count total publications to manage pagination
+        total = OpenAlexClient.count_results(filter=filters)
+        self.logger.info(f"- Nombre de publications trouvées dans OpenAlex: {total}")
+
+        if total == 0:
+            self.logger.debug("No publications found. Returning an empty DataFrame.")
+            return pd.DataFrame()
+
+        count = 50  # Set a per_page count for pagination
+        recs = []
+
+        # Fetch records in pages of `count` items each
+        for page in range(1, (total // count) + 2):  # Adjusted to +2 to handle last page
+            self.logger.info(f"Harvesting page {page} out of {total // count + 1}")
+
+            try:
+                h_recs = OpenAlexClient.fetch_records(
+                    format=self.format, filter=filters, per_page=count, page=page
+                )
+                if h_recs:
+                    recs.extend(h_recs)
+                else:
+                    self.logger.warning(f"No records found for page {page}.")
+            except Exception as e:
+                self.logger.error(f"Error fetching records for page {page}: {e}")
+
+        # Check if valid records were fetched
+        if recs:
+            df = (
+                pd.DataFrame(recs)
+                .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
+                .reset_index(drop=True)
+            )
+        else:
+            self.logger.debug("No valid records fetched. Returning an empty DataFrame.")
+            return pd.DataFrame()
+
         return df

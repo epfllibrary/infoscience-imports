@@ -49,17 +49,18 @@ class AuthorProcessor:
     def process(self, return_df=False):
 
         self.df = self.df.copy()
-
         for index, row in self.df.iterrows():
             if row['source'] == 'scopus':
                 self.df.at[index, 'epfl_affiliation'] = self._process_scopus(row['organizations'])
             elif row['source'] == 'wos':
                 self.df.at[index, 'epfl_affiliation'] = self._process_wos(row['organizations'])
+            elif row['source'] == 'openalex':
+                self.df.at[index, 'epfl_affiliation'] = self._process_openalex(row['organizations'])    
             elif row['source'] == 'zenodo':
                 self.df.at[index, 'epfl_affiliation'] = self._process_zenodo(row['organizations'])
             else:
                 # Default to False for unknown sources
-                print(f"Unknown source: {row['source']}")
+                self.logger.error(f"Unknown source: {row['source']}")
                 self.df.at[index, 'epfl_affiliation'] = False
         return self.df if return_df else self
 
@@ -73,6 +74,12 @@ class AuthorProcessor:
             return False
         pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
         return bool(re.search(pattern, text))
+
+    def _process_openalex(self, text):
+        if not isinstance(text, str):
+            return False
+        pattern = r"(02s376052|EPFL|École Polytechnique Fédérale de Lausanne)"
+        return bool(re.search(pattern, text, re.IGNORECASE))
 
     def _process_wos(self, text):
         keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
@@ -130,14 +137,35 @@ class AuthorProcessor:
 
         return self.df if return_df else self
 
+
     def nameparse_authors(self, return_df=False):
         parser = nameparser.HumanName
-        self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
+        self.df = self.df.copy()  # Créer une copie du DataFrame si nécessaire
 
+        def parse_name(author_name):
+            # Essayer de détecter si le format est "Nom, Prénom" ou "Prénom Nom"
+            if "," in author_name:
+                # Si la virgule est présente, on suppose le format "Nom, Prénom"
+                parts = author_name.split(",")
+                last_name = parts[0].strip()
+                first_name = parts[1].strip()
+            else:
+                # Sinon, on suppose le format "Prénom Nom"
+                parts = author_name.split()
+                first_name = " ".join(parts[:-1])  # Les prénoms peuvent être multiples
+                last_name = parts[-1]  # Le dernier élément est le nom de famille
+
+            # Utiliser nameparser pour extraire le nom complet et les prénoms (y compris middle names)
+            name = parser(first_name + " " + last_name)
+            return name
+
+        # Appliquer le parsing à chaque ligne
         self.df.loc[:, "nameparse_firstname"] = self.df.apply(
             lambda row: (
                 " ".join(
                     [parser(row["author"]).first, parser(row["author"]).middle]
+                    if row["epfl_affiliation"]
+                    else None
                 ).strip()
                 if row["epfl_affiliation"]
                 else None
@@ -148,6 +176,14 @@ class AuthorProcessor:
         self.df.loc[:, "nameparse_lastname"] = self.df.apply(
             lambda row: parser(row["author"]).last if row["epfl_affiliation"] else None,
             axis=1,
+        )
+
+        # Correction des cas où le nom n'est pas bien divisé
+        self.df["nameparse_lastname"] = self.df["author"].apply(
+            lambda x: parse_name(x).last
+        )
+        self.df["nameparse_firstname"] = self.df["author"].apply(
+            lambda x: " ".join([parse_name(x).first, parse_name(x).middle]).strip()
         )
 
         return self.df if return_df else self
