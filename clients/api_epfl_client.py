@@ -96,40 +96,48 @@ class Client(APIClient):
 
         # If using firstname/lastname, perform both queries
         if use_firstname_lastname:
-            self.logger.info(
-                f"Attempting personsFirstnameLastname for {lastname} {firstname}."
-            )
-            results.append(attempt_query(lastname, firstname))
+            if (
+                firstname and lastname
+            ):  # Vérifie que firstname et lastname ne sont ni None ni vides
+                self.logger.info(
+                    f"Attempting personsFirstnameLastname for {lastname} {firstname}."
+                )
+                results.append(attempt_query(lastname, firstname))
 
-            self.logger.info(
-                f"Attempting personsFirstnameLastname for {firstname} {lastname}."
-            )
-            results.append(attempt_query(firstname, lastname))
+                self.logger.info(
+                    f"Attempting personsFirstnameLastname for {firstname} {lastname}."
+                )
+                results.append(attempt_query(firstname, lastname))
+            else:
+                self.logger.warning("Firstname or lastname is missing; skipping query.")
 
         # Always attempt personsQuery
-        self.logger.info(f"Attempting personsQuery for {query}.")
-        result_query = self.get(Endpoint.personsQuery.format(query=query))
-        self.logger.debug(
-            f"Received response for {query} from personsQuery: {result_query}"
-        )
-        results.append(result_query)
-        self.logger.info(f"Response for personsQuery : {result_query}.")
-        # Process results based on the count
-        for result in results:
-            if result and result["count"] == 1:
-                person_record = result["persons"][0]
-                self.logger.info(f"Single record found for {query}. Processing record.")
-                # Verify that the returned name matches the requested name
-                if (
-                    lastname
-                    and clean_value(person_record["lastname"]) == lastname
-                ):
-                    return self._process_person_record(result, query, format)
-                else:
-                    self.logger.warning(
-                        f"The single record found does not match the requested name: {lastname}."
-                    )
-                return "Single record found, but names do not match."
+        if query:
+            self.logger.info(f"Attempting personsQuery for {query}.")
+            result_query = self.get(Endpoint.personsQuery.format(query=query))
+            self.logger.debug(
+                f"Received response for {query} from personsQuery: {result_query}"
+            )
+            results.append(result_query)
+            self.logger.info(f"Response for personsQuery : {result_query}.")
+            # Process results based on the count
+            for result in results:
+                if result and result["count"] == 1:
+                    person_record = result["persons"][0]
+                    self.logger.info(f"Single record found for {query}. Processing record.")
+                    # Verify that the returned name matches the requested name
+                    if (
+                        lastname
+                        and clean_value(person_record["lastname"]) == lastname
+                    ):
+                        return self._process_person_record(result, query, format)
+                    else:
+                        self.logger.warning(
+                            f"The single record found does not match the requested name: {lastname}."
+                        )
+                    return "Single record found, but names do not match."
+        else:
+            self.logger.warning("personsQuery is missing; skipping...")
 
         # Handle multiple records
         combined_results = [
