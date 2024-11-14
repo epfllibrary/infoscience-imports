@@ -80,7 +80,11 @@ class DataFrameProcessor:
 
         # Sort the combined dataframe to prioritize 'scopus' and 'wos' sources in case of duplicates
         # TODO AB should we use mappings.source_order instead of a new list?
-        source_order = ["wos", "scopus"]  # Define the source order if not already done
+        source_order = [
+            "wos",
+            "scopus",
+            "zenodo",
+        ]  # Define the source order if not already done
         combined_df["source"] = pd.Categorical(
             combined_df["source"], categories=source_order, ordered=True
         )
@@ -91,9 +95,7 @@ class DataFrameProcessor:
         )
 
         # Drop duplicates based on 'doi_id', keeping the first occurrence
-        deduplicated_df = combined_df.drop_duplicates(
-            subset=["doi_id"], keep="first"
-        )
+        deduplicated_df = combined_df.drop_duplicates(subset=["doi_id"], keep="first")
 
         # Drop duplicates based on 'title_pubyear_id', keeping the first occurrence
         deduplicated_df = deduplicated_df.drop_duplicates(
@@ -116,41 +118,40 @@ class DataFrameProcessor:
         wrapper = DSpaceClientWrapper()
 
         # Apply the DSpaceClientWrapper.find_publication_duplicate function to each row
-        df['is_duplicate'] = df.apply(
-            lambda row: wrapper.find_publication_duplicate(row),
-            axis=1
+        df["is_duplicate"] = df.apply(
+            lambda row: wrapper.find_publication_duplicate(row), axis=1
         )
         # df.to_csv("test.csv", index=False,encoding="utf-8")
         # Filter the dataframe to keep only rows where 'is_duplicate' is False
-        filtered_df = df[df['is_duplicate'] == False].drop(columns=['is_duplicate'])
+        filtered_df = df[df["is_duplicate"] == False].drop(columns=["is_duplicate"])
         # keep the unloaded duplicates for memory
-        duplicates_df = df[df['is_duplicate'] == True].drop(columns=['is_duplicate'])
+        duplicates_df = df[df["is_duplicate"] == True].drop(columns=["is_duplicate"])
         return filtered_df, duplicates_df
 
     def generate_main_dataframes(self, df):
         # Step 1: Add an incremental row_id to the DataFrame
-        df['row_id'] = range(1, len(df) + 1)
+        df["row_id"] = range(1, len(df) + 1)
         new_rows = []
 
         # Iterate through each row in the DataFrame
         for _, row in df.iterrows():
-            row_id = row['row_id']
-            source = row['source']
-            authors = row['authors']
+            row_id = row["row_id"]
+            source = row["source"]
+            authors = row["authors"]
 
             for author_data in authors:
                 new_row = {
-                    'row_id': row_id,
-                    'source': source,
-                    'author': author_data.get('author', None),
-                    'orcid_id': author_data.get('orcid_id', None),
-                    'internal_author_id': author_data.get('internal_author_id', None),
-                    'organizations': author_data.get('organizations', None),
-                    'suborganization': author_data.get('suborganization', None)
+                    "row_id": row_id,
+                    "source": source,
+                    "author": author_data.get("author", None),
+                    "orcid_id": author_data.get("orcid_id", None),
+                    "internal_author_id": author_data.get("internal_author_id", None),
+                    "organizations": author_data.get("organizations", None),
+                    "suborganization": author_data.get("suborganization", None),
                 }
                 new_rows.append(new_row)
 
         df_authors = pd.DataFrame(new_rows)
-        df_metadata = df.drop(columns=['authors'])
+        df_metadata = df.drop(columns=["authors"])
 
         return df_metadata, df_authors
