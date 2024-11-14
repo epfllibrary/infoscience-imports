@@ -17,8 +17,8 @@ df = h.harvest()
 deduplicator = DataFrameProcessor(df)
 deduplicated_sources_df = deduplicator.deduplicate_dataframes()
 
-# TODO endless HTTP 400 access denied in this call, fix it
-# df_final, df_unloaded = deduplicator.deduplicate_infoscience(deduplicated_sources_df)
+# endless HTTP 400 access denied loop in this call with the sandbox
+df_final, df_unloaded = deduplicator.deduplicate_infoscience(deduplicated_sources_df)
 df_metadata, df_authors = deduplicator.generate_main_dataframes(df)
 # Generate EPFL authors enriched dataframe
 author_processor = AuthorProcessor(df_authors)
@@ -40,15 +40,20 @@ df_authors.to_csv(
 )
 
 df_epfl_authors.to_csv(
-    os.path.join(path, "EpflAuthors.csv"), index=False, encoding="utf-8"
+    os.path.join(".", "EpflAuthors.csv"), index=False, encoding="utf-8"
 )
-"""
+
 df_unloaded.to_csv(
-    os.path.join(path, "UnloadedDuplicatedPublications.csv"),
+    os.path.join(".", "UnloadedDuplicatedPublications.csv"),
     index=False,
     encoding="utf-8",
 )
-"""
+
+df_final.to_csv(
+    os.path.join(".", "NewPublications.csv"),
+    index=False,
+    encoding="utf-8",
+)
 
 """
 ### Upload data in DSpace #####################

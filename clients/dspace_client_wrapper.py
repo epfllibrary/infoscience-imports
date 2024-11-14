@@ -96,12 +96,12 @@ class DSpaceClientWrapper:
 
             if is_duplicate:
                 self.logger.info(
-                    f"Publication searched with id:{item_id} founded in Infoscience."
+                    f"Publication searched with id:{item_id} found in Infoscience."
                 )
                 return True  # Duplicate found
 
         self.logger.debug(
-            f"Publication searched with id:{item_id} not founded in Infoscience."
+            f"Publication searched with id:{item_id} not found in Infoscience."
         )
         return False  # No duplicates found
 
