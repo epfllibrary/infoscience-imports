@@ -1,10 +1,10 @@
-from .harvester import WosHarvester, ScopusHarvester
+from .harvester import WosHarvester, ScopusHarvester, OpenAlexHarvester
 from .deduplicator import DataFrameProcessor
 from .enricher import AuthorProcessor, PublicationProcessor
 from .loader import Loader
 from config import default_queries
 
-def main(start_date="2022-01-01", end_date="2024-01-01", queries=None):
+def main(start_date="2024-01-01", end_date="2025-01-01", queries=None):
 
     # Merge provided queries with default queries
     if queries:
@@ -12,12 +12,15 @@ def main(start_date="2022-01-01", end_date="2024-01-01", queries=None):
 
     wos_harvester = WosHarvester(start_date, end_date, default_queries["wos"])
     scopus_harvester = ScopusHarvester(start_date, end_date, default_queries["scopus"])
+    openalex_harvester = OpenAlexHarvester(start_date, end_date, default_queries["openalex"])
 
     wos_publications = wos_harvester.harvest()
     scopus_publications = scopus_harvester.harvest()
+    openalex_publications = openalex_harvester.harvest()
 
     # Merge
-    deduplicator = DataFrameProcessor(wos_publications, scopus_publications)
+    deduplicator = DataFrameProcessor(wos_publications, scopus_publications, openalex_publications)
+
     # Deduplicate the publications : first deduplicate operation between the sources
     deduplicated_sources_df = deduplicator.deduplicate_dataframes()
     # and second operation : filter by removing founded duplicates in Infoscience
