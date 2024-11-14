@@ -79,10 +79,6 @@ doctypes_mapping_dict = {
     }
 }
 
-# Define the order of the sources during the deduplication process
-# Zenodo should have the least priority
-source_order = ["scopus", "wos", "zenodo"]
-
 collections_mapping = {
     "Patents": "ce5a1b89-cfb3-40eb-bdd2-dcb021e755b7",
     "Projects": "49ec7e96-4645-4bc0-a015-ba4b81669bbc",
