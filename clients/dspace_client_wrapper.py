@@ -112,14 +112,18 @@ class DSpaceClientWrapper:
         )
         num_items_supervision = len(dsos_supervision)
 
-        # Determine if the item is a duplicate in either configuration
-        if num_items_researchoutputs > 0 or num_items_supervision > 0:
-            self.logger.info(
-                f"Publication searched with id:{item_id} found in Infoscience."
+            # Determine if the item is a duplicate in either configuration
+            is_duplicate = (num_items_researchoutputs > 0) or (
+                num_items_supervision > 0
             )
-            return True  # Duplicate found
 
-        self.logger.info(
+            if is_duplicate:
+                self.logger.info(
+                    f"Publication searched with id:{item_id} found in Infoscience."
+                )
+                return True  # Duplicate found
+
+        self.logger.debug(
             f"Publication searched with id:{item_id} not found in Infoscience."
         )
         return False  # No duplicates found

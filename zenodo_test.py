@@ -20,6 +20,8 @@ df = h.harvest()
 
 deduplicator = DataFrameProcessor(df)
 deduplicated_sources_df = deduplicator.deduplicate_dataframes()
+
+# endless HTTP 400 access denied loop in this call with the sandbox
 df_final, df_unloaded = deduplicator.deduplicate_infoscience(deduplicated_sources_df)
 df_metadata, df_authors = deduplicator.generate_main_dataframes(df)
 # Generate EPFL authors enriched dataframe
