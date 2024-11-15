@@ -16,7 +16,9 @@ class Harvester(abc.ABC):
     Abstract base class for harvesters.
     """
 
-    def __init__(self, source_name: str, start_date: str, end_date: str, query: str, format: str):
+    def __init__(
+        self, source_name: str, start_date: str, end_date: str, query: str, format: str
+    ):
         """
         Initialize the harvester.
 
@@ -61,7 +63,9 @@ class WosHarvester(Harvester):
     WOS Harvester.
     """
 
-    def __init__(self, start_date: str, end_date: str, query: str, format: str = "ifs3"):
+    def __init__(
+        self, start_date: str, end_date: str, query: str, format: str = "ifs3"
+    ):
         super().__init__("WOS", start_date, end_date, query, format)
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
@@ -93,25 +97,31 @@ class WosHarvester(Harvester):
             self.logger.info(
                 f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
             )
-            h_recs = WosClient.fetch_records(format=self.format,
-                                             usrQuery=self.query,
-                                             count=count,
-                                             firstRecord=i,
-                                             createdTimeSpan=createdTimeSpan,
+            h_recs = WosClient.fetch_records(
+                format=self.format,
+                usrQuery=self.query,
+                count=count,
+                firstRecord=i,
+                createdTimeSpan=createdTimeSpan,
             )
             recs.extend(h_recs)
         # keep only valid ifs3 doctypes
-        df = (pd.DataFrame(recs)
-                          .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
-                          .reset_index(drop=True))
+        df = (
+            pd.DataFrame(recs)
+            .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
+            .reset_index(drop=True)
+        )
         return df
+
 
 class ScopusHarvester(Harvester):
     """
     Scopus Harvester.
     """
 
-    def __init__(self, start_date: str, end_date: str, query: str, format: str = "ifs3"):
+    def __init__(
+        self, start_date: str, end_date: str, query: str, format: str = "ifs3"
+    ):
         super().__init__("Scopus", start_date, end_date, query, format)
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
@@ -131,11 +141,9 @@ class ScopusHarvester(Harvester):
         """
         # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
-        total = ScopusClient.count_results(
-                query= updated_query
-        )
+        total = ScopusClient.count_results(query=updated_query)
         self.logger.info(f"- Nombre de publications trouvées dans Scopus: {total}")
-        if total == "0": #scopus API returns 0 as string
+        if total == "0":  # scopus API returns 0 as string
             self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
         count = 50
@@ -145,16 +153,15 @@ class ScopusHarvester(Harvester):
                 f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
             )
             h_recs = ScopusClient.fetch_records(
-              format=self.format,
-              query=updated_query,
-              count=count,
-              start=i
+                format=self.format, query=updated_query, count=count, start=i
             )
             recs.extend(h_recs)
         # Keep only valid ifs3 doctypes
-        df = (pd.DataFrame(recs)
-                          .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
-                          .reset_index(drop=True))
+        df = (
+            pd.DataFrame(recs)
+            .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
+            .reset_index(drop=True)
+        )
         return df
 
 
@@ -163,9 +170,10 @@ class ZenodoHarvester(Harvester):
     Zenodo Harvester.
     """
 
-    def __init__(self, start_date: str, end_date: str,
-                 query: str, format: str = "ifs3"):
-        super().__init__("Scopus", start_date, end_date, query, format)
+    def __init__(
+        self, start_date: str, end_date: str, query: str, format: str = "ifs3"
+    ):
+        super().__init__("Zenodo", start_date, end_date, query, format)
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
         """
@@ -188,33 +196,52 @@ class ZenodoHarvester(Harvester):
            - `suborganization`
         """
 
-        updated_query = ' AND '.join([self.query,
-                                  f'created:[{self.start_date} TO {self.end_date}]'])
+        columns = (
+            "source",
+            "internal_id",
+            "title",
+            "doi",
+            "doctype",
+            "pubyear",
+            "ifs3_doctype",
+            "ifs3_collection_id",
+            "authors",
+        )
+        empty_data = {}
+        for c in columns:
+            empty_data[c] = []
+
+        updated_query = " AND ".join(
+            [self.query, f"created:[{self.start_date} TO {self.end_date}]"]
+        )
 
         total = ZenodoClient.count_results(q=updated_query)
         self.logger.info(f"- Nombre d'objets trouvées dans Zenodo: {total}")
-        if total == "0":  # Zenodo API returns 0 as string
+        if total == 0:  # Zenodo API returns 0 as string
             self.logger.warning("No object found. Returning an empty DataFrame.")
             return pd.DataFrame()
         size = 50
         recs = []
         print(total)
-        for i in range(0, 1+int(total)//size):
+        print(range(0, 1 + int(total) // size))
+        for i in range(0, 1 + int(total) // size):
             self.logger.info(
                 f"Harvest objects {i*size*(int(total)//size)+1} to {i*size*(int(total)//size)} out of a total of {total} objects"
             )
             h_recs = ZenodoClient.fetch_records(
-              format=self.format,
-              q=updated_query,
-              size=size,
-              page=i+1)
-            # print(i, h_recs)
-            recs.extend(h_recs)
+                format=self.format, q=updated_query, size=size, page=i + 1
+            )
+            print(i, h_recs)
+            if h_recs is not None:
+                recs.extend(h_recs)
         # Keep only valid ifs3 doctypes, filter out unknown_doctype
         # print(recs)
-        df = (pd.DataFrame(recs)
-                .query('ifs3_doctype != "unknown_doctype"')
-                .reset_index(drop=True))
+        df = (
+            pd.DataFrame(recs)
+            .query('ifs3_doctype != "unknown_doctype"')
+            .reset_index(drop=True)
+        )
+
         return df
 
 

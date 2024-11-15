@@ -159,7 +159,6 @@ class Loader:
             logger.warning("No valid authors found with 'epfl_api_mainunit_name'.")
             return pd.DataFrame()  # Return an empty DataFrame if no valid authors found
 
-
     def create_complete_publication(self):
         # Filter publications by valid authors first
         df_items_to_import = self._filter_publications_by_valid_affilliations()
@@ -240,8 +239,9 @@ class Loader:
                         f"No matching units found for row ID: {row['row_id']}."
                     )
             else:
+                logger.error(row.keys())
                 logger.error(
-                    f"Failed to push publication with source: {row['source']}, internal_id: {row['internal_id']}, and collection_id: {row['collection_id']}"
+                    f"Failed to push publication with source: {row['source']}, internal_id: {row['internal_id']}, and collection_id: {row['ifs3_collection_id']}"
                 )
 
         return df_items_imported
