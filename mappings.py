@@ -6,11 +6,11 @@ doctypes_mapping_dict = {
         # "Book Chapter": "Books and Book parts",
         # "Book": "Books and Book parts",
         # "Correction": "Journal articles",
-        "Editorial Material":"Journal articles",
+        "Editorial Material": "Journal articles",
         "Letter": "Journal articles",
         # "Meeting Abstract": "Conferences, Workshops, Symposiums, and Seminars",
         # "Proceedings Paper": "Conferences, Workshops, Symposiums, and Seminars",
-        "Review": "Journal articles"
+        "Review": "Journal articles",
     },
     "source_scopus": {
         "Article": "Journal articles",
@@ -19,16 +19,16 @@ doctypes_mapping_dict = {
         # "Chapter": "Books and Book parts",
         # "Conference Paper": "Conferences, Workshops, Symposiums, and Seminars",
         # "Conference Review": "Conferences, Workshops, Symposiums, and Seminars",
-        "Data Paper": "Journal articles",  #?
+        "Data Paper": "Journal articles",  # ?
         "Editorial": "Journal articles",
         "Letter": "Journal articles",
         "Review": "Journal articles",
         "Business Article": "Journal articles",
-        #"Erratum": "",
-        #"Note": "",
-        #"Short Survey": "",
-        #"Press Release": "",
-        #"Other": ""
+        # "Erratum": "",
+        # "Note": "",
+        # "Short Survey": "",
+        # "Press Release": "",
+        # "Other": ""
     },
     "source_openalex": {
         "article": "Journal articles",
@@ -42,17 +42,14 @@ doctypes_mapping_dict = {
         "report": "Reports, Documentation, and Standards",
         "standard": "Reports, Documentation, and Standards",
         "preprint": "Preprints and Working Papers"
-        #"erratum": "",
-        #"grant": "",
-        #"other": "",
-        #"paratext": "",
-        #"peer-review": "",
-        #"reference-entry": "",
-
+        # "erratum": "",
+        # "grant": "",
+        # "other": "",
+        # "paratext": "",
+        # "peer-review": "",
+        # "reference-entry": "",
     },
-    "source_crossref": {
-
-    },
+    "source_crossref": {},
     "source_zenodo": {
         "dataset": "Datasets and Code",
         "lesson": "Teaching Materials",
@@ -75,9 +72,9 @@ doctypes_mapping_dict = {
         "image/other": "Images, Videos, Interactive resources, and Design",
         "software": "Datasets and Code",
         "video": "Images, Videos, Interactive resources, and Design",
-        "model": "Datasets and Code"
-
-    }
+        "model": "Datasets and Code",
+        "other": "Datasets and Code",
+    },
 }
 
 # Define the order of the sources during the deduplication process
@@ -163,6 +160,7 @@ versions_mapping = {
         "display": "Not Applicable (or Unknown)",
     },
 }
+
 
 def normalize_doctype_value(source, value):
     # Testing the function
