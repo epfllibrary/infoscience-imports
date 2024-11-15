@@ -238,7 +238,6 @@ class Loader:
                         f"No matching units found for row ID: {row['row_id']}."
                     )
             else:
-                logger.error(row.keys())
                 logger.error(
                     f"Failed to push publication with source: {row['source']}, internal_id: {row['internal_id']}, and collection_id: {row['ifs3_collection_id']}"
                 )
