@@ -76,14 +76,14 @@ class DSpaceClientWrapper:
         query_parts = []
 
         if item_id:
-            query_parts.append(f"(itemidentifier:\"*{item_id}\")")
+            query_parts.append(f"(itemidentifier_keyword:\"{item_id}\")")
 
         query_parts.append(
             f"(title:({cleaned_title}) AND (dateIssued:{pubyear} OR dateIssued:{previous_year} OR dateIssued:{next_year}))"
         )
 
         if "doi" in x and x["doi"] not in ["", None]:
-            query_parts.append(f"(itemidentifier:\"*{str(x['doi']).strip()}\")")
+            query_parts.append(f"(itemidentifier_keyword:\"{str(x['doi']).strip()}\")")
 
         # Combine all query parts using OR
         final_query = " OR ".join(query_parts)
