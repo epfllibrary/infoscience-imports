@@ -226,7 +226,7 @@ class Client(APIClient):
         """
         record = {
             "source": "zenodo",
-            "internal_id": x["id"],
+            "internal_id": f"ZENODO:{x["id"]}",
             "doi": x["doi"].lower(),
             "title": x["metadata"]["title"],
             "doctype": x["metadata"]["resource_type"]["title"],
