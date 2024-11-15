@@ -25,7 +25,9 @@ load_dotenv(os.path.join(os.getcwd(), ".env"))
 api_epfl_user = os.environ.get("API_EPFL_USER")
 api_epfl_pwd = os.environ.get("API_EPFL_PWD")
 
-api_epfl_authentication_method = BasicAuthentication(username=api_epfl_user, password=api_epfl_pwd)
+api_epfl_authentication_method = BasicAuthentication(
+    username=api_epfl_user, password=api_epfl_pwd
+)
 
 retry_decorator = tenacity.retry(
     retry=retry_if_api_request_error(status_codes=[429]),
@@ -33,6 +35,7 @@ retry_decorator = tenacity.retry(
     stop=tenacity.stop_after_attempt(5),
     reraise=True,
 )
+
 
 @endpoint(base_url=api_epfl_base_url)
 class Endpoint:
@@ -42,8 +45,8 @@ class Endpoint:
     accredsId = "accreds?persid={sciperID}"
     unitsId = "units/{unitID}"
 
-class Client(APIClient):
 
+class Client(APIClient):
     logger = manage_logger("./logs/api_epfl_client.log")
 
     @retry_decorator
@@ -97,12 +100,20 @@ class Client(APIClient):
             self.logger.info(
                 f"Attempting personsFirstnameLastname for {firstname} {lastname}."
             )
-            results.append(attempt_query(firstname, lastname))
+            try:
+                results.append(attempt_query(firstname, lastname))
+            except exceptions.ServerError:
+                self.logger.error(f"{firstname} {lastname} caused an EPFL API error")
+                pass
 
             self.logger.info(
                 f"Attempting personsFirstnameLastname for {lastname} {firstname}."
             )
-            results.append(attempt_query(lastname, firstname))
+            try:
+                results.append(attempt_query(lastname, firstname))
+            except exceptions.ServerError:
+                self.logger.error(f"{lastname} {firstname} caused an EPFL API error")
+                pass
 
         # Always attempt personsQuery
         self.logger.info(f"Attempting personsQuery for {query}.")
@@ -120,7 +131,10 @@ class Client(APIClient):
 
         # Handle multiple records
         combined_results = [
-            person for result in results if result for person in result.get("persons", [])
+            person
+            for result in results
+            if result
+            for person in result.get("persons", [])
         ]
 
         if len(combined_results) > 1:
@@ -135,7 +149,9 @@ class Client(APIClient):
             )
 
             if best_candidate:
-                self.logger.info(f"Best candidate identified: {best_candidate['display']}")
+                self.logger.info(
+                    f"Best candidate identified: {best_candidate['display']}"
+                )
                 return self._process_person_record(
                     {"count": 1, "persons": [best_candidate]}, query, format
                 )
@@ -159,7 +175,9 @@ class Client(APIClient):
 
     @retry_decorator
     def fetch_unit_by_unique_id(self, unit_id: str, format="digest"):
-        self.logger.info(f"Fetching units for unit_id: '{unit_id}' using format: '{format}'")
+        self.logger.info(
+            f"Fetching units for unit_id: '{unit_id}' using format: '{format}'"
+        )
         result = self.get(Endpoint.unitsId.format(unitID=unit_id))
         self.logger.debug(f"Received response for {unit_id}: {result}")
         return self._process_unit_record(result, unit_id, format)
@@ -186,7 +204,7 @@ class Client(APIClient):
         )
 
         # Check if 'accreds' is present and not empty
-        if 'accreds' not in record or not record['accreds']:
+        if "accreds" not in record or not record["accreds"]:
             self.logger.warning(
                 f"No accreditation records found for sciper_id: '{sciper_id}'."
             )
@@ -194,7 +212,9 @@ class Client(APIClient):
 
         if format == "digest":
             self.logger.debug(f"Extracting sciperId information for {sciper_id}.")
-            return [self._extract_accred_units_info(x) for x in record.get("accreds", [])] # to keep the order of units
+            return [
+                self._extract_accred_units_info(x) for x in record.get("accreds", [])
+            ]  # to keep the order of units
         elif format == "mainUnit":
             self.logger.debug(f"Extracting main unit information for {sciper_id}.")
             return self._extract_accred_units_info(record["accreds"][0])
@@ -212,7 +232,7 @@ class Client(APIClient):
         self.logger.info("Extracting digest person information from the record.")
         record = {
             "sciper_id": x["persons"][0]["id"],
-            "unitsIds": "|".join([unit["unitid"] for unit in x["persons"][0]["rooms"]])
+            "unitsIds": "|".join([unit["unitid"] for unit in x["persons"][0]["rooms"]]),
         }
         self.logger.debug(f"Extracted digest record: {record}")
         return record
@@ -223,12 +243,12 @@ class Client(APIClient):
         record = {
             "unit_id": str(x["unit"]["id"]),
             "unit_name": x["unit"]["name"],
-            "unit_type": unit_type
+            "unit_type": unit_type,
         }
         self.logger.debug(f"Extracted units from accred record: {record}")
         return record
 
-    def _process_unit_record(self, record, unit_id, format):       
+    def _process_unit_record(self, record, unit_id, format):
         if format == "digest":
             self.logger.debug(f"Extracting unit type information for {unit_id}.")
             return self._extract_unittype_info(record)
@@ -288,5 +308,5 @@ class Client(APIClient):
 ApiEpflClient = Client(
     authentication_method=api_epfl_authentication_method,
     response_handler=JsonResponseHandler,
-    error_handler=ErrorHandler
+    error_handler=ErrorHandler,
 )
