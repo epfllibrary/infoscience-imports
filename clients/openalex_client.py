@@ -288,7 +288,9 @@ class OpenAlexClient(APIClient):
         """
         ifs3_doctype = self._extract_ifs3_doctype(record)
         if ifs3_doctype != "unknown_doctype":
-            return mappings.collections_mapping.get(ifs3_doctype, "unknown_collection")
+            collection_info = mappings.collections_mapping.get(ifs3_doctype, None)
+            if collection_info:
+                return collection_info["id"]
         return "unknown_collection"
 
     def _extract_author_orcid(self, author):

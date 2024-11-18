@@ -226,7 +226,7 @@ class Client(APIClient):
         """
         record = {
             "source": "zenodo",
-            "internal_id": f"ZENODO:{x["id"]}",
+            "internal_id": f'ZENODO:{x["id"]}',
             "doi": x["doi"].lower(),
             "title": x["metadata"]["title"],
             "doctype": x["metadata"]["resource_type"]["title"],
@@ -281,7 +281,8 @@ class Client(APIClient):
     def _extract_ifs3_collection_id(self, x):
         ifs3_doctype = self._extract_ifs3_doctype(x)
         try:
-            return mappings.collections_mapping[ifs3_doctype]
+            collection_info = mappings.collections_mapping[ifs3_doctype]
+            return collection_info["id"]
         except KeyError:
             return "unknown_collection"
 

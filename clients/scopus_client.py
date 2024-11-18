@@ -275,9 +275,15 @@ class Client(APIClient):
 
     def _extract_ifs3_collection_id(self, x):
         ifs3_doctype = self._extract_ifs3_doctype(x)
-        if ifs3_doctype != "unknown_doctype":  # Check against the default value
-            return mappings.collections_mapping.get(ifs3_doctype, "unknown_collection")  # Default for missing collection
-        return "unknown_collection"  # or any other default value
+
+        if ifs3_doctype != "unknown_doctype":
+            collection_info = mappings.collections_mapping.get(ifs3_doctype, None)
+            if collection_info:
+                return collection_info["id"]
+            else:
+                return "unknown_collection"
+
+        return "unknown_collection"
 
     def _extract_pubyear(self, x):
         return x.get("prism:coverDate", None)[:4]
