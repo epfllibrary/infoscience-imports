@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-from mappings import licenses_mapping, versions_mapping
+from mappings import licenses_mapping, versions_mapping, collections_mapping
 
 from utils import manage_logger
 from config import logs_dir
@@ -16,21 +16,22 @@ class Loader:
         self.dspace_wrapper = DSpaceClientWrapper()
 
     def _patch_units(self, workspace_id, units, ifs3_collection_id):
-        # Déterminer la section dynamique
         form_section = self._get_form_section(ifs3_collection_id)
+        logger.info(
+            f"Collection ID:'{ifs3_collection_id}' et section name: '{form_section}'."
+        )
         if not form_section:
             logger.error(
                 f"Invalid collection ID: {ifs3_collection_id}. Unable to determine form section."
             )
             return
 
-        # Construire les opérations PATCH
         try:
             patch_operations = self._construct_patch_operations(units, form_section)
             logger.debug(f"Patch operations: {patch_operations}")
-
-            # Exécuter l'opération PATCH
-            response = self.dspace_wrapper.patch_metadata(workspace_id, patch_operations)
+            response = self.dspace_wrapper._update_workspace(
+                workspace_id, patch_operations
+            )
             if response.status_code in [200, 204]:
                 logger.info(f"Metadata patched successfully for workspace {workspace_id}.")
             else:
@@ -43,14 +44,14 @@ class Loader:
 
     def _get_form_section(self, ifs3_collection_id):
         """
-        Détermine la section du formulaire basée sur l'ID de la collection.
+        Récupère la section associée à un ifs3_collection_id depuis le fichier de mapping.
         """
-        collection_to_section_mapping = {
-            "collection_id_1": "section_1",  # Exemple de mappage
-            "collection_id_2": "section_2",
-            # Ajouter d'autres mappages ici...
-        }
-        return collection_to_section_mapping.get(ifs3_collection_id, None)
+        for collection_name, attributes in collections_mapping.items():
+            if attributes["id"] == ifs3_collection_id:
+                return attributes["section"]
+
+        logger.error(f"No section found for collection ID: {ifs3_collection_id}")
+        return None
 
     def _construct_patch_operations(self, units, form_section):
         sponsorships = [
@@ -59,7 +60,7 @@ class Loader:
                 "language": None,
                 "authority": f"will be referenced::ACRONYM::{unit.get('acro')}",
                 "securityLevel": 0,
-                "confidence": 500,
+                "confidence": 600,
                 "place": 0,
             }
             for unit in units
@@ -72,11 +73,11 @@ class Loader:
                 "path": f"/sections/{form_section}/dc.description.sponsorship",
                 "value": sponsorships,
             },
-            {
-                "op": "add",
-                "path": f"/sections/{form_section}/epfl.peerreviewed",
-                "value": [self._build_patch_value("REVIEWED")],
-            },
+            # {
+            #     "op": "add",
+            #     "path": f"/sections/{form_section}/epfl.peerreviewed",
+            #     "value": [self._build_patch_value("REVIEWED")],
+            # },
             {
                 "op": "add",
                 "path": f"/sections/{form_section}/epfl.writtenAt",
