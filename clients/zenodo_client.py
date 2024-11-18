@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 from utils import manage_logger
 import mappings
+from config import logs_dir
 
 zenodo_api_base_url = "https://zenodo.org/api/"
 # env var
@@ -50,7 +51,8 @@ class Endpoint:
 
 class Client(APIClient):
 
-    logger = manage_logger("./logs/zenodo_client.log")
+    log_file_path = os.path.join(logs_dir, "zenodo_client.log")
+    logger = manage_logger(log_file_path)
 
     @retry_request
     def search_query(self, **param_kwargs):
@@ -224,7 +226,7 @@ class Client(APIClient):
         """
         record = {
             "source": "zenodo",
-            "internal_id": x["id"],
+            "internal_id": f'ZENODO:{x["id"]}',
             "doi": x["doi"].lower(),
             "title": x["metadata"]["title"],
             "doctype": x["metadata"]["resource_type"]["title"],
@@ -279,7 +281,8 @@ class Client(APIClient):
     def _extract_ifs3_collection_id(self, x):
         ifs3_doctype = self._extract_ifs3_doctype(x)
         try:
-            return mappings.collections_mapping[ifs3_doctype]
+            collection_info = mappings.collections_mapping[ifs3_doctype]
+            return collection_info["id"]
         except KeyError:
             return "unknown_collection"
 

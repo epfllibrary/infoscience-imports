@@ -4,7 +4,8 @@
 
 # Ignore data folder#
 ###################
-harvested-data/**
+**/*harvested-data*/**
+**/*pdf*/**
 
 # Ignore archived version of notebooks and python stuffs #
 ###################
@@ -15,6 +16,7 @@ __pycache__
 ###################
 .scannerwork
 .log
+**/*logs*/**
 sonar-project.properties
 **/*test_*/**
 template.py

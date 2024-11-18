@@ -18,7 +18,7 @@ The data pipeline is breaked down into separate Python scripts, each responsible
 Located in `./data_pipeline` folder.
 
 1. `harvester.py`: Fetch publications from different sources (Wos and Scopus for the moment). 
-   Each source is harvested with a dedicated client, one client by sources in the `clients` folder. They all are runned in a `Harvester` class that can be easily extended to support multiple sources. This approach allows to separate the harvesting logic from the source-specific implementation details.
+   Each source is harvested with a dedicated client, one client by sources in the `clients` folder. They all are run in a `Harvester` class that can be easily extended to support multiple sources. This approach allows to separate the harvesting logic from the source-specific implementation details.
 2. `deduplicator.py`: Merge and deduplicate the fetched data.
 
    The final dataframe contains following metadata :
@@ -76,11 +76,12 @@ Located in `./clients` folder.
 
 Each source of metadata is harvested and parsed by a specific client, before the data being processed in the python scripts.
 
-1. **wos_client_v2.py**: contains the WosClient with all methods to parse the results of the WoS search API
-2. **scopus_client_v2.py**: contains the ScopusClient with all methods to parse the results of the Scopus search API
-3. **api_epfl_client.py** : contains the ApiEpflClient for local EPFL informations retrieving (author sciper Id, accreds and units)
-4. **unpaywall_client.py** : contains the UnpaywallClient with methos to request teh Unpaywall API
+1. **wos_client_v2.py**: contains the WosClient class with all methods to parse the results of the WoS search API
+2. **scopus_client_v2.py**: contains the ScopusClient class with all methods to parse the results of the Scopus search API
+3. **api_epfl_client.py** : contains the ApiEpflClient class for local EPFL informations retrieval (author sciper Id, accreds and units)
+4. **unpaywall_client.py** : contains the UnpaywallClient class with methods to request the Unpaywall API
 5. **dsapce_client_wrapper.py**: contains the DSpaceClientWrapper with methods to search and update objects in Dspace using the Dspace Rest Client
+6. **zenodo_client.py** : contains the ZenodoClient class with all methods to parse the results of the Zenodo search API
 
 Others : some tests with Orcid API and Istex API for managing authors names.
 

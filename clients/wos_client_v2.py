@@ -17,6 +17,7 @@ import traceback
 from dotenv import load_dotenv
 from utils import manage_logger
 import mappings
+from config import logs_dir
 
 wos_api_base_url = "https://api.clarivate.com/api/wos"
 # env var
@@ -49,7 +50,8 @@ class Endpoint:
 
 class Client(APIClient):
 
-    logger = manage_logger("./logs/wos_client.log")
+    log_file_path = os.path.join(logs_dir, "wos_client.log")
+    logger = manage_logger(log_file_path)
 
     @retry_request
     def search_query(self, **param_kwargs):
@@ -130,7 +132,6 @@ class Client(APIClient):
         param_kwargs.setdefault('firstRecord', 1)
         self.params = {**param_kwargs}
         return [x["UID"] for x in self.search_query(**self.params)["Data"]["Records"]["records"]["REC"]]
-
 
     @retry_decorator
     def fetch_records(self, format="digest",**param_kwargs):
@@ -290,25 +291,25 @@ class Client(APIClient):
                 return "unknown_doctype"  # or any other default value
         return "unknown_doctype"  # or any other default value
 
-
     def _extract_ifs3_collection_id(self, x):
         ifs3_doctype = self._extract_ifs3_doctype(x)
-        if ifs3_doctype != "unknown_doctype":  # Check against the default value
-            return mappings.collections_mapping.get(ifs3_doctype, "unknown_collection")  # Default for missing collection
-        return "unknown_collection"  # or any other default value
+        if ifs3_doctype != "unknown_doctype":
+            collection_info = mappings.collections_mapping.get(ifs3_doctype, None)
+            if collection_info:
+                return collection_info["id"]
+        return "unknown_collection"
 
     def _extract_pubyear(self, x):
         pub_info = x["static_data"]["summary"].get("pub_info", {})
         return pub_info.get("pubyear") if not isinstance(pub_info.get("pubyear"), list) else None
 
-    
     def _extract_ifs3_authors(self, x):
         # Initialize the authors list
         authors = []
 
         try:
             # Safely navigate to the addresses section
-            #addresses = x.get("static_data", {}).get("fullrecord_metadata", {}).get("addresses", {}).get("address_name", [])
+            # addresses = x.get("static_data", {}).get("fullrecord_metadata", {}).get("addresses", {}).get("address_name", [])
             addresses = x["static_data"]["fullrecord_metadata"]["addresses"]["address_name"]
 
             # Handle the case where a single address is given as a dictionary instead of a list
@@ -372,7 +373,7 @@ class Client(APIClient):
             print(f"{x.get('UID', 'Unknown UID')} : An error occurred during processing: {error_message}")
 
         return authors
-    
+
     def _get_internal_author_id(self, data_item_id):
         """
         Extracts the internal author ID from the data-item-id field.

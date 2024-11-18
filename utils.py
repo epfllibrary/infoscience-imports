@@ -1,4 +1,6 @@
 import logging
+import string
+import unicodedata
 
 def manage_logger(logfile_name):
     # Configure logging for a specific logger (unique per instance)
@@ -34,3 +36,16 @@ def manage_logger(logfile_name):
     logger.propagate = False
 
     return logger
+
+def clean_value(value):
+    value = value.lower()
+    value = value.translate(
+        str.maketrans(string.punctuation, " " * len(string.punctuation))
+    )
+    value = remove_accents(value)
+    value = value.encode("ascii", "ignore").decode("utf-8")
+    return value
+
+def remove_accents(input_str):
+    nfkd_form = unicodedata.normalize("NFKD", input_str)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
