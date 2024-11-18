@@ -17,16 +17,21 @@ class Loader:
 
     def _patch_units(self, workspace_id, units, ifs3_collection_id):
         form_section = self._get_form_section(ifs3_collection_id)
+        logger.info(
+            f"Collection ID:'{ifs3_collection_id}' et section name: '{form_section}'."
+        )
         if not form_section:
             logger.error(
                 f"Invalid collection ID: {ifs3_collection_id}. Unable to determine form section."
             )
             return
-        
+
         try:
             patch_operations = self._construct_patch_operations(units, form_section)
             logger.debug(f"Patch operations: {patch_operations}")
-            response = self.dspace_wrapper.patch_metadata(workspace_id, patch_operations)
+            response = self.dspace_wrapper._update_workspace(
+                workspace_id, patch_operations
+            )
             if response.status_code in [200, 204]:
                 logger.info(f"Metadata patched successfully for workspace {workspace_id}.")
             else:
@@ -36,7 +41,6 @@ class Loader:
                 )
         except Exception as e:
             logger.error(f"An error occurred while patching units: {e}")
-
 
     def _get_form_section(self, ifs3_collection_id):
         """
