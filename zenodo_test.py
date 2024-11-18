@@ -39,7 +39,7 @@ df_metadata.to_csv(
     os.path.join(".", "ResearchOutput.csv"), index=False, encoding="utf-8"
 )
 
-df_epfl_authors.to_csv(
+df_authors.to_csv(
     os.path.join(".", "AddressesAndNames.csv"), index=False, encoding="utf-8"
 )
 

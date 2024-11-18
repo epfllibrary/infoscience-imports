@@ -8,6 +8,7 @@ from config import logs_dir
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 
+
 class DSpaceClientWrapper:
     def __init__(self):
         log_file_path = os.path.join(logs_dir, "dspace_client.log")
@@ -60,7 +61,7 @@ class DSpaceClientWrapper:
         if isinstance(pubyear, str) and pubyear.isdigit():
             pubyear = int(pubyear)
         elif not isinstance(pubyear, int):
-            raise ValueError("pubyear doit être numérique")
+            raise ValueError("pubyear must be an integer")
         previous_year = pubyear - 1
         next_year = pubyear + 1
 
@@ -71,12 +72,16 @@ class DSpaceClientWrapper:
             item_id = str(x["internal_id"]).replace("SCOPUS_ID:", "").strip()
         elif identifier_type == "openalex":
             item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
+        elif identifier_type == "zenodo":
+            item_id = x["doi"].strip()
+        else:
+            raise ValueError("identifier_type must be 'wos', 'scopus' or 'zenodo'")
 
         # Combine all criteria into a single query
         query_parts = []
 
         if item_id:
-            query_parts.append(f"(itemidentifier_keyword:\"{item_id}\")")
+            query_parts.append(f'(itemidentifier_keyword:"{item_id}")')
 
         query_parts.append(
             f"(title:({cleaned_title}) AND (dateIssued:{pubyear} OR dateIssued:{previous_year} OR dateIssued:{next_year}))"
@@ -89,7 +94,9 @@ class DSpaceClientWrapper:
         final_query = " OR ".join(query_parts)
 
         # Search for duplicates using the combined query
-        self.logger.debug(f"Searching Infoscience researchoutput with query: {final_query}...")
+        self.logger.debug(
+            f"Searching Infoscience researchoutput with query: {final_query}..."
+        )
 
         # Check the researchoutput configuration
         dsos_researchoutputs = self._search_objects(
@@ -112,16 +119,14 @@ class DSpaceClientWrapper:
         )
         num_items_supervision = len(dsos_supervision)
 
-            # Determine if the item is a duplicate in either configuration
-            is_duplicate = (num_items_researchoutputs > 0) or (
-                num_items_supervision > 0
-            )
+        # Determine if the item is a duplicate in either configuration
+        is_duplicate = (num_items_researchoutputs > 0) or (num_items_supervision > 0)
 
-            if is_duplicate:
-                self.logger.info(
-                    f"Publication searched with id:{item_id} found in Infoscience."
-                )
-                return True  # Duplicate found
+        if is_duplicate:
+            self.logger.info(
+                f"Publication searched with id:{item_id} found in Infoscience."
+            )
+            return True  # Duplicate found
 
         self.logger.debug(
             f"Publication searched with id:{item_id} not found in Infoscience."
@@ -133,34 +138,44 @@ class DSpaceClientWrapper:
         param query: format (index:value), for example (title:Scolaro A.)
         """
         dsos_persons = self._search_objects(
-                query=query,
-                size=10,
-                configuration="person",
+            query=query,
+            size=10,
+            configuration="person",
         )
         num_items_persons = len(dsos_persons)
         if num_items_persons == 1:
-            self.logger.debug(f"Single record found for {query} in DspaceCris. Processing record.")
+            self.logger.debug(
+                f"Single record found for {query} in DspaceCris. Processing record."
+            )
             # return {
             #    "uuid": dsos_persons[0].uuid,
             #    "name": dsos_persons[0].metadata.get("dc.title")[0]["value"]
             # }
             return dsos_persons[0].uuid
         elif num_items_persons == 0:
-            self.logger.warning(f"No record found for {query} in DspaceCris: {num_items_persons} results.")
+            self.logger.warning(
+                f"No record found for {query} in DspaceCris: {num_items_persons} results."
+            )
             return "0 result on Infoscience"
         elif num_items_persons > 1:
-            self.logger.warning(f"Multiple records found for {query} in DspaceCris: {num_items_persons} results.")
+            self.logger.warning(
+                f"Multiple records found for {query} in DspaceCris: {num_items_persons} results."
+            )
             return "At least 1 result on Infoscience"
 
     def push_publication(self, source, wos_id, collection_id):
         try:
             # Attempt to create a workspace item from the external source
-            response = self.client.create_workspaceitem_from_external_source(source, wos_id, collection_id)
+            response = self.client.create_workspaceitem_from_external_source(
+                source, wos_id, collection_id
+            )
 
             # Check if the response contains the expected data
             if response and "id" in response:
                 workspace_id = response["id"]
-                self.logger.info(f"Successfully created workspace item with ID: {workspace_id}")
+                self.logger.info(
+                    f"Successfully created workspace item with ID: {workspace_id}"
+                )
                 return workspace_id
             else:
                 self.logger.error(
@@ -168,13 +183,15 @@ class DSpaceClientWrapper:
                 )
                 return None
         except Exception as e:
-            self.logger.error(f"An error occurred while pushing the publication: {str(e)}")
+            self.logger.error(
+                f"An error occurred while pushing the publication: {str(e)}"
+            )
             return None
 
     def _update_workspace(self, workspace_id, patch_operations):
         return self.client.update_workspaceitem(workspace_id, patch_operations)
 
-    def _create_workflowitem(self, workspace_id): 
+    def _create_workflowitem(self, workspace_id):
         return self.client.create_workflowitem(workspace_id)
 
     def _upload_file_to_workspace(self, workspace_id, file_path):
@@ -216,4 +233,4 @@ def clean_title(title):
     title = re.sub(r"<[^>]+>", "", title)
     title = re.sub(r"[^\w\s]", " ", title)
     title = re.sub(r"\s+", " ", title).strip()
-    return title   
+    return title
