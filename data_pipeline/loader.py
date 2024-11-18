@@ -15,61 +15,89 @@ class Loader:
         self.df_authors = df_authors
         self.dspace_wrapper = DSpaceClientWrapper()
 
-    def _patch_units(self, workspace_id, units):
-        sponsorships = []
-        for unit in units:
-            sponsorships.append(
-                {
-                    "value": unit.get("acro"),
-                    "language": None,
-                    "authority": f"will be referenced::ACRONYM::{unit.get('acro')}",
-                    "securityLevel": 0,
-                    "confidence": 500,
-                    "place": 0,
-                }
+    def _patch_units(self, workspace_id, units, ifs3_collection_id):
+        # Déterminer la section dynamique
+        form_section = self._get_form_section(ifs3_collection_id)
+        if not form_section:
+            logger.error(
+                f"Invalid collection ID: {ifs3_collection_id}. Unable to determine form section."
             )
+            return
 
-        patch_operations = [
+        # Construire les opérations PATCH
+        try:
+            patch_operations = self._construct_patch_operations(units, form_section)
+            logger.debug(f"Patch operations: {patch_operations}")
+
+            # Exécuter l'opération PATCH
+            response = self.dspace_wrapper.patch_metadata(workspace_id, patch_operations)
+            if response.status_code in [200, 204]:
+                logger.info(f"Metadata patched successfully for workspace {workspace_id}.")
+            else:
+                logger.error(
+                    f"Failed to patch metadata for workspace {workspace_id}. "
+                    f"Status: {response.status_code}, Response: {response.text}"
+                )
+        except Exception as e:
+            logger.error(f"An error occurred while patching units: {e}")
+
+    def _get_form_section(self, ifs3_collection_id):
+        """
+        Détermine la section du formulaire basée sur l'ID de la collection.
+        """
+        collection_to_section_mapping = {
+            "collection_id_1": "section_1",  # Exemple de mappage
+            "collection_id_2": "section_2",
+            # Ajouter d'autres mappages ici...
+        }
+        return collection_to_section_mapping.get(ifs3_collection_id, None)
+
+    def _construct_patch_operations(self, units, form_section):
+        sponsorships = [
+            {
+                "value": unit.get("acro"),
+                "language": None,
+                "authority": f"will be referenced::ACRONYM::{unit.get('acro')}",
+                "securityLevel": 0,
+                "confidence": 500,
+                "place": 0,
+            }
+            for unit in units
+            if unit.get("acro")
+        ]
+
+        return [
             {
                 "op": "add",
-                "path": "/sections/article_details/dc.description.sponsorship",
+                "path": f"/sections/{form_section}/dc.description.sponsorship",
                 "value": sponsorships,
             },
             {
                 "op": "add",
-                "path": "/sections/article_details/epfl.peerreviewed",
-                "value": [
-                    {
-                        "value": "REVIEWED",
-                        "language": None,
-                        "authority": None,
-                        "display": "REVIEWED",
-                        "securityLevel": 0,
-                        "confidence": -1,
-                        "place": 0,
-                        "otherInformation": None,
-                    }
-                ],
+                "path": f"/sections/{form_section}/epfl.peerreviewed",
+                "value": [self._build_patch_value("REVIEWED")],
             },
             {
                 "op": "add",
-                "path": "/sections/article_details/epfl.writtenAt",
-                "value": [
-                    {
-                        "value": "EPFL",
-                        "language": None,
-                        "authority": None,
-                        "display": "EPFL",
-                        "securityLevel": 0,
-                        "confidence": -1,
-                        "place": 0,
-                        "otherInformation": None,
-                    }
-                ],
+                "path": f"/sections/{form_section}/epfl.writtenAt",
+                "value": [self._build_patch_value("EPFL")],
             },
             {"op": "add", "path": "/sections/license/granted", "value": "true"},
         ]
-        return self.dspace_wrapper._update_workspace(workspace_id, patch_operations)
+
+    def _build_patch_value(
+        self, value, display=None, authority=None, confidence=-1, place=0
+    ):
+        return {
+            "value": value,
+            "language": None,
+            "authority": authority,
+            "display": display or value,
+            "securityLevel": 0,
+            "confidence": confidence,
+            "place": place,
+            "otherInformation": None,
+        }
 
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
         # On vérifie si le mapping pour la license et la version existe
@@ -170,11 +198,26 @@ class Loader:
             return df_items_imported  # Return an empty or unchanged DataFrame
 
         for index, row in df_items_to_import.iterrows():
+            # Extract source and other identifiers from the row
+            source = row.get("source", "")
+            source_id = row.get("internal_id", "")
+            collection_id = row.get("ifs3_collection_id", "")
+
+            # Adjust the internal_id and source depending on the source
+            if source == "openalex" or source == "zenodo":
+                source_id = row.get("doi", source_id)
+            if source == "openalex":
+                source = "crossref"
+            elif source == "zenodo":
+                source = "datacite"
+
+            # Call the method to push the publication to the workspace
             workspace_id = self.dspace_wrapper.push_publication(
-                row.get("source", ""),
-                row.get("internal_id", ""),
-                row.get("ifs3_collection_id", ""),
+                source,
+                source_id,
+                collection_id,
             )
+
             valid_pdf = row.get("upw_valid_pdf", "")
 
             if pd.notna(valid_pdf) and valid_pdf != "":
@@ -198,11 +241,10 @@ class Loader:
                     if pd.notna(author["epfl_api_mainunit_name"])
                     and author["epfl_api_mainunit_name"] != ""
                 ]
-
                 unique_units = {unit["acro"]: unit for unit in units}.values()
                 logger.debug(f"retrieved units: {unique_units}")
                 if unique_units:
-                    self._patch_units(workspace_id, unique_units)
+                    self._patch_units(workspace_id, unique_units, collection_id)
                     if file_path and os.path.exists(file_path):
                         file_response = self._add_file(workspace_id, file_path)
                         if file_response.status_code in [200, 201]:
