@@ -15,33 +15,6 @@ class Loader:
         self.df_authors = df_authors
         self.dspace_wrapper = DSpaceClientWrapper()
 
-    def _patch_units(self, workspace_id, units, ifs3_collection_id):
-        form_section = self._get_form_section(ifs3_collection_id)
-        logger.info(
-            f"Collection ID:'{ifs3_collection_id}' et section name: '{form_section}'."
-        )
-        if not form_section:
-            logger.error(
-                f"Invalid collection ID: {ifs3_collection_id}. Unable to determine form section."
-            )
-            return
-
-        try:
-            patch_operations = self._construct_patch_operations(units, form_section)
-            logger.debug(f"Patch operations: {patch_operations}")
-            response = self.dspace_wrapper._update_workspace(
-                workspace_id, patch_operations
-            )
-            if response.status_code in [200, 204]:
-                logger.info(f"Metadata patched successfully for workspace {workspace_id}.")
-            else:
-                logger.error(
-                    f"Failed to patch metadata for workspace {workspace_id}. "
-                    f"Status: {response.status_code}, Response: {response.text}"
-                )
-        except Exception as e:
-            logger.error(f"An error occurred while patching units: {e}")
-
     def _get_form_section(self, ifs3_collection_id):
         """
         Récupère la section associée à un ifs3_collection_id depuis le fichier de mapping.
@@ -53,52 +26,123 @@ class Loader:
         logger.error(f"No section found for collection ID: {ifs3_collection_id}")
         return None
 
-    def _construct_patch_operations(self, units, form_section):
-        sponsorships = [
-            {
-                "value": unit.get("acro"),
-                "language": None,
-                "authority": f"will be referenced::ACRONYM::{unit.get('acro')}",
-                "securityLevel": 0,
-                "confidence": 600,
-                "place": 0,
-            }
-            for unit in units
-            if unit.get("acro")
-        ]
-
-        return [
-            {
-                "op": "add",
-                "path": f"/sections/{form_section}/dc.description.sponsorship",
-                "value": sponsorships,
-            },
-            # {
-            #     "op": "add",
-            #     "path": f"/sections/{form_section}/epfl.peerreviewed",
-            #     "value": [self._build_patch_value("REVIEWED")],
-            # },
-            {
-                "op": "add",
-                "path": f"/sections/{form_section}/epfl.writtenAt",
-                "value": [self._build_patch_value("EPFL")],
-            },
-            {"op": "add", "path": "/sections/license/granted", "value": "true"},
-        ]
-
-    def _build_patch_value(
-        self, value, display=None, authority=None, confidence=-1, place=0
+    def _patch_additional_metadata(
+        self, workspace_id, row, units, ifs3_collection_id, workspace_response
     ):
-        return {
-            "value": value,
-            "language": None,
-            "authority": authority,
-            "display": display or value,
-            "securityLevel": 0,
-            "confidence": confidence,
-            "place": place,
-            "otherInformation": None,
-        }
+        """
+        Met à jour uniquement les champs nécessaires (selon les erreurs retournées dans workspace_response).
+        """
+        form_section = self._get_form_section(ifs3_collection_id)
+        logger.info(
+            f"Collection ID: '{ifs3_collection_id}' et section name: '{form_section}'."
+        )
+        if not form_section:
+            logger.error(
+                f"Invalid collection ID: {ifs3_collection_id}. Unable to determine form section."
+            )
+            return
+
+        try:
+            required_paths = []
+            if "errors" in workspace_response:
+                for error in workspace_response["errors"]:
+                    if error.get("message") == "error.validation.required":
+                        required_paths.extend(error.get("paths", []))
+                    elif error.get("message") == "error.validation.license.required":
+                        required_paths.extend(error.get("paths", []))
+
+            logger.debug(f"Required paths to update: {required_paths}")
+
+            patch_operations = self._construct_patch_operations(
+                row, units, form_section, required_paths
+            )
+            logger.debug(f"Patch operations: {patch_operations}")
+
+            response = self.dspace_wrapper._update_workspace(workspace_id, patch_operations)
+
+            if "errors" in response:
+                errors = response["errors"]
+                for error in errors:
+                    error_message = error.get("message", "No message provided")
+                    error_paths = ", ".join(error.get("paths", [])) or "No paths provided"
+                    logger.error(f"Error message: {error_message}")
+                    logger.error(f"Paths concerned: {error_paths}")
+                return
+
+            logger.info(f"Metadata patched successfully for workspace {workspace_id}.")
+        except Exception as e:
+            logger.error(f"An error occurred while patching additional metadata: {e}")
+
+    def _construct_patch_operations(self, row, units, form_section, required_paths):
+        """Constructs PATCH operations for metadata updates with optimized error handling."""
+
+        def build_value(value, authority=None):
+            """Helper function to build a metadata value structure."""
+            return {
+                    "value": value,
+                    "language": None,
+                    "authority": authority,
+                    "securityLevel": 0,
+                    "confidence": 600,
+                    "place": 0,
+                }
+
+        # Prepare patch operations
+        metadata_operations = [
+            {
+                "path": f"/sections/{form_section}/dc.description.sponsorship",
+                "value": [
+                    build_value(
+                        unit.get("acro"),
+                        f"will be referenced::ACRONYM::{unit.get('acro')}",
+                    )
+                    for unit in units
+                    if unit.get("acro")
+                ],
+            },
+            {
+                "path": f"/sections/{form_section}/epfl.peerreviewed",
+                "value": [build_value("REVIEWED")],
+            },
+            {
+                "path": f"/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
+                "value": [build_value(row.get("license"))],
+            },
+            {
+                "path": f"/sections/{form_section}/epfl.writtenAt",
+                "value": [build_value("EPFL")],
+            },
+            {
+                "path": "/sections/license/granted",
+                "value": "true",
+            },
+        ]
+
+        # Filtering only necessary patch operations
+        filtered_operations = []
+
+        for meta in metadata_operations:
+            if meta["path"].startswith("/sections/license"):
+                # Ensure both '/sections/license' and '/sections/license/granted' are handled correctly
+                filtered_operations.append(
+                    {
+                        "op": "add",
+                        "path": "/sections/license/granted",
+                        "value": "true",  # Set 'true' as the default value for granted
+                    }
+                )
+            elif meta["path"] in required_paths:
+                filtered_operations.append(
+                    {
+                        "op": "add",
+                        "path": meta["path"],
+                        "value": meta["value"],
+                    }
+                )
+
+        if not filtered_operations:
+            logger.warning("No operations constructed; required paths might be missing.")
+        return filtered_operations
 
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
         # On vérifie si le mapping pour la license et la version existe
@@ -213,7 +257,7 @@ class Loader:
                 source = "datacite"
 
             # Call the method to push the publication to the workspace
-            workspace_id = self.dspace_wrapper.push_publication(
+            workspace_response = self.dspace_wrapper.push_publication(
                 source,
                 source_id,
                 collection_id,
@@ -227,7 +271,11 @@ class Loader:
             else:
                 file_path = None
 
-            if workspace_id:
+            if workspace_response and "id" in workspace_response:
+                logger.debug(
+                    f"Workspace creation response: {workspace_response}"
+                )
+                workspace_id = workspace_response["id"]
                 logger.info(f"Successfully pushed publication with ID: {workspace_id}")
                 # Store workspace_id in df_item_imported
                 df_items_imported.at[index, "workspace_id"] = workspace_id
@@ -245,7 +293,13 @@ class Loader:
                 unique_units = {unit["acro"]: unit for unit in units}.values()
                 logger.debug(f"retrieved units: {unique_units}")
                 if unique_units:
-                    self._patch_units(workspace_id, unique_units, collection_id)
+                    self._patch_additional_metadata(
+                        workspace_id,
+                        row,
+                        unique_units,
+                        collection_id,
+                        workspace_response,
+                    )
                     if file_path and os.path.exists(file_path):
                         file_response = self._add_file(workspace_id, file_path)
                         if file_response.status_code in [200, 201]:
