@@ -14,6 +14,7 @@ import tenacity
 from apiclient.retrying import retry_if_api_request_error
 from typing import List, Dict
 from collections import defaultdict
+
 # import ast
 import os
 from dotenv import load_dotenv
@@ -29,10 +30,7 @@ zenodo_api_key = os.environ.get("ZENODO_API_KEY")
 
 accepted_doctypes = mappings.doctypes_mapping_dict["source_zenodo"].keys()
 
-zenodo_authentication_method = HeaderAuthentication(
-    token=zenodo_api_key,
-    scheme=None
-)
+zenodo_authentication_method = HeaderAuthentication(token=zenodo_api_key, scheme=None)
 
 retry_decorator = tenacity.retry(
     retry=retry_if_api_request_error(status_codes=[429]),
@@ -73,8 +71,7 @@ class Client(APIClient):
         """
 
         self.params = {**param_kwargs}
-        # return self.get(wos_api_base_url, params=self.params)
-        print((Endpoint.search, self.params))
+        self.logger.debug((Endpoint.search, self.params))
         return self.get(Endpoint.search, params=self.params)
 
     @retry_request
@@ -94,8 +91,8 @@ class Client(APIClient):
         Returns
         Number of records found by the query
         """
-        param_kwargs.setdefault('size', 1)
-        param_kwargs.setdefault('page', 1)
+        param_kwargs.setdefault("size", 1)
+        param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
         return self.search_query(**self.params)["hits"]["total"]
@@ -128,8 +125,8 @@ class Client(APIClient):
         A list of Zenodo ids
         """
 
-        param_kwargs.setdefault('size', 10)
-        param_kwargs.setdefault('page', 1)
+        param_kwargs.setdefault("size", 10)
+        param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
         results = self.search_query(**self.params)["hits"]["hits"]
@@ -167,8 +164,8 @@ class Client(APIClient):
             zenodo_id, title, DOI, doctype, pubyear, authors,
             ifs3_doctype, ifs3_collection_id
         """
-        param_kwargs.setdefault('size', 10)
-        param_kwargs.setdefault('page', 1)
+        param_kwargs.setdefault("size", 10)
+        param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
         result = self.search_query(**self.params)
@@ -192,7 +189,7 @@ class Client(APIClient):
         """
 
         result = self.get(Endpoint.uniqueId.format(zenodoId=zenodo_id))
-        if 'created' in result:
+        if "created" in result:
             return self._process_record(result, format)
         return None
 
@@ -226,7 +223,9 @@ class Client(APIClient):
         """
         record = {
             "source": "zenodo",
-            "internal_id": f'ZENODO:{x["id"]}',
+            "internal_id": (
+                x["conceptdoi"].lower() if x.get("conceptdoi") else x["doi"].lower()
+            ),
             "doi": x["doi"].lower(),
             "title": x["metadata"]["title"],
             "doctype": x["metadata"]["resource_type"]["title"],
@@ -256,14 +255,13 @@ class Client(APIClient):
         rec = self._extract_ifs3_digest_record_info(record)
         authors = self._extract_ifs3_authors(record)
         rec["authors"] = authors
+        rec["license"] = self._extract_ifs3_license(record)
         return rec
 
     def _extract_first_doctype(self, x):
-        print(x["metadata"]["resource_type"])
         doctype = x["metadata"]["resource_type"]["type"]
-        if 'subtype' in x["metadata"]["resource_type"]:
+        if "subtype" in x["metadata"]["resource_type"]:
             doctype += f'/{x["metadata"]["resource_type"]["subtype"]}'
-        print(doctype)
         return doctype
 
     def _extract_ifs3_doctype(self, x):
@@ -286,6 +284,24 @@ class Client(APIClient):
         except KeyError:
             return "unknown_collection"
 
+    def _extract_ifs3_license(self, x):
+        """
+        Extracts license information in IFS3 format.
+        """
+        try:
+            license_info = x["metadata"].get("license", {})
+            if isinstance(license_info, dict):
+                license_id = license_info.get("id", None)
+                if license_id:
+                    return license_id
+                else:
+                    return "N/A"
+            else:
+                return "N/A"
+        except KeyError:
+            self.logger.warning("License information not found in the record metadata.")
+            return {"value": "N/A", "display": "N/A (Copyrighted)"}
+
     def _extract_ifs3_authors(self, x):
         # Initialize result list
         result = []
@@ -293,44 +309,45 @@ class Client(APIClient):
         try:
             # Ensure the input is a dictionary
             if not isinstance(x, dict):
-                print(x)
-                print("Input data must be a dictionary.")
+                self.logger.error(f"Input data must be a dictionary.")
                 return result  # Return an empty result
 
             # Ensure required keys are present in the input
             if "creators" not in x["metadata"]:
-                print(x["metadata"])
-                print("Input data must contain a 'creators' key.")
+                self.logger.error(f"Input data must contain a 'creators' key.")
                 return result  # Return an empty result
 
             # Process authors
-            print(x["metadata"]["creators"])
             for author in x["metadata"]["creators"]:
                 try:
                     # Check if required keys are present in the author
                     if "name" not in author:
-                        print("Each 'author' item must contain a 'name' key.")
+                        self.logger.error(
+                            "Each 'author' item must contain a 'name' key."
+                        )
                         continue  # Skip this author and continue
 
                     # Extract author details
                     author_name = author.get("name", None)
                     orcid_id = author.get("orcid", None)
-                    affiliation = author.get('affiliation', None)
+                    affiliation = author.get("affiliation", None)
 
                     # Add to result list
-                    result.append({
-                        "author": author_name,
-                        "internal_author_id": None,
-                        "orcid_id": orcid_id,
-                        "organizations": affiliation
-                    })
+                    result.append(
+                        {
+                            "author": author_name,
+                            "internal_author_id": None,
+                            "orcid_id": orcid_id,
+                            "organizations": affiliation,
+                        }
+                    )
 
                 except KeyError as e:
-                    print(f"Skipping author due to missing key: {e}")
+                    self.logger.error(f"Skipping author due to missing key: {e}")
                     continue  # Skip this author and continue
 
         except Exception as e:
-            print(f"An error occurred during processing: {e}")
+            self.logger.error(f"An error occurred during processing: {e}")
 
         return result
 
