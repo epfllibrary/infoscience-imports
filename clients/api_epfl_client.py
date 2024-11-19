@@ -227,11 +227,14 @@ class Client(APIClient):
         if format == "digest":
             self.logger.debug(f"Extracting sciperId information for {sciper_id}.")
             return [
-                self._extract_accred_units_info(x) for x in record.get("accreds", [])
+                self._extract_accred_units_info(accred, accred.get("order"))
+                for accred in record.get("accreds", [])
             ]  # to keep the order of units
         elif format == "mainUnit":
             self.logger.debug(f"Extracting main unit information for {sciper_id}.")
-            return self._extract_accred_units_info(record["accreds"][0])
+            return self._extract_accred_units_info(
+                record["accreds"][0], record["accreds"][0].get("order")
+            )
         elif format == "epfl":
             self.logger.debug(f"Returning full record for {sciper_id}.")
             return record
@@ -251,13 +254,14 @@ class Client(APIClient):
         self.logger.debug(f"Extracted digest record: {record}")
         return record
 
-    def _extract_accred_units_info(self, x):
+    def _extract_accred_units_info(self, x, parent_order=None):
         self.logger.info("Extracting units information from the accred record.")
         unit_type = self.fetch_unit_by_unique_id(str(x["unit"]["id"]))
         record = {
             "unit_id": str(x["unit"]["id"]),
             "unit_name": x["unit"]["name"],
             "unit_type": unit_type,
+            "unit_order": parent_order,
         }
         self.logger.debug(f"Extracted units from accred record: {record}")
         return record

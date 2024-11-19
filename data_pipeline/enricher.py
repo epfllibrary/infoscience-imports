@@ -137,7 +137,6 @@ class AuthorProcessor:
 
         return self.df if return_df else self
 
-
     def nameparse_authors(self, return_df=False):
         parser = nameparser.HumanName
         self.df = self.df.copy()  # Créer une copie du DataFrame si nécessaire
@@ -254,16 +253,39 @@ class AuthorProcessor:
 
         # Function to fetch accreditation info and store in new columns
         def fetch_accred_info(sciper_id):
+            """
+            Fetch accreditation information for a person based on specific priority rules.
+
+            Args:
+                sciper_id (str): The unique identifier of the person.
+                unit_types (list): List of allowed unit_types.
+
+            Returns:
+                tuple: (unit_id, unit_name) or (None, None) if no result is found.
+            """
             if pd.notna(sciper_id):
                 records = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="digest")
-                if isinstance(records, list):
+                self.logger.debug(f"Person record: {records}")
+                
+                if isinstance(records, list) and records:
+                    # Step 1: Prioritize a unit with unit_order == 1 and an allowed unit_type
+                    for record in records:
+                        if record.get('unit_order') == 1 and record.get('unit_type') in unit_types:
+                            return record['unit_id'], record['unit_name']
+
+                    # Step 2: Check if there is any unit with an allowed unit_type (regardless of unit_order)
                     for record in records:
                         if record.get('unit_type') in unit_types:
                             return record['unit_id'], record['unit_name']
 
-                    # Si aucun type d'unité autorisé n'est trouvé, retourner le premier enregistrement
+                    # Step 3: If no allowed unit_type is found, return a unit with unit_order == 1 (any type)
+                    for record in records:
+                        if record.get('unit_order') == 1:
+                            return record['unit_id'], record['unit_name']
+
+                    # Step 4: If no conditions above apply, return the first record in the list
                     self.logger.warning("No authorized unit type found. Returning the first record.")
-                    first_record = records[0]  # Obtenir le premier enregistrement
+                    first_record = records[0]
                     return first_record['unit_id'], first_record['unit_name']
 
             return None, None

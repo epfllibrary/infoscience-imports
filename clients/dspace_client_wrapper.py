@@ -73,7 +73,7 @@ class DSpaceClientWrapper:
         elif identifier_type == "openalex":
             item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
         elif identifier_type == "zenodo":
-            item_id = x["doi"].strip()
+            item_id = x["internal_id"].strip()
         else:
             raise ValueError("identifier_type must be 'wos', 'scopus' or 'zenodo'")
 
@@ -108,7 +108,7 @@ class DSpaceClientWrapper:
         )
         num_items_researchoutputs = len(dsos_researchoutputs)
 
-        self.logger.info(f"Searching workflow items with query: {final_query}...")
+        self.logger.debug(f"Searching workflow items with query: {final_query}...")
 
         # Check the supervision configuration
         dsos_supervision = self._search_objects(
@@ -176,7 +176,7 @@ class DSpaceClientWrapper:
                 self.logger.info(
                     f"Successfully created workspace item with ID: {workspace_id}"
                 )
-                return workspace_id
+                return response
             else:
                 self.logger.error(
                     "Failed to create workspace item: Response does not contain 'id'."
