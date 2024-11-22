@@ -118,8 +118,8 @@ class Client(APIClient):
         ids = []
         for i in range(1, int(total), int(count)):
             ids.extend(ZenodoClient.fetch_ids(q=naive_epfl_query,
-                                              size=count,
-                                              page=i//count+1))
+                                            size=count,
+                                            page=i//count+1))
 
         Returns
         A list of Zenodo ids
@@ -156,13 +156,13 @@ class Client(APIClient):
         recs = []
         for i in range(1, int(total), int(count)):
             recs.extend(ZenodoClient.fetch_records(q=naive_epfl_query,
-                                                   size=count,
-                                                   page=i//count+1))
+                                                size=count,
+                                                page=i//count+1))
 
         Returns
         List of dicts with fields in this list depending on the chosen format:
             zenodo_id, title, DOI, doctype, pubyear, authors,
-            ifs3_doctype, ifs3_collection_id
+            ifs3_collection, ifs3_collection_id
         """
         param_kwargs.setdefault("size", 10)
         param_kwargs.setdefault("page", 1)
@@ -238,11 +238,16 @@ class Client(APIClient):
         Returns
         A list of records dict containing the fields :
             zenodo_id, title, DOI, doctype, pubyear,
-            ifs3_doctype, ifs3_collection_id
+            ifs3_collection, ifs3_collection_id
         """
         record = self._extract_digest_record_info(x)
-        record["ifs3_doctype"] = self._extract_ifs3_doctype(x)
+        record["ifs3_collection"] = self._extract_ifs3_collection(x)
         record["ifs3_collection_id"] = self._extract_ifs3_collection_id(x)
+        # Get dc.type and dc.type_authority for the document type
+        dc_type_info = self.get_dc_type_info(x)
+        # Add dc.type and dc.type_authority to the record
+        record["dc.type"] = dc_type_info["dc.type"]
+        record["dc.type_authority"] = dc_type_info["dc.type_authority"]
         return record
 
     def _extract_ifs3_record_info(self, record):
@@ -250,7 +255,7 @@ class Client(APIClient):
         Returns
         A list of records dict containing the fields :
             zenodo_id, title, DOI, doctype, pubyear, authors
-            ifs3_doctype, ifs3_collection_id
+            ifs3_collection, ifs3_collection_id, license
         """
         rec = self._extract_ifs3_digest_record_info(record)
         authors = self._extract_ifs3_authors(record)
@@ -259,30 +264,69 @@ class Client(APIClient):
         return rec
 
     def _extract_first_doctype(self, x):
-        doctype = x["metadata"]["resource_type"]["type"]
-        if "subtype" in x["metadata"]["resource_type"]:
-            doctype += f'/{x["metadata"]["resource_type"]["subtype"]}'
-        return doctype
+        if "metadata" in x and "resource_type" in x["metadata"]:
+            doctype = x["metadata"]["resource_type"].get(
+                "type", "unknown"
+            ) 
+            if "subtype" in x["metadata"]["resource_type"]:
+                doctype += f'/{x["metadata"]["resource_type"]["subtype"]}'
+            return doctype
+        else:
+            return "unknown"
 
-    def _extract_ifs3_doctype(self, x):
-        doctype = self._extract_first_doctype(x)
-        try:
-            value = mappings.doctypes_mapping_dict["source_zenodo"][doctype]
-            return value
-        except KeyError:
-            # Log or handle the case where mapping is missing
-            warning = f"Mapping not found for doctype: {doctype}"
-            self.logger.warning(warning)
-            return "unknown_doctype"  # or any other default value
-        return "unknown_doctype"  # or any other default value
+    def get_dc_type_info(self, x):
+        """
+        Retrieves the dc.type and dc.type_authority attributes for a given document type.
+
+        :param data_doctype: The document type (e.g., "Article", "Proceedings Paper", etc.)
+        :return: A dictionary with the keys "dc.type" and "dc.type_authority", or "unknown" if not found.
+        """
+        data_doctype = self._extract_first_doctype(x)
+        # Access the doctype mapping for "source_wos"
+        doctype_mapping = mappings.doctypes_mapping_dict.get("source_zenodo", {})
+        # Check if the document type exists in the mapping for dc.type
+        document_info = doctype_mapping.get(data_doctype, None)
+        dc_type = (
+            document_info.get("dc.type", "unknown") if document_info else "unknown"
+        )
+
+        dc_type_authority = mappings.types_authority_mapping.get(dc_type, "unknown")
+
+        # Return the dc.type and dc.type_authority
+        return {
+            "dc.type": dc_type,
+            "dc.type_authority": dc_type_authority,
+        }
+
+    def _extract_ifs3_collection(self, x):
+        # Extract the document type
+        data_doctype = self._extract_first_doctype(x)
+        # Check if the document type is accepted
+        if data_doctype in accepted_doctypes:
+            mapped_value = mappings.doctypes_mapping_dict["source_zenodo"].get(
+                data_doctype
+            )
+
+            if mapped_value is not None:
+                # Return the mapped collection value
+                return mapped_value.get("collection", "unknown")
+            else:
+                # Log or handle the case where the mapping is missing
+                self.logger.warning(
+                    f"Mapping not found for data_doctype: {data_doctype}"
+                )
+                return "unknown"  # or any other default value
+        return "unknown"  # or any other default value
 
     def _extract_ifs3_collection_id(self, x):
-        ifs3_doctype = self._extract_ifs3_doctype(x)
-        try:
-            collection_info = mappings.collections_mapping[ifs3_doctype]
-            return collection_info["id"]
-        except KeyError:
-            return "unknown_collection"
+        ifs3_collection = self._extract_ifs3_collection(x)
+        # Check if the collection is not "unknown"
+        if ifs3_collection != "unknown":
+            # Assume ifs3_collection is a string and access mappings accordingly
+            collection_info = mappings.collections_mapping.get(ifs3_collection, None)
+            if collection_info:
+                return collection_info["id"]
+        return "unknown"
 
     def _extract_ifs3_license(self, x):
         """

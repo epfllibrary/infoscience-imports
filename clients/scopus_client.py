@@ -154,7 +154,7 @@ class Client(APIClient):
             recs.extend(ScopusClient.fetch_records(query = epfl_query, count = count, start =i))
 
         Returns
-        A list of records dict containing fields in this list according to to choosen format:  scopus_id, title, DOI, doctype, pubyear, ifs3_doctype, ifs3_collection_id, authors
+        A list of records dict containing fields in this list according to to choosen format:  scopus_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors
         """
         param_kwargs.setdefault('count', 10)
         param_kwargs.setdefault('start', 1)
@@ -230,17 +230,22 @@ class Client(APIClient):
     def _extract_ifs3_digest_record_info(self, x):
         """
         Returns
-        A list of records dict containing the fields :  scopus_id, title, DOI, doctype, pubyear, ifs3_doctype, ifs3_collection_id
+        A list of records dict containing the fields :  scopus_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id
         """
         record = self._extract_digest_record_info(x)
-        record["ifs3_doctype"] = self._extract_ifs3_doctype(x)
+        record["ifs3_collection"] = self._extract_ifs3_collection(x)
         record["ifs3_collection_id"] = self._extract_ifs3_collection_id(x)
+        # Get dc.type and dc.type_authority for the document type
+        dc_type_info = self.get_dc_type_info(x)
+        # Add dc.type and dc.type_authority to the record
+        record["dc.type"] = dc_type_info["dc.type"]
+        record["dc.type_authority"] = dc_type_info["dc.type_authority"]
         return record
 
     def _extract_ifs3_record_info(self, record):
         """
         Returns
-        A list of records dict containing the fields :  scopus_id, title, DOI, doctype, pubyear, ifs3_doctype, ifs3_collection_id, authors
+        A list of records dict containing the fields :  scopus_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors
         """
         rec = self._extract_ifs3_digest_record_info(record)
         authors = self._extract_ifs3_authors(record)
@@ -260,30 +265,59 @@ class Client(APIClient):
             return x["subtypeDescription"][0] if x["subtypeDescription"] else None
         return x.get("subtypeDescription", None)
 
-    def _extract_ifs3_doctype(self, x):
+    def get_dc_type_info(self, x):
+        """
+        Retrieves the dc.type and dc.type_authority attributes for a given document type.
+
+        :param data_doctype: The document type (e.g., "Article", "Proceedings Paper", etc.)
+        :return: A dictionary with the keys "dc.type" and "dc.type_authority", or "unknown" if not found.
+        """
         data_doctype = self._extract_first_doctype(x)
-        # Check if data_doctype is in accepted_doctypes
+        # Access the doctype mapping for "source_wos"
+        doctype_mapping = mappings.doctypes_mapping_dict.get("source_scopus", {})
+        # Check if the document type exists in the mapping for dc.type
+        document_info = doctype_mapping.get(data_doctype, None)
+        dc_type = (
+            document_info.get("dc.type", "unknown") if document_info else "unknown"
+        )
+
+        dc_type_authority = mappings.types_authority_mapping.get(dc_type, "unknown")
+
+        # Return the dc.type and dc.type_authority
+        return {
+            "dc.type": dc_type,
+            "dc.type_authority": dc_type_authority,
+        }
+
+    def _extract_ifs3_collection(self, x):
+        # Extract the document type
+        data_doctype = self._extract_first_doctype(x)
+        # Check if the document type is accepted
         if data_doctype in accepted_doctypes:
-            mapped_value = mappings.doctypes_mapping_dict["source_scopus"].get(data_doctype)
+            mapped_value = mappings.doctypes_mapping_dict["source_scopus"].get(
+                data_doctype
+            )
+
             if mapped_value is not None:
-                return mapped_value
+                # Return the mapped collection value
+                return mapped_value.get("collection", "unknown")
             else:
-                # Log or handle the case where mapping is missing
-                self.logger.warning(f"Mapping not found for data_doctype: {data_doctype}")
-                return "unknown_doctype"  # or any other default value
-        return "unknown_doctype"  # or any other default value
+                # Log or handle the case where the mapping is missing
+                self.logger.warning(
+                    f"Mapping not found for data_doctype: {data_doctype}"
+                )
+                return "unknown"  # or any other default value
+        return "unknown"  # or any other default value
 
     def _extract_ifs3_collection_id(self, x):
-        ifs3_doctype = self._extract_ifs3_doctype(x)
-
-        if ifs3_doctype != "unknown_doctype":
-            collection_info = mappings.collections_mapping.get(ifs3_doctype, None)
+        ifs3_collection = self._extract_ifs3_collection(x)
+        # Check if the collection is not "unknown"
+        if ifs3_collection != "unknown":
+            # Assume ifs3_collection is a string and access mappings accordingly
+            collection_info = mappings.collections_mapping.get(ifs3_collection, None)
             if collection_info:
                 return collection_info["id"]
-            else:
-                return "unknown_collection"
-
-        return "unknown_collection"
+        return "unknown"
 
     def _extract_pubyear(self, x):
         return x.get("prism:coverDate", None)[:4]

@@ -79,7 +79,7 @@ class WosHarvester(Harvester):
         - `doi`: The Digital Object Identifier of the publication.
         - `doctype`: The type of the publication (e.g., Article, Book Chapter, etc.).
         - `pubyear`: The year of publication.
-        - `ifs3_doctype`: The IFS3 doctype of the publication.
+        - `ifs3_collection`: The IFS3 doctype of the publication.
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
@@ -108,7 +108,7 @@ class WosHarvester(Harvester):
         # keep only valid ifs3 doctypes
         df = (
             pd.DataFrame(recs)
-            .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
+            .query('ifs3_collection != "unknown"')  # Filter out unknown_doctype
             .reset_index(drop=True)
         )
         return df
@@ -135,7 +135,7 @@ class ScopusHarvester(Harvester):
         - `doi`: The Digital Object Identifier of the publication.
         - `doctype`: The type of the publication (e.g., Article, Book Chapter, etc.).
         - `pubyear`: The year of publication.
-        - `ifs3_doctype`: The IFS3 doctype of the publication.
+        - `ifs3_collection`: The IFS3 doctype of the publication.
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
@@ -159,7 +159,7 @@ class ScopusHarvester(Harvester):
         # Keep only valid ifs3 doctypes
         df = (
             pd.DataFrame(recs)
-            .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
+            .query('ifs3_collection != "unknown"')  # Filter out unknown_doctype
             .reset_index(drop=True)
         )
         return df
@@ -186,7 +186,7 @@ class ZenodoHarvester(Harvester):
         - `doi`: Digital Object Identifier of the object.
         - `doctype`: type of the object (e.g., Dataset, Article, etc.).
         - `pubyear`: year of publication.
-        - `ifs3_doctype`: IFS3 doctype of the object.
+        - `ifs3_collection`: IFS3 collection of the object.
         - `ifs3_collection_id`: IFS3 collection ID of the object.
         - `authors`: list of creators, each represented as a dict containing:
            - `author`
@@ -203,7 +203,7 @@ class ZenodoHarvester(Harvester):
             "doi",
             "doctype",
             "pubyear",
-            "ifs3_doctype",
+            "ifs3_collection",
             "ifs3_collection_id",
             "authors",
         )
@@ -238,7 +238,7 @@ class ZenodoHarvester(Harvester):
         # print(recs)
         df = (
             pd.DataFrame(recs)
-            .query('ifs3_doctype != "unknown_doctype"')
+            .query('ifs3_collection != "unknown"')
             .reset_index(drop=True)
         )
 
@@ -266,7 +266,7 @@ class OpenAlexHarvester(Harvester):
         - `doi`: The Digital Object Identifier of the publication.
         - `doctype`: The type of the publication (e.g., Article, Book Chapter, etc.).
         - `pubyear`: The year of publication.
-        - `ifs3_doctype`: The IFS3 doctype of the publication.
+        - `ifs3_collection`: The IFS3 collection of the publication.
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary.
         """
@@ -308,7 +308,7 @@ class OpenAlexHarvester(Harvester):
         if recs:
             df = (
                 pd.DataFrame(recs)
-                .query('ifs3_doctype != "unknown_doctype"')  # Filter out unknown_doctype
+                .query('ifs3_collection != "unknown"')  # Filter out unknown_doctype
                 .reset_index(drop=True)
             )
         else:

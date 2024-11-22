@@ -24,7 +24,7 @@ load_dotenv(os.path.join(os.getcwd(), ".env"))
 openalex_email = os.environ.get("OPENALEX_EMAIL")
 
 accepted_doctypes = [
-    key for key in mappings.doctypes_mapping_dict["source_openalex"].keys()
+    key for key in mappings.doctypes_mapping_dict["source_crossref"].keys()
 ]
 
 # Retry decorator to handle request retries on specific status codes
@@ -172,126 +172,151 @@ class OpenAlexClient(APIClient):
         elif format == "openalex":
             return self.search_query(**self.params)["results"]
 
-    def _process_record(self, record, format):
+    def _process_record(self, x, format):
         if format == "digest":
-            return self._extract_digest_record_info(record)
+            return self._extract_digest_record_info(x)
         elif format == "digest-ifs3":
-            return self._extract_ifs3_digest_record_info(record)
+            return self._extract_ifs3_digest_record_info(x)
         elif format == "ifs3":
-            return self._extract_ifs3_record_info(record)
+            return self._extract_ifs3_record_info(x)
         elif format == "openalex":
-            return record
+            return x
 
-    def _extract_digest_record_info(self, record):
+    def _extract_digest_record_info(self, x):
         """
         Extract minimal information for digest format from a single OpenAlex record.
 
         Args:
-            record (dict): A single OpenAlex record.
+            x (dict): A single OpenAlex record.
 
         Returns:
             dict: Extracted information in digest format.
         """
         return {
             "source": "openalex",
-            "internal_id": record["id"],
-            "doi": self._extract_doi(record), 
-            "title": record.get("display_name"),
-            "doctype": self._extract_first_doctype(record),
-            "pubyear": record.get("publication_year"),
+            "internal_id": x["id"],
+            "doi": self._extract_doi(x), 
+            "title": x.get("display_name"),
+            "doctype": self._extract_first_doctype(x),
+            "pubyear": x.get("publication_year"),
         }
 
-    def _extract_ifs3_digest_record_info(self, record):
+    def _extract_ifs3_digest_record_info(self, x):
         """
         Extract additional information for ifs3-digest format.
 
         Args:
-            record (dict): A single OpenAlex record.
+            x (dict): A single OpenAlex record.
 
         Returns:
             dict: Extracted information in ifs3-digest format.
         """
-        digest_info = self._extract_digest_record_info(record)
-        digest_info["ifs3_doctype"] = self._extract_ifs3_doctype(record)
-        digest_info["ifs3_collection_id"] = self._extract_ifs3_collection_id(record)
+        digest_info = self._extract_digest_record_info(x)
+        digest_info["ifs3_collection"] = self._extract_ifs3_collection(x)
+        digest_info["ifs3_collection_id"] = self._extract_ifs3_collection_id(x)
+        # Get dc.type and dc.type_authority for the document type
+        dc_type_info = self.get_dc_type_info(x)
+        # Add dc.type and dc.type_authority to the record
+        digest_info["dc.type"] = dc_type_info["dc.type"]
+        digest_info["dc.type_authority"] = dc_type_info["dc.type_authority"]
         return digest_info
 
-    def _extract_ifs3_record_info(self, record):
+    def _extract_ifs3_record_info(self, x):
         """
         Extract detailed information for ifs3 format.
 
         Args:
-            record (dict): A single OpenAlex record.
+            x (dict): A single OpenAlex record.
 
         Returns:
             dict: Extracted information in ifs3 format.
         """
-        ifs3_info = self._extract_ifs3_digest_record_info(record)
-        ifs3_info["authors"] = self._extract_ifs3_authors(record)
+        ifs3_info = self._extract_ifs3_digest_record_info(x)
+        ifs3_info["authors"] = self._extract_ifs3_authors(x)
         return ifs3_info
 
-    def _extract_doi(self, record):
+    def _extract_doi(self, x):
         """
         Extract DOI from an OpenAlex record, removing the prefix 'https://doi.org/'.
 
         Args:
-            record (dict): A single OpenAlex record.
+            x (dict): A single OpenAlex record.
 
         Returns:
             str: DOI without the 'https://doi.org/' prefix, or an empty string if DOI is None.
         """
-        doi = record.get("doi", "")
+        doi = x.get("doi", "")
         if isinstance(doi, str) and doi.startswith("https://doi.org/"):
             return doi[len("https://doi.org/") :]  # Remove the DOI prefix
         return (
             doi.lower() if isinstance(doi, str) else ""
         )
 
-    def _extract_first_doctype(self, record):
+    def _extract_first_doctype(self, x):
         """
         Extract the document type from a single OpenAlex record.
 
         Args:
-            record (dict): A single OpenAlex record.
+            x (dict): A single OpenAlex record.
 
         Returns:
             str: Document type extracted from the record.
         """
-        return record.get("type")
+        return x.get("type_crossref")
 
-    def _extract_ifs3_doctype(self, record):
+    def get_dc_type_info(self, x):
         """
-        Map OpenAlex document type to `ifs3` document type.
+        Retrieves the dc.type and dc.type_authority attributes for a given document type.
 
-        Args:
-            record (dict): A single OpenAlex record.
-
-        Returns:
-            str: Mapped document type for ifs3.
+        :param data_doctype: The document type (e.g., "Article", "Proceedings Paper", etc.)
+        :return: A dictionary with the keys "dc.type" and "dc.type_authority", or "unknown" if not found.
         """
-        doctype = self._extract_first_doctype(record)
-        if doctype in accepted_doctypes:
-            return mappings.doctypes_mapping_dict["source_openalex"].get(
-                doctype, "unknown_doctype"
+        data_doctype = self._extract_first_doctype(x)
+        # Access the doctype mapping for "source_wos"
+        doctype_mapping = mappings.doctypes_mapping_dict.get("source_crossref", {})
+        # Check if the document type exists in the mapping for dc.type
+        document_info = doctype_mapping.get(data_doctype, None)
+        dc_type = (
+            document_info.get("dc.type", "unknown") if document_info else "unknown"
+        )
+
+        dc_type_authority = mappings.types_authority_mapping.get(dc_type, "unknown")
+
+        # Return the dc.type and dc.type_authority
+        return {
+            "dc.type": dc_type,
+            "dc.type_authority": dc_type_authority,
+        }
+
+    def _extract_ifs3_collection(self, x):
+        # Extract the document type
+        data_doctype = self._extract_first_doctype(x)
+        # Check if the document type is accepted
+        if data_doctype in accepted_doctypes:
+            mapped_value = mappings.doctypes_mapping_dict["source_crossref"].get(
+                data_doctype
             )
-        return "unknown_doctype"
 
-    def _extract_ifs3_collection_id(self, record):
-        """
-        Map OpenAlex document type to a collection ID in the `ifs3` schema.
+            if mapped_value is not None:
+                # Return the mapped collection value
+                return mapped_value.get("collection", "unknown")
+            else:
+                # Log or handle the case where the mapping is missing
+                self.logger.warning(
+                    f"Mapping not found for data_doctype: {data_doctype}"
+                )
+                return "unknown"  # or any other default value
+        return "unknown"  # or any other default value
 
-        Args:
-            record (dict): A single OpenAlex record.
-
-        Returns:
-            str: Collection ID in ifs3 schema.
-        """
-        ifs3_doctype = self._extract_ifs3_doctype(record)
-        if ifs3_doctype != "unknown_doctype":
-            collection_info = mappings.collections_mapping.get(ifs3_doctype, None)
+    def _extract_ifs3_collection_id(self, x):
+        ifs3_collection = self._extract_ifs3_collection(x)
+        # Check if the collection is not "unknown"
+        if ifs3_collection != "unknown":
+            # Assume ifs3_collection is a string and access mappings accordingly
+            collection_info = mappings.collections_mapping.get(ifs3_collection, None)
             if collection_info:
                 return collection_info["id"]
-        return "unknown_collection"
+        return "unknown"
 
     def _extract_author_orcid(self, author):
         """
@@ -310,19 +335,19 @@ class OpenAlexClient(APIClient):
             orcid if isinstance(orcid, str) else ""
         )
 
-    def _extract_ifs3_authors(self, record):
+    def _extract_ifs3_authors(self, x):
         """
         Extract author information for ifs3 format from a single OpenAlex record.
 
         Args:
-            record (dict): A single OpenAlex record.
+            x (dict): A single OpenAlex record.
 
         Returns:
             list of dict: List of author information dictionaries.
         """
         authors = []
         try:
-            for author in record.get("authorships", []):
+            for author in x.get("authorships", []):
                 institutions = "|".join(
                     [
                         f"{inst.get('ror', '').split('/')[-1]}:{inst.get('display_name', '')}"
@@ -339,7 +364,7 @@ class OpenAlexClient(APIClient):
                 )
         except KeyError:
             self.logger.warning(
-                f"Missing authorship information for record {record.get('id', 'unknown')}"
+                f"Missing authorship information for record {x.get('id', 'unknown')}"
             )
         return authors
 
