@@ -8,6 +8,7 @@ from apiclient import (
     exceptions,
 )
 import tenacity
+from datetime import datetime
 from apiclient.retrying import retry_if_api_request_error
 from typing import List, Dict
 from collections import defaultdict
@@ -17,6 +18,7 @@ import traceback
 from dotenv import load_dotenv
 from utils import manage_logger
 import mappings
+from utils import normalize_title
 from config import logs_dir
 
 wos_api_base_url = "https://api.clarivate.com/api/wos"
@@ -161,7 +163,7 @@ class Client(APIClient):
             recs.extend(WosClient.fetch_records(usrQuery = epfl_query, count = count, firstRecord =i))
 
         Returns
-        A list of records dict containing fields in this list according to to choosen format:  wos_id, title, DOI, doctype, pubyear, ifs3_doctype, ifs3_collection_id, authors
+        A list of records dict containing fields in this list according to to choosen format:  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors
         """
         param_kwargs.setdefault('databaseId', "WOS")
         param_kwargs.setdefault('count', 10)
@@ -242,22 +244,154 @@ class Client(APIClient):
     def _extract_ifs3_digest_record_info(self, x):
         """
         Returns
-        A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_doctype, ifs3_collection_id
+        A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id
         """
         record = self._extract_digest_record_info(x)
-        record["ifs3_doctype"] = self._extract_ifs3_doctype(x)
+        record["ifs3_collection"] = self._extract_ifs3_collection(x)
         record["ifs3_collection_id"] = self._extract_ifs3_collection_id(x)
+        # Get dc.type and dc.type_authority for the document type
+        dc_type_info = self.get_dc_type_info(x)
+        # Add dc.type and dc.type_authority to the record
+        record["dc.type"] = dc_type_info["dc.type"]
+        record["dc.type_authority"] = dc_type_info["dc.type_authority"]
         return record
 
     def _extract_ifs3_record_info(self, record):
         """
         Returns
-        A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_doctype, ifs3_collection_id, authors
+        A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors, conference_info, fundings_info
         """
         rec = self._extract_ifs3_digest_record_info(record)
         authors = self._extract_ifs3_authors(record)
         rec["authors"] = authors
+        # Conference metadata as a single field
+        rec["conference_info"] = self._extract_conference_info(record)
+        rec["fundings_info"] = self._extract_funding_info(record)
+
         return rec
+
+    def _extract_conference_info(self, record):
+        """
+        Extracts information about conferences from the record and formats it as:
+        'conference_title::conference_location::conference_startdate::conference_enddate'.
+        - If a field is missing, it is replaced with "None".
+        - If there are multiple conferences, they are separated by "||".
+
+        Parameters:
+        record (dict): A dictionary containing the record data from the API.
+
+        Returns:
+        str: A formatted string with conference information or "None" if no conference data is found.
+        """
+        # Retrieve the conference data from the record
+        conferences_data = (
+            record.get("static_data", {})
+            .get("summary", {})
+            .get("conferences", {})
+            .get("conference", [])
+        )
+
+        # Ensure the conference data is a list (even if there is only one conference)
+        if not isinstance(conferences_data, list):
+            conferences_data = [conferences_data]
+
+        # List to store formatted conference information
+        conference_infos = []
+
+        for conference in conferences_data:
+            # Extract conference title
+            title = conference.get("conf_titles", {}).get("conf_title", None)
+
+            # Extract conference location
+            location_data = conference.get("conf_locations", {}).get("conf_location", {})
+            location = f"{location_data.get('conf_city', '')}, {location_data.get('conf_state', '')}".strip(
+                ", "
+            )
+            location = location if location else None  # Ensure location is None if no data
+
+            # Extract conference dates
+            date_data = conference.get("conf_dates", {}).get("conf_date", {})
+            start_date = self.format_date(date_data.get("conf_start"))
+            end_date = self.format_date(date_data.get("conf_end"))
+
+            # Format fields, replacing missing values with "None"
+            title = title or "None"
+            location = location or "None"
+            start_date = str(start_date) if start_date else "None"
+            end_date = str(end_date) if end_date else "None"
+
+            # Build the formatted string for this conference
+            conference_info = f"{title}::{location}::{start_date}::{end_date}"
+            conference_infos.append(conference_info)
+
+        # Join all conference entries with "||" or return "None" if no conferences
+        return "||".join(conference_infos) if conference_infos else ""
+
+    def _extract_funding_info(self, record):
+        """
+        Extracts funding information from the record and formats it as:
+        'funding_agency::grant_id'.
+        - If a field is missing, it will be left empty (for agency) or replaced with "None" (for grant_id).
+        - If there are multiple funding entries, they are separated by "||".
+
+        Parameters:
+        record (dict): A dictionary containing the record data from the API.
+
+        Returns:
+        str: A formatted string with funding information or an empty string if no funding data is found.
+        """
+        # Ensure we are working with a dictionary at the correct level
+        static_data = record.get("static_data", {})
+        if not isinstance(static_data, dict):
+            return ""  # If 'static_data' is not a dictionary, return empty string
+
+        fullrecord_metadata = static_data.get("fullrecord_metadata", {})
+        if not isinstance(fullrecord_metadata, dict):
+            return ""  # If 'fullrecord_metadata' is not a dictionary, return empty string
+
+        fund_ack = fullrecord_metadata.get("fund_ack", {})
+        if not isinstance(fund_ack, dict):
+            return ""  # If 'fund_ack' is not a dictionary, return empty string
+
+        grants = fund_ack.get("grants", {})
+        if not isinstance(grants, dict):
+            return ""  # If 'grants' is not a dictionary, return empty string
+
+        # Get the list of grants (it may be a list or dictionary, so ensure it's a list)
+        fundings_data = grants.get("grant", [])
+        if isinstance(fundings_data, dict):
+            fundings_data = [fundings_data]  # Convert single grant dictionary to a list
+        elif not isinstance(fundings_data, list):
+            return ""  # If 'grant' is neither a dict nor a list, return empty string
+
+        # List to store formatted funding information
+        funding_infos = []
+
+        for funding in fundings_data:
+            # Extract funding agency names
+            agency_names = funding.get("grant_agency_names", [])
+            preferred_agency = None
+            if isinstance(agency_names, list):
+                # Get the preferred agency name (if available)
+                preferred_agency = next(
+                    (
+                        agency["content"]
+                        for agency in agency_names
+                        if agency.get("pref") == "Y"
+                    ),
+                    None,
+                )
+            agency_name = preferred_agency or funding.get("grant_agency", "")
+
+            # Extract grant ID
+            grant_ids = funding.get("grant_ids", {}).get("grant_id", "None")
+
+            # Build the formatted string for this funding
+            funding_info = f"{agency_name}::{grant_ids}"
+            funding_infos.append(funding_info)
+
+        # Join all funding entries with "||" or return an empty string if no funding info
+        return "||".join(funding_infos) if funding_infos else ""
 
     def _extract_doi(self, x):
         identifiers = x["dynamic_data"]["cluster_related"]["identifiers"]["identifier"]
@@ -268,10 +402,15 @@ class Client(APIClient):
         return None
 
     def _extract_title(self, x):
-        return next(
-            (y["content"] for y in x["static_data"]["summary"]["titles"]["title"] if y["type"] == "item"),
-            None
+        raw_title = next(
+            (
+                y["content"]
+                for y in x["static_data"]["summary"]["titles"]["title"]
+                if y["type"] == "item"
+            ),
+            None,
         )
+        return normalize_title(raw_title) if raw_title else None
 
     def _extract_first_doctype(self, x):
         doctype = x["static_data"]["summary"]["doctypes"]["doctype"]
@@ -279,25 +418,54 @@ class Client(APIClient):
             doctype = [doctype]
         return doctype
 
-    def _extract_ifs3_doctype(self, x):
+    def get_dc_type_info(self, x):
+        """
+        Retrieves the dc.type and dc.type_authority attributes for a given document type.
+
+        :param data_doctype: The document type (e.g., "Article", "Proceedings Paper", etc.)
+        :return: A dictionary with the keys "dc.type" and "dc.type_authority", or "unknown" if not found.
+        """
         data_doctype = self._extract_first_doctype(x)
+        # Access the doctype mapping for "source_wos"
+        doctype_mapping = mappings.doctypes_mapping_dict.get("source_wos", {})
+        # Check if the document type exists in the mapping for dc.type
+        document_info = doctype_mapping.get(data_doctype, None)
+        dc_type = document_info.get("dc.type", "unknown") if document_info else "unknown"
+
+        dc_type_authority = mappings.types_authority_mapping.get(dc_type, "unknown")
+
+        # Return the dc.type and dc.type_authority
+        return {
+            "dc.type": dc_type,
+            "dc.type_authority": dc_type_authority,
+        }
+
+    def _extract_ifs3_collection(self, x):
+        # Extract the document type
+        data_doctype = self._extract_first_doctype(x)
+        # Check if the document type is accepted
         if data_doctype in accepted_doctypes:
+            # Mapping document types for "source_wos"
             mapped_value = mappings.doctypes_mapping_dict["source_wos"].get(data_doctype)
+
             if mapped_value is not None:
-                return mapped_value
+                # Return the mapped collection value
+                return mapped_value.get("collection", "unknown")
             else:
-                # Log or handle the case where mapping is missing
+                # Log or handle the case where the mapping is missing
                 self.logger.warning(f"Mapping not found for data_doctype: {data_doctype}")
-                return "unknown_doctype"  # or any other default value
-        return "unknown_doctype"  # or any other default value
+                return "unknown"  # or any other default value
+        return "unknown"  # or any other default value
 
     def _extract_ifs3_collection_id(self, x):
-        ifs3_doctype = self._extract_ifs3_doctype(x)
-        if ifs3_doctype != "unknown_doctype":
-            collection_info = mappings.collections_mapping.get(ifs3_doctype, None)
+        ifs3_collection = self._extract_ifs3_collection(x)
+        # Check if the collection is not "unknown"
+        if ifs3_collection != "unknown":
+            # Assume ifs3_collection is a string and access mappings accordingly
+            collection_info = mappings.collections_mapping.get(ifs3_collection, None)
             if collection_info:
                 return collection_info["id"]
-        return "unknown_collection"
+        return "unknown"
 
     def _extract_pubyear(self, x):
         pub_info = x["static_data"]["summary"].get("pub_info", {})
@@ -359,18 +527,20 @@ class Client(APIClient):
 
                         except KeyError as e:
                             # Handle missing keys for the author entry and continue
-                            print(f"Skipping author due to missing key: {e}")
+                            self.logger.error(
+                                f"Skipping author due to missing key: {e}"
+                            )
                             continue
 
                 except KeyError as e:
                     # Handle missing keys for the address entry and continue
-                    print(f"Skipping address entry due to missing key: {e}")
+                    self.logger.error(f"Skipping address entry due to missing key: {e}")
                     continue
 
         except Exception as e:
             # Handle any unexpected errors
             error_message = traceback.format_exc()  # Get the formatted traceback
-            print(f"{x.get('UID', 'Unknown UID')} : An error occurred during processing: {error_message}")
+            self.logger.error(f"{x.get('UID', 'Unknown UID')} : An error occurred during processing: {error_message}")
 
         return authors
 
@@ -388,6 +558,12 @@ class Client(APIClient):
             # If it's a dictionary, return the content directly
             return data_item_id.get("content")
         return None  # Return None if no valid ID is found
+
+    def format_date(self, date_str):
+        try:
+            return datetime.strptime(str(date_str), "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return "None"
 
 
 WosClient = Client(
