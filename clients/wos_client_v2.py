@@ -148,7 +148,7 @@ class Client(APIClient):
         optionView (returned fields) is set to SR for digest formats #to get minimal records
 
         Args
-        format: digest|digest-ifs3ifs3|wos
+        format: digest|digest-ifs3|ifs3|wos
 
         Usage 1
         WosClient.fetch_records(usrQuery="(TS='cadmium')")
@@ -256,21 +256,21 @@ class Client(APIClient):
         record["dc.type_authority"] = dc_type_info["dc.type_authority"]
         return record
 
-    def _extract_ifs3_record_info(self, record):
+    def _extract_ifs3_record_info(self, x):
         """
         Returns
         A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors, conference_info, fundings_info
         """
-        rec = self._extract_ifs3_digest_record_info(record)
-        authors = self._extract_ifs3_authors(record)
+        rec = self._extract_ifs3_digest_record_info(x)
+        authors = self._extract_ifs3_authors(x)
         rec["authors"] = authors
         # Conference metadata as a single field
-        rec["conference_info"] = self._extract_conference_info(record)
-        rec["fundings_info"] = self._extract_funding_info(record)
+        rec["conference_info"] = self._extract_conference_info(x)
+        rec["fundings_info"] = self._extract_funding_info(x)
 
         return rec
 
-    def _extract_conference_info(self, record):
+    def _extract_conference_info(self, x):
         """
         Extracts information about conferences from the record and formats it as:
         'conference_title::conference_location::conference_startdate::conference_enddate'.
@@ -285,7 +285,7 @@ class Client(APIClient):
         """
         # Retrieve the conference data from the record
         conferences_data = (
-            record.get("static_data", {})
+            x.get("static_data", {})
             .get("summary", {})
             .get("conferences", {})
             .get("conference", [])
@@ -327,7 +327,7 @@ class Client(APIClient):
         # Join all conference entries with "||" or return "None" if no conferences
         return "||".join(conference_infos) if conference_infos else ""
 
-    def _extract_funding_info(self, record):
+    def _extract_funding_info(self, x):
         """
         Extracts funding information from the record and formats it as:
         'funding_agency::grant_id'.
@@ -341,7 +341,7 @@ class Client(APIClient):
         str: A formatted string with funding information or an empty string if no funding data is found.
         """
         # Ensure we are working with a dictionary at the correct level
-        static_data = record.get("static_data", {})
+        static_data = x.get("static_data", {})
         if not isinstance(static_data, dict):
             return ""  # If 'static_data' is not a dictionary, return empty string
 
@@ -418,20 +418,37 @@ class Client(APIClient):
             doctype = [doctype]
         return doctype
 
+
     def get_dc_type_info(self, x):
         """
         Retrieves the dc.type and dc.type_authority attributes for a given document type.
 
-        :param data_doctype: The document type (e.g., "Article", "Proceedings Paper", etc.)
+        :param x: The input data (could be a string or object from which the document type is extracted)
         :return: A dictionary with the keys "dc.type" and "dc.type_authority", or "unknown" if not found.
         """
         data_doctype = self._extract_first_doctype(x)
+
+        if isinstance(data_doctype, list):
+            data_doctype = data_doctype[
+                0
+            ]
+
         # Access the doctype mapping for "source_wos"
         doctype_mapping = mappings.doctypes_mapping_dict.get("source_wos", {})
-        # Check if the document type exists in the mapping for dc.type
-        document_info = doctype_mapping.get(data_doctype, None)
-        dc_type = document_info.get("dc.type", "unknown") if document_info else "unknown"
 
+        # Check if the document type exists in the mapping
+        document_info = doctype_mapping.get(data_doctype)
+
+        if document_info is None:
+            # Handle the case where the doctype is not found
+            self.logger.warning(
+                f"Document type '{data_doctype}' not found in doctype_mapping."
+            )
+            dc_type = "unknown"
+        else:
+            dc_type = document_info.get("dc.type", "unknown")
+
+        # Retrieve dc.type_authority from the types_authority_mapping
         dc_type_authority = mappings.types_authority_mapping.get(dc_type, "unknown")
 
         # Return the dc.type and dc.type_authority
