@@ -13,6 +13,7 @@ from typing import List, Dict
 from collections import defaultdict
 import ast
 import os
+import pycountry
 from dotenv import load_dotenv
 from utils import manage_logger
 import mappings
@@ -195,6 +196,7 @@ class Client(APIClient):
         A list of records dict containing the fields :  scopus_id, title, DOI, doctype, pubyear
         """
         coredata = x.get("coredata", {})
+        self.logger.debug(f"Processing Scopus record : {coredata.get('eid')}")
 
         return {
             "source": "scopus",
@@ -228,6 +230,8 @@ class Client(APIClient):
         rec = self._extract_ifs3_digest_record_info(x)
         authors = self._extract_ifs3_authors(x)
         rec["authors"] = authors
+        rec["conference_info"] = self._extract_conference_info(x)
+        rec["fundings_info"] = self._extract_funding_info(x)
 
         return rec
 
@@ -269,29 +273,43 @@ class Client(APIClient):
 
         return orcid_map
 
-    def _extract_ifs3_authors(self, entry):
+    def _extract_ifs3_authors(self, x):
         """
         Extracts author information and their affiliations from the provided JSON data.
         """
         result = []
 
         try:
+            # Ensure required keys are present in the input
+            if "affiliation" not in x or "authors" not in x:
+                self.logger.debug(x)
+                self.logger.warning(
+                    "Input data must contain 'affiliation' and 'author' keys."
+                )
+                return result
 
-            bibrecord_data = entry.get("bibrecord", {})
+            bibrecord_data = x.get("item", {}).get("bibrecord", None)
+            if not bibrecord_data:
+                self.logger.warning("No 'item.bibrecord' key found in the input data.")
+
             orcid_map = self.extract_orcids_from_bibrecord(bibrecord_data)
 
             # Check if the necessary keys are present
-            authors_data = entry.get("authors", {}).get("author", [])
-            affiliations_data = entry.get("affiliation", [])
+            authors_data = x.get("authors", {}).get("author", [])
+            affiliations_data = x.get("affiliation", [])
             if not authors_data or not affiliations_data:
                 self.logger.warning("No authors or affiliations data found.")
                 return result
 
-            # Create a map of affiliations with their ID as the key
+            # Ensure affiliations_data is always a list, even if it's a single dictionary
+            if isinstance(affiliations_data, dict):  # If affiliation is a single dictionary
+                affiliations_data = [affiliations_data]
+
+            # Create a dictionary to map afid to their corresponding organization name and affiliation details
             affiliation_map = {
-                aff.get("@id"): aff.get("affilname", "Unknown")
+                aff.get("@id"): f"{aff.get('@id')}:{aff.get('affilname')}"
                 for aff in affiliations_data
-                if aff.get("@id")
+                if aff.get("@id") and aff.get("affilname")
             }
 
             # Process each author
@@ -299,6 +317,8 @@ class Client(APIClient):
                 surname = author.get("ce:surname", "")
                 given_name = author.get("ce:given-name", "")
                 name = f"{surname}, {given_name}".strip(", ")
+                self.logger.debug(f"Processing Author : {name}")
+
                 if not name:
                     self.logger.warning("Author name is missing; skipping author.")
                     continue
@@ -405,6 +425,146 @@ class Client(APIClient):
             if collection_info:
                 return collection_info["id"]
         return "unknown"
+
+    def _extract_conference_info(self, x):
+        """
+        Extracts conference information from the Scopus record and formats it as:
+        'conference_title::conference_location::conference_startdate::conference_enddate'.
+        - Missing fields are replaced with "None".
+        - If end_date is None or missing, it reuses start_date if available.
+        - If multiple conferences are found, they are separated by "||".
+
+        Parameters:
+        x (dict): A Scopus record containing conference data.
+
+        Returns:
+        str: A formatted string with conference information or "None" if no data is found.
+        """
+        try:
+            # Navigate to the conference info structure
+            conference_info = (
+                x.get("item", {})
+                .get("bibrecord", {})
+                .get("head", {})
+                .get("source", {})
+                .get("additional-srcinfo", {})
+                .get("conferenceinfo", {})
+            )
+            if not conference_info:
+                return "None"
+
+            # Extract conference event details
+            confevent = conference_info.get("confevent", {})
+            confname = confevent.get("confname", "None")
+            confnumber = confevent.get("confnumber", "")
+            confseriestitle = confevent.get("confseriestitle", "")
+            full_title = (
+                f"{confnumber} {confseriestitle}".strip() if confseriestitle else confname
+            )
+
+            # Extract conference location
+            conflocation = confevent.get("conflocation", {})
+            city = conflocation.get("city", "None")
+            country_code = conflocation.get("@country", "None")
+            country_name = self._get_country_name_from_code(country_code)
+            location = f"{city}, {country_name}".strip(", ")
+
+            # Extract conference dates
+            confdate = confevent.get("confdate", {})
+            start_date = self.format_date(confdate.get("startdate"))
+
+            # If end_date is missing or None, reuse start_date
+            end_date = self.format_date(confdate.get("enddate"))
+            if not end_date and start_date:
+                end_date = start_date
+
+            # Build the formatted conference info string
+            conference_info_str = f"{full_title}::{location}::{start_date}::{end_date}"
+            return conference_info_str
+
+        except Exception as e:
+            self.logger.error(f"Error extracting conference info: {e}")
+            return "None"
+
+    def format_date(self, date_obj):
+        """
+        Helper function to format Scopus date objects into 'YYYY-MM-DD'.
+        Handles cases where date_obj is missing or incomplete.
+
+        Parameters:
+        date_obj (dict): Date object with '@day', '@month', and '@year'.
+
+        Returns:
+        str: Formatted date string or "None" if data is missing.
+        """
+        try:
+            if not date_obj:
+                return None  # Return None if date_obj is missing
+            day = date_obj.get("@day", "01")  # Default to "01" if missing
+            month = date_obj.get("@month", "01")
+            year = date_obj.get("@year", "None")
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        except Exception:
+            return None
+
+    def _get_country_name_from_code(self, country_code):
+        """
+        Converts an ISO 3166-1 alpha-3 country code into its human-readable name.
+
+        Parameters:
+        country_code (str): The ISO 3166-1 alpha-3 country code.
+
+        Returns:
+        str: The country name, or the original code if the name is not found.
+        """
+        try:
+            country = pycountry.countries.get(alpha_3=country_code.upper())
+            return country.name if country else country_code
+        except Exception:
+            return country_code
+
+    def _extract_funding_info(self, x):
+        """
+        Extracts funding information from the Scopus record and formats it as:
+        'funding_agency::grant_id'.
+        - Missing fields are replaced with "None".
+        - If multiple fundings are found, they are separated by "||".
+
+        Parameters:
+        x (dict): A Scopus record containing funding data.
+
+        Returns:
+        str: A formatted string with funding information or "None" if no data is found.
+        """
+        # Navigate to the funding list
+        funding_data = (
+            x.get("item", {})
+            .get("xocs:meta", {})
+            .get("xocs:funding-list", {})
+            .get("xocs:funding", [])
+        )
+
+        if not funding_data:
+            return "None"
+
+        funding_infos = []
+        for funding in funding_data:
+            # Extract funding agency name
+            agency = funding.get("xocs:funding-agency-matched-string", "None")
+
+            # Extract funding IDs (may be multiple)
+            grant_ids = funding.get("xocs:funding-id", [])
+            if grant_ids:
+                grant_ids = [grant.get("$", "None") for grant in grant_ids]
+            else:
+                grant_ids = ["None"]
+
+            # Combine agency and grant IDs
+            for grant_id in grant_ids:
+                funding_infos.append(f"{agency}::{grant_id}")
+
+        # Join all funding entries with "||"
+        return "||".join(funding_infos) if funding_infos else "None"
 
 
 ScopusClient = Client(
