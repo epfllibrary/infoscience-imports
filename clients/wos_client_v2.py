@@ -412,12 +412,26 @@ class Client(APIClient):
         )
         return normalize_title(raw_title) if raw_title else None
 
+
     def _extract_first_doctype(self, x):
+        """
+        Extracts the first doctype from the input dictionary.
+
+        Parameters:
+            x (dict): Input data structure containing 'static_data' -> 'summary' -> 'doctypes' -> 'doctype'.
+
+        Returns:
+            str: The first doctype as a string, or None if not found.
+        """
         doctype = x["static_data"]["summary"]["doctypes"]["doctype"]
+
         if isinstance(doctype, dict):  # Case where 'doctype' is a single dictionary
             doctype = [doctype]
-        return doctype
+        elif not isinstance(doctype, list):  # Ensure 'doctype' is a list in all cases
+            doctype = [doctype]
 
+        # Extract the first doctype if the list is not empty
+        return doctype[0] if doctype else None
 
     def get_dc_type_info(self, x):
         """
