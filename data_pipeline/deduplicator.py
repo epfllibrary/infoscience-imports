@@ -59,10 +59,11 @@ class DataFrameProcessor:
 
         # Return a tuple of both IDs
         return doi_id, title_pubyear_id
+    
 
     def deduplicate_dataframes(self):
         """
-        Deduplicate the source dataframes.
+        Deduplicate the source dataframes, retaining the 'authors' column from the line to keep.
         """
         # Combine the input dataframes into one
         combined_df = pd.concat(self.dataframes, ignore_index=True)
@@ -78,7 +79,7 @@ class DataFrameProcessor:
             combined_df["dedup_keys"].tolist(), index=combined_df.index
         )
 
-        # Drop the helper column 'unique_id'
+        # Drop the helper column 'dedup_keys'
         combined_df.drop(columns=["dedup_keys"], inplace=True)
 
         # Sort the combined dataframe to prioritize 'scopus' and 'wos' sources in case of duplicates
@@ -91,18 +92,46 @@ class DataFrameProcessor:
             inplace=True,
         )
 
-        # Drop duplicates based on 'doi_id', keeping the first occurrence
-        deduplicated_df = combined_df.drop_duplicates(subset=["doi_id"], keep="first")
+        # Define a function to merge complementary information
+        def merge_complementary_info(group):
+            # Start with the first row as the base (prioritized by sorting)
+            base_row = group.iloc[0].copy()
 
-        # Drop duplicates based on 'title_pubyear_id', keeping the first occurrence
-        deduplicated_df = deduplicated_df.drop_duplicates(
-            subset=["title_pubyear_id"], keep="first"
+            # Keep the 'authors' column from the first row
+            base_authors = base_row.get("authors", None)
+
+            # Iterate through other rows and fill missing information in the base row
+            for _, row in group.iloc[1:].iterrows():
+                for col in group.columns:
+                    if col == "authors":  # Skip 'authors' column for merging
+                        continue
+                    # Check if the current cell in the base row is empty
+                    if pd.isna(base_row[col]) or base_row[col] in [None, ""]:
+                        # Only update if the current row has a non-empty value
+                        if not pd.isna(row[col]) and row[col] not in [None, ""]:
+                            base_row[col] = row[col]
+
+            # Restore the original 'authors' from the prioritized row
+            if "authors" in group.columns:
+                base_row["authors"] = base_authors
+
+            return base_row
+
+        # Process duplicates based on 'doi_id'
+        deduplicated_df = (
+            combined_df.groupby("doi_id", as_index=False)
+            .apply(merge_complementary_info)
+            .reset_index(drop=True)
+        )
+
+        # Process duplicates based on 'title_pubyear_id'
+        deduplicated_df = (
+            deduplicated_df.groupby("title_pubyear_id", as_index=False)
+            .apply(merge_complementary_info)
+            .reset_index(drop=True)
         )
 
         # Drop the helper columns
-        deduplicated_df = (
-            deduplicated_df.copy()
-        )  # Create a copy to avoid SettingWithCopyWarning
         deduplicated_df.drop(columns=["doi_id", "title_pubyear_id"], inplace=True)
 
         return deduplicated_df
