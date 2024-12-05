@@ -89,28 +89,44 @@ class WosHarvester(Harvester):
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
         )
         self.logger.info(f"- Nombre de publications trouvées dans le WOS: {total}")
+
         if total == 0:
+            self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
-        recs = []
+
+        total = int(total)  # Assurez-vous que `total` est un entier
         count = 50
-        for i in range(1, int(total), int(count)):
-            self.logger.info(
-                f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
-            )
-            h_recs = WosClient.fetch_records(
+        recs = []
+
+        # Cas spécial : un seul résultat
+        if total == 1:
+            self.logger.info("Only one publication found. Fetching the single record.")
+            recs = WosClient.fetch_records(
                 format=self.format,
                 usrQuery=self.query,
-                count=count,
-                firstRecord=i,
+                count=1,
+                firstRecord=1,
                 createdTimeSpan=createdTimeSpan,
             )
-            recs.extend(h_recs)
-        # keep only valid ifs3 doctypes
+        else:
+            for i in range(1, total + 1, count):
+                self.logger.info(
+                    f"Harvesting publications {i} to {min(i + count - 1, total)} on a total of {total} publications"
+                )
+                h_recs = WosClient.fetch_records(
+                    format=self.format,
+                    usrQuery=self.query,
+                    count=count,
+                    firstRecord=i,
+                    createdTimeSpan=createdTimeSpan,
+                )
+                recs.extend(h_recs)
         df = (
             pd.DataFrame(recs)
-            .query('ifs3_collection != "unknown"')  # Filter out unknown_doctype
+            .query('ifs3_collection != "unknown"')  # Filtrer les ifs3 inconnus
             .reset_index(drop=True)
         )
+
         return df
 
 
@@ -143,25 +159,38 @@ class ScopusHarvester(Harvester):
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(query=updated_query)
         self.logger.info(f"- Nombre de publications trouvées dans Scopus: {total}")
+        
         if total == "0":  # scopus API returns 0 as string
             self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
+
+        total = int(total)  # Convert total to integer for calculations
         count = 50
         recs = []
-        for i in range(1, int(total), int(count)):
-            self.logger.info(
-                f"Harvest publications {str(i)} to {str(int(i) + int(count))} on a total of {str(total)} publications"
+        
+        # Special case: Handle single result
+        if total == 1:
+            self.logger.info("Only one publication found. Fetching the single record.")
+            recs = ScopusClient.fetch_records(
+                format=self.format, query=updated_query, count=1, start=0
             )
-            h_recs = ScopusClient.fetch_records(
-                format=self.format, query=updated_query, count=count, start=i
-            )
-            recs.extend(h_recs)
+        else:
+            for i in range(0, total, count):
+                self.logger.info(
+                    f"Harvest publications {i + 1} to {min(i + count, total)} on a total of {total} publications"
+                )
+                h_recs = ScopusClient.fetch_records(
+                    format=self.format, query=updated_query, count=count, start=i
+                )
+                recs.extend(h_recs)
+
         # Keep only valid ifs3 doctypes
         df = (
             pd.DataFrame(recs)
             .query('ifs3_collection != "unknown"')  # Filter out unknown_doctype
             .reset_index(drop=True)
         )
+
         return df
 
 
@@ -222,8 +251,8 @@ class ZenodoHarvester(Harvester):
             return pd.DataFrame()
         size = 50
         recs = []
-        print(total)
-        print(range(0, 1 + int(total) // size))
+        # print(total)
+        # print(range(0, 1 + int(total) // size))
         for i in range(0, 1 + int(total) // size):
             self.logger.info(
                 f"Harvest objects {i*size*(int(total)//size)+1} to {i*size*(int(total)//size)} out of a total of {total} objects"
@@ -231,7 +260,6 @@ class ZenodoHarvester(Harvester):
             h_recs = ZenodoClient.fetch_records(
                 format=self.format, q=updated_query, size=size, page=i + 1
             )
-            print(i, h_recs)
             if h_recs is not None:
                 recs.extend(h_recs)
         # Keep only valid ifs3 doctypes, filter out unknown_doctype
