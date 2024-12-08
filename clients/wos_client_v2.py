@@ -274,14 +274,15 @@ class Client(APIClient):
         """
         Extracts information about conferences from the record and formats it as:
         'conference_title::conference_location::conference_startdate::conference_enddate'.
-        - If a field is missing, it is replaced with "None".
+        - If a field is missing, it is replaced with an empty string.
         - If there are multiple conferences, they are separated by "||".
+        - Returns an empty string if no valid conference title is found.
 
         Parameters:
         record (dict): A dictionary containing the record data from the API.
 
         Returns:
-        str: A formatted string with conference information or "None" if no conference data is found.
+        str: A formatted string with conference information or an empty string if no valid conference title is found.
         """
         # Retrieve the conference data from the record
         conferences_data = (
@@ -302,29 +303,34 @@ class Client(APIClient):
             # Extract conference title
             title = conference.get("conf_titles", {}).get("conf_title", None)
 
+            # Skip if the title is None, empty, or only contains whitespace
+            if not title or not title.strip():
+                continue
+
             # Extract conference location
             location_data = conference.get("conf_locations", {}).get("conf_location", {})
             location = f"{location_data.get('conf_city', '')}, {location_data.get('conf_state', '')}".strip(
                 ", "
             )
-            location = location if location else None  # Ensure location is None if no data
+            location = (
+                location if location else ""
+            )  # Ensure location is an empty string if no data
 
             # Extract conference dates
             date_data = conference.get("conf_dates", {}).get("conf_date", {})
             start_date = self.format_date(date_data.get("conf_start"))
             end_date = self.format_date(date_data.get("conf_end"))
 
-            # Format fields, replacing missing values with "None"
-            title = title or "None"
-            location = location or "None"
-            start_date = str(start_date) if start_date else "None"
-            end_date = str(end_date) if end_date else "None"
+            # Format fields, replacing missing values with empty strings
+            location = location or ""
+            start_date = str(start_date) if start_date else ""
+            end_date = str(end_date) if end_date else start_date
 
             # Build the formatted string for this conference
             conference_info = f"{title}::{location}::{start_date}::{end_date}"
             conference_infos.append(conference_info)
 
-        # Join all conference entries with "||" or return "None" if no conferences
+        # Join all conference entries with "||" or return an empty string if no valid titles
         return "||".join(conference_infos) if conference_infos else ""
 
     def _extract_funding_info(self, x):
@@ -383,12 +389,21 @@ class Client(APIClient):
                 )
             agency_name = preferred_agency or funding.get("grant_agency", "")
 
-            # Extract grant ID
-            grant_ids = funding.get("grant_ids", {}).get("grant_id", "None")
+            # Extract grant ID(s)
+            grant_ids = funding.get("grant_ids", {})
+            if isinstance(grant_ids, dict):
+                grant_id = grant_ids.get("grant_id", "")
+            else:
+                grant_id = ""
 
-            # Build the formatted string for this funding
-            funding_info = f"{agency_name}::{grant_ids}"
-            funding_infos.append(funding_info)
+            # Handle the case where grant_id is nested or a list (if applicable)
+            if isinstance(grant_id, list):
+                grant_id = ";".join(grant_id)  # Combine multiple IDs into a single string
+
+            # Ensure agency and grant ID pair is properly associated
+            if agency_name or grant_id:
+                funding_info = f"{agency_name}::{grant_id}"
+                funding_infos.append(funding_info)
 
         # Join all funding entries with "||" or return an empty string if no funding info
         return "||".join(funding_infos) if funding_infos else ""
@@ -411,7 +426,6 @@ class Client(APIClient):
             None,
         )
         return normalize_title(raw_title) if raw_title else None
-
 
     def _extract_first_doctype(self, x):
         """

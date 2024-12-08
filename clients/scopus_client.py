@@ -451,11 +451,11 @@ class Client(APIClient):
                 .get("conferenceinfo", {})
             )
             if not conference_info:
-                return "None"
+                return ""
 
             # Extract conference event details
             confevent = conference_info.get("confevent", {})
-            confname = confevent.get("confname", "None")
+            confname = confevent.get("confname", "")
             confnumber = confevent.get("confnumber", "")
             confseriestitle = confevent.get("confseriestitle", "")
             full_title = (
@@ -464,8 +464,8 @@ class Client(APIClient):
 
             # Extract conference location
             conflocation = confevent.get("conflocation", {})
-            city = conflocation.get("city", "None")
-            country_code = conflocation.get("@country", "None")
+            city = conflocation.get("city", "")
+            country_code = conflocation.get("@country", "")
             country_name = self._get_country_name_from_code(country_code)
             location = f"{city}, {country_name}".strip(", ")
 
@@ -484,7 +484,7 @@ class Client(APIClient):
 
         except Exception as e:
             self.logger.error(f"Error extracting conference info: {e}")
-            return "None"
+            return ""
 
     def format_date(self, date_obj):
         """
@@ -545,26 +545,26 @@ class Client(APIClient):
         )
 
         if not funding_data:
-            return "None"
+            return ""
 
         funding_infos = []
         for funding in funding_data:
             # Extract funding agency name
-            agency = funding.get("xocs:funding-agency-matched-string", "None")
+            agency = funding.get("xocs:funding-agency-matched-string", "")
 
             # Extract funding IDs (may be multiple)
             grant_ids = funding.get("xocs:funding-id", [])
             if grant_ids:
-                grant_ids = [grant.get("$", "None") for grant in grant_ids]
+                grant_ids = [grant.get("$", "") for grant in grant_ids]
             else:
-                grant_ids = ["None"]
+                grant_ids = [""]
 
             # Combine agency and grant IDs
             for grant_id in grant_ids:
                 funding_infos.append(f"{agency}::{grant_id}")
 
         # Join all funding entries with "||"
-        return "||".join(funding_infos) if funding_infos else "None"
+        return "||".join(funding_infos) if funding_infos else ""
 
 
 ScopusClient = Client(
