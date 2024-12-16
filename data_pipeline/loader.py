@@ -76,21 +76,23 @@ class Loader:
     def _construct_patch_operations(self, row, units, form_section, required_paths):
         """Constructs PATCH operations for metadata updates with optimized error handling."""
 
-        def build_value(value, authority=None):
+        def build_value(value, authority=None, language="en", confidence=600, place=0):
             """Helper function to build a metadata value structure."""
+            if not isinstance(value, str) or not value.strip():
+                logger.warning(f"Invalid value provided: {value}")
+                return None  # Ignore invalid or empty values
             return {
-                    "value": value,
-                    "language": None,
-                    "authority": authority,
-                    "securityLevel": 0,
-                    "confidence": 600,
-                    "place": 0,
-                }
+                "value": value,
+                "language": language,
+                "authority": authority,
+                "confidence": confidence,
+                "place": place,
+            }
 
         # Prepare patch operations
         metadata_operations = [
             {
-                "path": f"/sections/{form_section}/dc.description.sponsorship",
+                "path": f"/sections/{form_section}details/dc.description.sponsorship",
                 "value": [
                     build_value(
                         unit.get("acro"),
@@ -101,7 +103,7 @@ class Loader:
                 ],
             },
             {
-                "path": f"/sections/{form_section}/epfl.peerreviewed",
+                "path": f"/sections/{form_section}details/epfl.peerreviewed",
                 "value": [build_value("REVIEWED")],
             },
             {
@@ -109,7 +111,7 @@ class Loader:
                 "value": [build_value(row.get("license"))],
             },
             {
-                "path": f"/sections/{form_section}/epfl.writtenAt",
+                "path": f"/sections/{form_section}details/epfl.writtenAt",
                 "value": [build_value("EPFL")],
             },
             {
@@ -117,6 +119,41 @@ class Loader:
                 "value": "true",
             },
         ]
+
+        # dc.type validation and patching
+        dc_type_value = row.get("dc.type")
+        dc_type_auth = row.get("dc.type_authority")
+        if pd.notna(dc_type_value) and isinstance(dc_type_value, str):
+            dc_type_metadata = build_value(
+                dc_type_value,
+                authority=dc_type_auth,
+                language=None,  # `language` is null as per the required format
+                confidence=600,
+            )
+            if dc_type_metadata:
+                metadata_operations.append(
+                    {
+                        "path": f"/sections/{form_section}type/dc.type/0",
+                        "value": dc_type_metadata,
+                    }
+                )
+
+        # dc.description.abstract validation and patching
+        abstract_value = row.get("abstract")
+        logger.info(f"abstract in row: {abstract_value}")
+        if isinstance(abstract_value, str) and abstract_value.strip():
+            abstract_metadata = build_value(
+                abstract_value,
+                language="en",
+                confidence=-1,
+            )
+            if abstract_metadata:
+                metadata_operations.append(
+                    {
+                        "path": f"/sections/{form_section}details/dc.description.abstract",
+                        "value": [abstract_metadata],
+                    }
+                )
 
         # Filtering only necessary patch operations
         filtered_operations = []
@@ -129,6 +166,22 @@ class Loader:
                         "op": "add",
                         "path": "/sections/license/granted",
                         "value": "true",  # Set 'true' as the default value for granted
+                    }
+                )
+            elif meta["path"].startswith(f"/sections/{form_section}type/dc.type"):
+                filtered_operations.append(
+                    {
+                        "op": "replace",  # Use 'replace' for dc.type and abstract
+                        "path": meta["path"],
+                        "value": meta["value"],
+                    }
+                )
+            elif meta["path"].startswith(f"/sections/{form_section}details/dc.description.abstract"):
+                filtered_operations.append(
+                    {
+                        "op": "add",  # Use 'replace' for dc.type and abstract
+                        "path": meta["path"],
+                        "value": meta["value"],
                     }
                 )
             elif meta["path"] in required_paths:
