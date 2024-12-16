@@ -228,6 +228,7 @@ class Client(APIClient):
         A list of records dict containing the fields :  scopus_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors
         """
         rec = self._extract_ifs3_digest_record_info(x)
+        rec["abstract"] = self._extract_abstract(x)
         authors = self._extract_ifs3_authors(x)
         rec["authors"] = authors
         rec["conference_info"] = self._extract_conference_info(x)
@@ -240,6 +241,25 @@ class Client(APIClient):
         if isinstance(subtype, list):
             return subtype[0] if subtype else None
         return subtype
+
+    def _extract_abstract(self, x):
+        """
+        Extracts the abstract from the Scopus record.
+        """
+        try:
+            abstract_text = (
+                x.get("abstracts-retrieval-response", {})
+                .get("item", {})
+                .get("abstracts", "")
+                .strip()
+            )
+
+            if abstract_text:
+                return abstract_text
+            return ""
+        except KeyError as e:
+            self.logger.error(f"Error during abstract retrieval: {e}")
+            return ""
 
     def extract_orcids_from_bibrecord(self, bibrecord_data):
         """

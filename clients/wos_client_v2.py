@@ -261,14 +261,37 @@ class Client(APIClient):
         Returns
         A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors, conference_info, fundings_info
         """
+
         rec = self._extract_ifs3_digest_record_info(x)
+        rec["abstract"] = self._extract_abstract(x)
         authors = self._extract_ifs3_authors(x)
         rec["authors"] = authors
         # Conference metadata as a single field
         rec["conference_info"] = self._extract_conference_info(x)
         rec["fundings_info"] = self._extract_funding_info(x)
-
         return rec
+
+    def _extract_abstract(self, x):
+        """
+        Extracts the abstract from the record, only if the 'has_abstract' flag is 'Y'.
+        """
+        try:
+            # Check if the record has an abstract
+            has_abstract = x["static_data"]["summary"].get("has_abstract", "N")
+
+            # If 'has_abstract' is 'Y', then extract the abstract
+            if has_abstract == "Y":
+                abstract_data = x.get("abstracts", {}).get("abstract", {})
+                abstract_text = abstract_data.get("abstract_text", {}).get("p", "").strip()
+                if abstract_text:
+                    return abstract_text
+                return ""  # Abstract exists, but no content found
+            else:
+                return ""  # No abstract available
+
+        except KeyError as e:
+            self.logger.error(f"Error extracting abstract: {e}")
+            return ""
 
     def _extract_conference_info(self, x):
         """
