@@ -485,15 +485,15 @@ collections_mapping = {
     },
     "Teaching Materials": {
         "id": "c7e018d4-2349-46dd-a8a4-c32cf5f5f9a1",
-        "section": "teaching_details",
+        "section": "teaching_",
     },
     "Images, Videos, Interactive resources, and Design": {
         "id": "329f8cd3-dc1a-4228-9557-b27366d71d41",
-        "section": "design_details",
+        "section": "design_",
     },
     "Newspaper, Magazine, or Blog post": {
         "id": "971cc7fa-b177-46e3-86a9-cfac93042e9d",
-        "section": "media_details",
+        "section": "media_",
     },
     "Funding": {
         "id": "8b185e36-0f99-4669-9a46-26a19d4f3eab",
@@ -501,15 +501,15 @@ collections_mapping = {
     },
     "Other": {
         "id": "0066acb2-d5c0-49a0-b273-581df34961cc",
-        "section": "other_details",
+        "section": "other_",
     },
     "Datasets and Code": {
         "id": "33a1cd32-7980-495b-a2bb-f34c478869d8",
-        "section": "dataset_details",
+        "section": "dataset_",
     },
     "Student works": {
         "id": "305e3dad-f918-48f6-9309-edbeb7cced14",
-        "section": "thesis_details",
+        "section": "thesis_",
     },
     "Units": {
         "id": "bc85ee71-84b0-4f78-96a1-bab2c50b7ac9",
@@ -525,19 +525,19 @@ collections_mapping = {
     },
     "EPFL thesis": {
         "id": "4af344ef-0fb2-4593-a234-78d57f3df621",
-        "section": "thesis_details",
+        "section": "thesis_",
     },
     "Reports, Documentation, and Standards": {
         "id": "d5ec2987-2ee5-4754-971b-aca7ab4f9ab7",
-        "section": "report_details",
+        "section": "report_",
     },
     "Preprints and Working Papers": {
         "id": "d8dada3a-c4bd-4c6f-a6d7-13f1b4564fa4",
-        "section": "preprint_details",
+        "section": "preprint_",
     },
     "Books and Book parts": {
         "id": "1a71fba2-2fc5-4c02-9447-f292e25ce6c1",
-        "section": "book_details",
+        "section": "book_",
     },
     "Persons": {
         "id": "6acf237a-90d7-43e2-82cf-c3591e50c719",
@@ -549,7 +549,7 @@ collections_mapping = {
     },
     "Conferences, Workshops, Symposiums, and Seminars": {
         "id": "e91ecd9f-56a2-4b2f-b7cc-f03e03d2643d",
-        "section": "conference_details",
+        "section": "conference_",
     },
     "Journals": {
         "id": "9ada82da-bb91-4414-a480-fae1a5c02d1c",
@@ -557,7 +557,7 @@ collections_mapping = {
     },
     "Journal articles": {
         "id": "8a8d3310-6535-4d3a-90b6-2a4428097b5b",
-        "section": "article_details",
+        "section": "article_",
     },
 }
 # Mappings pour les licenses
