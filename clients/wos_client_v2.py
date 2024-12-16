@@ -273,24 +273,53 @@ class Client(APIClient):
 
     def _extract_abstract(self, x):
         """
-        Extracts the abstract from the record, only if the 'has_abstract' flag is 'Y'.
+        Extracts the abstract from the record, but only if the 'has_abstract' flag is 'Y'.
+
+        Parameters:
+        x (dict): A record containing the data from which the abstract needs to be extracted.
+
+        Returns:
+        str: The abstract text if available, or an empty string if not found or not available.
         """
         try:
-            # Check if the record has an abstract
-            has_abstract = x["static_data"]["summary"].get("has_abstract", "N")
+            # Check if the record has an abstract available
+            has_abstract = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("pub_info", {})
+                .get("has_abstract", "N")
+            )
 
-            # If 'has_abstract' is 'Y', then extract the abstract
             if has_abstract == "Y":
-                abstract_data = x.get("abstracts", {}).get("abstract", {})
-                abstract_text = abstract_data.get("abstract_text", {}).get("p", "").strip()
-                if abstract_text:
-                    return abstract_text
-                return ""  # Abstract exists, but no content found
-            else:
-                return ""  # No abstract available
+                # Navigate to the abstract data
+                abstract_data = (
+                    x.get("static_data", {})
+                    .get("fullrecord_metadata", {})
+                    .get("abstracts", {})
+                    .get("abstract", {})
+                )
 
-        except KeyError as e:
-            self.logger.error(f"Error extracting abstract: {e}")
+                # Extract the text of the abstract from the 'p' field if it is a dictionary
+                if isinstance(abstract_data, dict):
+                    abstract_text = abstract_data.get("abstract_text", {}).get("p", "")
+                    if abstract_text:
+                        return abstract_text.strip()
+
+                # Handle cases where the 'abstract_text' contains multiple paragraphs as a list
+                if isinstance(abstract_data, list):
+                    abstract_texts = [
+                        item.get("p", "").strip() for item in abstract_data if "p" in item
+                    ]
+                    return " ".join(abstract_texts).strip()
+
+                # Return an empty string if no content is found
+                return ""
+            else:
+                # Return an empty string if no abstract is available
+                return ""
+        except Exception as e:
+            # Log unexpected errors with context
+            self.logger.error(f"Error extracting abstract: {e}\nRecord: {x}")
             return ""
 
     def _extract_conference_info(self, x):
