@@ -248,8 +248,9 @@ class Client(APIClient):
         """
         try:
             abstract_text = (
-                x.get("abstracts-retrieval-response", {})
-                .get("item", {})
+                x.get("item", {})
+                .get("bibrecord", {})
+                .get("head", {})
                 .get("abstracts", "")
                 .strip()
             )
