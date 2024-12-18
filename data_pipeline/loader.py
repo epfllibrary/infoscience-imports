@@ -80,7 +80,7 @@ class Loader:
             """Helper function to build a metadata value structure."""
             if not isinstance(value, str) or not value.strip():
                 logger.warning(f"Invalid value provided: {value}")
-                return None  # Ignore invalid or empty values
+                return None
             return {
                 "value": value,
                 "language": language,
@@ -89,11 +89,148 @@ class Loader:
                 "place": place,
             }
 
-        # Prepare patch operations
-        metadata_operations = [
-            {
-                "path": f"/sections/{form_section}details/dc.description.sponsorship",
-                "value": [
+        def create_metadata_operation(path, value, op="add"):
+            """Helper to create a PATCH operation."""
+            if value:  # Only include if value is not None or empty
+                if isinstance(value, list) and all(v is None for v in value):
+                    return None
+                return {"op": op, "path": path, "value": value}
+            return None
+
+        def determine_section_path(base_path, form_section):
+            """Determine correct path suffix based on form_section."""
+            if form_section == "conference_":
+                return f"{form_section}details"
+            return f"{form_section}type"
+
+        # Determine correct path for dc.type dynamically
+        dc_type_path_suffix = determine_section_path("dc.type", form_section)
+
+        def parse_conference_info(conference_info):
+            """Parses the conference_info string into structured metadata."""
+            operations = []
+            if not conference_info:
+                return operations
+
+            conferences = conference_info.split("||")
+
+            conference_types = []
+            conference_names = []
+            conference_places = []
+            conference_dates = []
+
+            for conf in conferences:
+                parts = conf.split("::")
+                name = parts[0].strip() if len(parts) > 0 and parts[0].strip() else None
+                place = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+                start_date = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+                end_date = parts[3].strip() if len(parts) > 3 and parts[3].strip() else None
+
+                if name:
+                    conference_names.append(
+                        build_value(name, confidence=-1, language=None)
+                    )
+                if place:
+                    conference_places.append(
+                        build_value(place, confidence=-1, language=None)
+                    )
+                if start_date and end_date:
+                    conference_dates.append(
+                        build_value(f"{start_date} - {end_date}", confidence=-1, language=None)
+                    )
+                # Add a static "conference" type for each event
+                conference_types.append(
+                    build_value("conference", confidence=-1, language=None)
+                )
+
+            if conference_types:
+                operations.append((
+                    "/sections/conference_event/epfl.relation.conferenceType",
+                    conference_types,
+                    "add",
+                ))
+            if conference_names:
+                operations.append((
+                    "/sections/conference_event/dc.relation.conference",
+                    conference_names,
+                    "add",
+                ))
+            if conference_places:
+                operations.append((
+                    "/sections/conference_event/oaire.citation.conferencePlace",
+                    conference_places,
+                    "add",
+                ))
+            if conference_dates:
+                operations.append((
+                    "/sections/conference_event/oaire.citation.conferenceDate",
+                    conference_dates,
+                    "add",
+                ))
+
+            # Add a placeholder for acronym if needed
+            operations.append((
+                "/sections/conference_event/oairecerif.acronym",
+                [build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#", confidence=-1, language=None)],
+                "add",
+            ))
+
+            return operations
+
+        def parse_funding_info(funding_info):
+            """Parses the funding_info string into structured metadata."""
+            operations = []
+            if not funding_info:
+                return operations
+
+            grants = funding_info.split("||")
+            funders = []
+            grant_nos = []
+
+            for grant in grants:
+                if "::" in grant:
+                    funder, grantno = grant.split("::", 1)
+                    if funder.strip():  # Add funder only if it is non-empty
+                        funders.append(
+                            build_value(funder.strip(), confidence=-1, language=None)
+                        )
+                    # Replace empty grantno with placeholder
+                    grant_nos.append(
+                        build_value(
+                            grantno.strip() if grantno.strip() else "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            confidence=-1,
+                            language=None,
+                        )
+                    )
+                elif grant.strip():  # Handle cases where funder exists but no "::"
+                    funders.append(
+                        build_value(grant.strip(), confidence=-1, language=None)
+                    )
+                    # Add placeholder for missing grantno
+                    grant_nos.append(
+                        build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#", confidence=-1, language=None)
+                    )
+
+            # Add operations only if there are valid values
+            if funders:
+                operations.append((
+                    "/sections/grants/oairecerif.funder",
+                    funders,
+                    "add",
+                ))
+            if grant_nos:
+                operations.append((
+                    "/sections/grants/dc.relation.grantno",
+                    grant_nos,
+                    "add",
+                ))
+            return operations
+
+        # Define metadata to be patched
+        metadata_definitions = [
+            (
+                f"/sections/{form_section}details/dc.description.sponsorship",
+                [
                     build_value(
                         unit.get("acro"),
                         f"will be referenced::ACRONYM::{unit.get('acro')}",
@@ -101,100 +238,58 @@ class Loader:
                     for unit in units
                     if unit.get("acro")
                 ],
-            },
-            {
-                "path": f"/sections/{form_section}details/epfl.peerreviewed",
-                "value": [build_value("REVIEWED")],
-            },
-            {
-                "path": f"/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
-                "value": [build_value(row.get("license"))],
-            },
-            {
-                "path": f"/sections/{form_section}details/epfl.writtenAt",
-                "value": [build_value("EPFL")],
-            },
-            {
-                "path": "/sections/license/granted",
-                "value": "true",
-            },
+                "add",
+            ),
+            (
+                f"/sections/{form_section}details/epfl.peerreviewed",
+                [build_value("REVIEWED")],
+                "add",
+            ),
+            (
+                f"/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
+                [build_value(row.get("license"))],
+                "add",
+            ),
+            (
+                f"/sections/{form_section}details/epfl.writtenAt",
+                [build_value("EPFL")],
+                "add",
+            ),
+            (
+                "/sections/license/granted",
+                "true",
+                "add",
+            ),
+            (
+                f"/sections/{dc_type_path_suffix}/dc.type/0",
+                build_value(
+                    row.get("dc.type"),
+                    authority=row.get("dc.type_authority"),
+                    language=None,
+                ),
+                "replace",
+            ),
+            (
+                f"/sections/{form_section}details/dc.description.abstract",
+                [build_value(row.get("abstract"), language="en", confidence=-1)],
+                "add",
+            ),
         ]
 
-        # dc.type validation and patching
-        dc_type_value = row.get("dc.type")
-        dc_type_auth = row.get("dc.type_authority")
-        if pd.notna(dc_type_value) and isinstance(dc_type_value, str):
-            dc_type_metadata = build_value(
-                dc_type_value,
-                authority=dc_type_auth,
-                language=None,  # `language` is null as per the required format
-                confidence=600,
-            )
-            if dc_type_metadata:
-                metadata_operations.append(
-                    {
-                        "path": f"/sections/{form_section}type/dc.type/0",
-                        "value": dc_type_metadata,
-                    }
-                )
+        # Add funding_info operations dynamically
+        metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
+        metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
 
-        # dc.description.abstract validation and patching
-        abstract_value = row.get("abstract")
-        logger.info(f"abstract in row: {abstract_value}")
-        if isinstance(abstract_value, str) and abstract_value.strip():
-            abstract_metadata = build_value(
-                abstract_value,
-                language="en",
-                confidence=-1,
-            )
-            if abstract_metadata:
-                metadata_operations.append(
-                    {
-                        "path": f"/sections/{form_section}details/dc.description.abstract",
-                        "value": [abstract_metadata],
-                    }
-                )
-
-        # Filtering only necessary patch operations
+        # Generate patch operations
         filtered_operations = []
-
-        for meta in metadata_operations:
-            if meta["path"].startswith("/sections/license"):
-                # Ensure both '/sections/license' and '/sections/license/granted' are handled correctly
-                filtered_operations.append(
-                    {
-                        "op": "add",
-                        "path": "/sections/license/granted",
-                        "value": "true",  # Set 'true' as the default value for granted
-                    }
-                )
-            elif meta["path"].startswith(f"/sections/{form_section}type/dc.type"):
-                filtered_operations.append(
-                    {
-                        "op": "replace",  # Use 'replace' for dc.type and abstract
-                        "path": meta["path"],
-                        "value": meta["value"],
-                    }
-                )
-            elif meta["path"].startswith(f"/sections/{form_section}details/dc.description.abstract"):
-                filtered_operations.append(
-                    {
-                        "op": "add",  # Use 'replace' for dc.type and abstract
-                        "path": meta["path"],
-                        "value": meta["value"],
-                    }
-                )
-            elif meta["path"] in required_paths:
-                filtered_operations.append(
-                    {
-                        "op": "add",
-                        "path": meta["path"],
-                        "value": meta["value"],
-                    }
-                )
+        for path, value, op in metadata_definitions:
+            operation = create_metadata_operation(path, value, op)
+            if operation:
+                filtered_operations.append(operation)
 
         if not filtered_operations:
             logger.warning("No operations constructed; required paths might be missing.")
+
         return filtered_operations
 
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
