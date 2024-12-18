@@ -271,6 +271,7 @@ class Client(APIClient):
         rec["fundings_info"] = self._extract_funding_info(x)
         return rec
 
+
     def _extract_abstract(self, x):
         """
         Extracts the abstract from the record, but only if the 'has_abstract' flag is 'Y'.
@@ -297,26 +298,23 @@ class Client(APIClient):
                     .get("fullrecord_metadata", {})
                     .get("abstracts", {})
                     .get("abstract", {})
+                    .get("abstract_text", {})
+                    .get("p", [])  # Paragraph(s) under 'p'
                 )
 
-                # Extract the text of the abstract from the 'p' field if it is a dictionary
-                if isinstance(abstract_data, dict):
-                    abstract_text = abstract_data.get("abstract_text", {}).get("p", "")
-                    if abstract_text:
-                        return abstract_text.strip()
+                # Handle case where 'p' is a string instead of a list
+                if isinstance(abstract_data, str):
+                    return abstract_data.strip()
 
-                # Handle cases where the 'abstract_text' contains multiple paragraphs as a list
-                if isinstance(abstract_data, list):
-                    abstract_texts = [
-                        item.get("p", "").strip() for item in abstract_data if "p" in item
-                    ]
-                    return " ".join(abstract_texts).strip()
+                # Ensure abstract_data is a list, then join the paragraphs
+                elif isinstance(abstract_data, list):
+                    abstract_text = " ".join(
+                        paragraph.strip() for paragraph in abstract_data
+                    )
+                    return abstract_text.strip()
 
-                # Return an empty string if no content is found
-                return ""
-            else:
-                # Return an empty string if no abstract is available
-                return ""
+            # Return an empty string if no abstract is available
+            return ""
         except Exception as e:
             # Log unexpected errors with context
             self.logger.error(f"Error extracting abstract: {e}\nRecord: {x}")
