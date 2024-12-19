@@ -335,8 +335,10 @@ class Client(APIClient):
 
             # Process each author
             for author in authors_data:
-                surname = author.get("ce:surname", "")
-                given_name = author.get("ce:given-name", "")
+                # Prioritize 'preferred-name' fields
+                preferred_name = author.get("preferred-name", {})
+                surname = preferred_name.get("ce:surname", author.get("ce:surname", ""))
+                given_name = preferred_name.get("ce:given-name", author.get("ce:given-name", ""))
                 name = f"{surname}, {given_name}".strip(", ")
                 self.logger.debug(f"Processing Author : {name}")
 
