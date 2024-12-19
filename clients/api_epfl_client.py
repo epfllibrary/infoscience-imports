@@ -139,7 +139,7 @@ class Client(APIClient):
                         self.logger.warning(
                             f"The single record found does not match the requested name: {lastname}."
                         )
-                    return "Single record found, but names do not match."
+                    return None
         else:
             self.logger.warning("personsQuery is missing; skipping...")
 
@@ -173,7 +173,7 @@ class Client(APIClient):
                 self.logger.warning(
                     "No suitable candidate found among the multiple records."
                 )
-                return "More than 1 result in api.epfl.ch"
+                return None
 
         # If no records found
         self.logger.warning(f"No valid record found for {query}.")
