@@ -266,7 +266,7 @@ class AuthorProcessor:
             if pd.notna(sciper_id):
                 records = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="digest")
                 self.logger.debug(f"Person record: {records}")
-                
+
                 if isinstance(records, list) and records:
                     # Step 1: Prioritize a unit with unit_order == 1 and an allowed unit_type
                     for record in records:
@@ -299,16 +299,45 @@ class AuthorProcessor:
 
     def generate_dspace_uuid(self, return_df=False):
         self.df = self.df.copy()
-        self.df["dspace_uuid"] = self.df.apply(
-            lambda row: dspace_wrapper.find_person(
-                query=(
+
+        def get_dspace_data(row):
+            # Liste des requêtes avec priorité décroissante
+            queries = [
+                (
                     f"epfl.sciperId:({row['sciper_id']})"
                     if pd.notna(row["sciper_id"])
-                    else f"bestmatch_s:(*{row['author']}*)"
-                )
-            ),
-            axis=1,
-        )
+                    else None
+                ),
+                (
+                    f"person.identifier.orcid:({row['orcid_id']})"
+                    if pd.notna(row["orcid_id"])
+                    else None
+                ),
+                (
+                    f"itemauthoritylookup:\"{row['author'].replace(',', '')}*\""
+                    if pd.notna(row["author"])
+                    else None
+                ),
+            ]
+
+            for query in queries:
+                if query:  # Vérifie que la query n'est pas None
+                    result = dspace_wrapper.find_person(query=query)
+                    if result:  # Si un résultat est trouvé, retourne les données
+                        return result["uuid"], result["sciper_id"]
+            return None, None  # Retourne None si aucune requête n'a donné de résultats
+
+        # Applique la logique à chaque ligne du DataFrame
+        def update_row(row):
+            uuid, found_sciper_id = get_dspace_data(row)
+            # Mise à jour de la colonne sciper_id si elle est vide
+            if pd.isna(row["sciper_id"]) and found_sciper_id:
+                row["sciper_id"] = found_sciper_id
+            row["dspace_uuid"] = uuid
+            return row
+
+        self.df = self.df.apply(update_row, axis=1)
+
         return self.df if return_df else self
 
     ##### Inutilisé #####################
