@@ -147,21 +147,20 @@ class DSpaceClientWrapper:
             self.logger.debug(
                 f"Single record found for {query} in DspaceCris. Processing record."
             )
-            # return {
-            #    "uuid": dsos_persons[0].uuid,
-            #    "name": dsos_persons[0].metadata.get("dc.title")[0]["value"]
-            # }
-            return dsos_persons[0].uuid
+            return {
+                "uuid": dsos_persons[0].uuid,
+                "sciper_id": dsos_persons[0].metadata.get("epfl.sciperId")[0]["value"],
+            }
         elif num_items_persons == 0:
             self.logger.warning(
                 f"No record found for {query} in DspaceCris: {num_items_persons} results."
             )
-            return "0 result on Infoscience"
+            return None
         elif num_items_persons > 1:
             self.logger.warning(
                 f"Multiple records found for {query} in DspaceCris: {num_items_persons} results."
             )
-            return "At least 1 result on Infoscience"
+            return None
 
     def push_publication(self, source, wos_id, collection_id):
         try:
