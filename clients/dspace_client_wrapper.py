@@ -230,6 +230,7 @@ class DSpaceClientWrapper:
 
 def clean_title(title):
     title = re.sub(r"<[^>]+>", "", title)
-    title = re.sub(r"[^\w\s]", " ", title)
+    title = re.sub(r"[^\w\s-]", " ", title)
+    title = re.sub(r"(?<!\w)-|-(?!\w)", " ", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title
