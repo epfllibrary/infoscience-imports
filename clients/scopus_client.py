@@ -13,6 +13,7 @@ from typing import List, Dict
 from collections import defaultdict
 import ast
 import os
+import time
 import pycountry
 from dotenv import load_dotenv
 from utils import manage_logger
@@ -135,6 +136,8 @@ class Client(APIClient):
         """
         param_kwargs.setdefault("start", 0)
         param_kwargs.setdefault("count", 10)
+        delay_between_calls = 1  # Add a 1-second delay between API calls
+
         try:
             # Fetch IDs first
             ids = self.fetch_ids(**param_kwargs)
@@ -146,6 +149,9 @@ class Client(APIClient):
                 record = self.fetch_record_by_unique_id(scopus_id, format=format)
                 if record:
                     records.append(record)
+                else:
+                    self.logger.warning(f"Skipped record for ID {scopus_id}")
+                time.sleep(delay_between_calls)  # Wait before the next call
 
             return records
 
@@ -192,12 +198,62 @@ class Client(APIClient):
 
     def _extract_digest_record_info(self, x):
         """
-        Returns
-        A list of records dict containing the fields :  scopus_id, title, DOI, doctype, pubyear
+        Extracts core metadata fields from the Scopus record.
+
+        This function parses and processes a Scopus record to extract important metadata
+        fields such as Scopus ID, title, DOI, document type, publication year, and more.
+        It separates fields such as "publicationName", "issn", "isbn", and "volume"
+        into specific fields based on their context (e.g., journal, book, or series).
+
+        Args:
+            x (dict): The Scopus record in JSON format.
+
+        Returns:
+            dict: A dictionary containing the extracted metadata fields.
         """
         coredata = x.get("coredata", {})
-        self.logger.debug(f"Processing Scopus record : {coredata.get('eid')}")
+        self.logger.debug(f"Processing Scopus record: {coredata.get('eid')}")
 
+        # Extract prism:aggregationType to determine the type of publication
+        aggregation_type = coredata.get("prism:aggregationType", "").lower()
+
+        # Initialize separated fields for publicationName
+        journal_title = ""
+        series_title = ""
+        book_title = ""
+
+        # Initialize separated fields for ISSN, ISBN, and volume
+        journal_issn = ""
+        series_issn = ""
+        book_isbn = ""
+        journal_volume = ""
+        series_volume = ""
+        book_part = ""
+
+        # Separate publicationName into specific fields based on aggregationType
+        publication_name = coredata.get("prism:publicationName", "")
+        if aggregation_type == "journal":
+            journal_title = publication_name
+            journal_issn = self._normalize_issn(coredata.get("prism:issn", ""))
+            journal_volume = coredata.get("prism:volume", "")
+        elif aggregation_type == "book series":
+            series_title = publication_name
+            series_issn = self._normalize_issn(coredata.get("prism:issn", ""))
+            series_volume = coredata.get("prism:volume", "")
+
+            # Check for a book title in the `bibrecord` node
+            bibrecord = x.get("item", {}).get("bibrecord", {})
+            source = bibrecord.get("head", {}).get("source", {})
+            book_title_from_source= source.get("issuetitle", "")
+            if book_title_from_source:
+                book_title = book_title_from_source
+                self.logger.debug(f"Found container title in source: {book_title}")
+        elif aggregation_type in {"book", "conference proceeding"}:
+            book_title = publication_name
+            book_isbn = self._extract_first_isbn(coredata.get("prism:isbn", ""))
+            book_part = coredata.get("prism:volume", "")
+
+        # Return a dictionary of the extracted metadata fields
         return {
             "source": "scopus",
             "internal_id": coredata.get("eid"),
@@ -205,6 +261,22 @@ class Client(APIClient):
             "title": coredata.get("dc:title"),
             "doctype": self._extract_first_doctype(x),
             "pubyear": coredata.get("prism:coverDate", "")[:4],
+            "publisher": coredata.get("dc:publisher", ""),
+            "journalTitle": journal_title,
+            "seriesTitle": series_title,
+            "bookTitle": book_title,
+            "editors": self._extract_editors_from_scopus_record(x),
+            "journalISSN": journal_issn,
+            "seriesISSN": series_issn,
+            "bookISBN": book_isbn,
+            "journalVolume": journal_volume,
+            "seriesVolume": series_volume,
+            "bookPart": book_part,
+            "issue": coredata.get("prism:issueIdentifier", ""),
+            "startingPage": coredata.get("prism:startingPage", ""),
+            "endingPage": coredata.get("prism:endingPage", ""),
+            "pmid": coredata.get("pubmed-id", ""),
+            "artno": coredata.get("article-number", ""),
         }
 
     def _extract_ifs3_digest_record_info(self, x):
@@ -236,6 +308,65 @@ class Client(APIClient):
 
         return rec
 
+    def _extract_first_isbn(self, isbn_field):
+        """
+        Extract the first ISBN value from the provided field.
+
+        Parameters
+        ----------
+        isbn_field : str or list
+            The raw ISBN field from the Scopus API response, which may contain a single value or a list of dictionaries.
+
+        Returns
+        -------
+        str : The first ISBN value found, or an empty string if none are valid.
+        """
+        if not isbn_field:
+            return ""
+
+        if isinstance(isbn_field, list):
+            for item in isbn_field:
+                if isinstance(item, dict) and "$" in item:
+                    return item["$"]
+        elif isinstance(isbn_field, str):
+            return isbn_field
+
+        self.logger.warning("No valid ISBN format encountered.")
+        return ""
+
+    def _normalize_issn(self, issn_field):
+        """
+        Normalize ISSN values to the format XXXX-XXXX.
+
+        Parameters
+        ----------
+        issn_field : str
+            The raw ISSN field from the Scopus API response, which may contain multiple ISSNs.
+
+        Returns
+        -------
+        str : A single string containing normalized ISSNs separated by commas.
+        """
+        import re
+
+        if not issn_field:
+            return ""
+
+        # Split multiple ISSNs (if any) by spaces
+        issns = issn_field.split()
+
+        # Normalize each ISSN to the format XXXX-XXXX
+        normalized_issns = []
+        for issn in issns:
+            match = re.match(r"^(\d{4})(\d{4})$", issn)
+            if match:
+                normalized_issn = f"{match.group(1)}-{match.group(2)}"
+                normalized_issns.append(normalized_issn)
+            else:
+                self.logger.warning(f"Invalid ISSN format encountered: {issn}")
+
+        return "||".join(normalized_issns)
+
     def _extract_first_doctype(self, x):
         subtype = x.get("coredata", {}).get("subtypeDescription")
         if isinstance(subtype, list):
@@ -260,6 +391,51 @@ class Client(APIClient):
             return ""
         except KeyError as e:
             self.logger.error(f"Error during abstract retrieval: {e}")
+            return ""
+
+    def _extract_editors_from_scopus_record(self, x):
+        """
+        Extracts contributors with the role of editors from the Scopus record.
+
+        Args:
+            x (dict): The Scopus record in JSON format.
+
+        Returns:
+            str: A string containing editors formatted as "Surname, Given-name" separated by "||".
+        """
+        try:
+            # Navigate to the contributor-group in the JSON
+            contributor_group = (
+                x.get("item", {})
+                .get("bibrecord", {})
+                .get("head", {})
+                .get("source", {})
+                .get("contributor-group", [])
+            )
+
+            # List to hold formatted editor names
+            editors = []
+
+            # Iterate through each contributor-group
+            for contributor_entry in contributor_group:
+                contributor = contributor_entry.get("contributor", {})
+
+                # Check if the role is "edit"
+                if contributor.get("@role") == "edit":
+                    surname = contributor.get("ce:surname", "")
+                    given_name = contributor.get("ce:given-name", "")
+
+                    if surname and given_name:
+                        # Format the name as "Surname, Given-name"
+                        formatted_name = f"{surname}, {given_name}"
+                        editors.append(formatted_name)
+
+            # Join all formatted names with "||"
+            return "||".join(editors) if editors else ""
+
+        except Exception as e:
+            # Log the error and return an empty string
+            print(f"Error extracting editors: {e}")
             return ""
 
     def extract_orcids_from_bibrecord(self, bibrecord_data):
@@ -549,7 +725,7 @@ class Client(APIClient):
     def _extract_funding_info(self, x):
         """
         Extracts funding information from the Scopus record and formats it as:
-        'funding_agency::grant_id'.
+        'funding_agency::grant_id1,grant_id2'.
         - Missing fields are replaced with "None".
         - If multiple fundings are found, they are separated by "||".
 
@@ -567,6 +743,10 @@ class Client(APIClient):
             .get("xocs:funding", [])
         )
 
+        # Handle the case where funding_data is a dictionary instead of a list
+        if isinstance(funding_data, dict):
+            funding_data = [funding_data]
+
         if not funding_data:
             return ""
 
@@ -575,16 +755,24 @@ class Client(APIClient):
             # Extract funding agency name
             agency = funding.get("xocs:funding-agency-matched-string", "")
 
-            # Extract funding IDs (may be multiple)
+            # Extract funding IDs (may be a string, a list, or a dict)
             grant_ids = funding.get("xocs:funding-id", [])
-            if grant_ids:
-                grant_ids = [grant.get("$", "") for grant in grant_ids]
-            else:
-                grant_ids = [""]
+            if isinstance(grant_ids, str):
+                grant_ids = [grant_ids]  # Wrap single string in a list
+            elif isinstance(grant_ids, list):
+                grant_ids = [
+                    grant.get("$", "") if isinstance(grant, dict) else str(grant)
+                    for grant in grant_ids
+                ]
+            elif isinstance(grant_ids, dict):
+                grant_ids = [grant_ids.get("$", "")]  # Handle dict case
 
-            # Combine agency and grant IDs
-            for grant_id in grant_ids:
-                funding_infos.append(f"{agency}::{grant_id}")
+            # Combine agency and grant IDs, separating grant IDs by commas if multiple exist
+            if grant_ids:
+                grant_ids_str = ",".join(filter(None, grant_ids))  # Remove empty values
+                funding_infos.append(f"{agency}::{grant_ids_str}")
+            else:
+                funding_infos.append(f"{agency}::None")
 
         # Join all funding entries with "||"
         return "||".join(funding_infos) if funding_infos else ""
