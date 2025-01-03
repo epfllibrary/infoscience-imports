@@ -126,7 +126,7 @@ class Loader:
             logger.debug(f"Required paths to update: {required_paths}")
 
             patch_operations = self._construct_patch_operations(
-                row, units, form_section, required_paths
+                row, units, form_section, workspace_response
             )
 
             # Add operation to update authors
@@ -168,10 +168,10 @@ class Loader:
         except Exception as e:
             logger.error(f"An error occurred while patching additional metadata: {e}")
 
-    def _construct_patch_operations(self, row, units, form_section, required_paths):
+    def _construct_patch_operations(self, row, units, form_section, workspace_response):
         """Construct PATCH operations for metadata updates with optimized error handling."""
 
-        def build_value(value, authority=None, language="en", confidence=600, place=0):
+        def build_value(value, authority=None, language="en", confidence=-1, place=0):
             """Helper function to build a metadata value structure."""
             if not isinstance(value, str) or not value.strip():
                 logger.warning(f"Invalid value provided: {value}")
@@ -184,17 +184,30 @@ class Loader:
                 "place": place,
             }
 
-        def create_metadata_operation(path, value, op="add"):
-            """Helper to create a PATCH operation."""
-            if value:  # Only include if value is not None or empty
-                if isinstance(value, list) and all(v is None for v in value):
-                    return None
-                return {"op": op, "path": path, "value": value}
-            return None
+        def metadata_exists(path, workspace_response):
+            """Check if the metadata exists in the workspace response."""
+            sections = workspace_response.get("sections", {})
+            keys = path.split("/")[2:]  # Remove "/sections/" from path
+            current = sections
+
+            for key in keys:
+                if isinstance(current, list):
+                    return len(current) > 0
+                elif key in current:
+                    current = current[key]
+                else:
+                    return False
+            return bool(current)
+
+        def determine_operation(path, is_repeatable):
+            """Determine if the operation should be replace or add."""
+            if not is_repeatable and metadata_exists(path, workspace_response):
+                return "replace"
+            return "add"
 
         def determine_section_path(base_path, form_section):
             """Determine correct path suffix based on form_section."""
-            if form_section == "conference_":
+            if form_section in ["conference_", "book_"]:
                 return f"{form_section}details"
             return f"{form_section}type"
 
@@ -228,67 +241,51 @@ class Loader:
 
                 if name:
                     conference_names.append(
-                        build_value(name, confidence=-1, language=None)
+                        build_value(name)
                     )
                 if place:
                     conference_places.append(
-                        build_value(place, confidence=-1, language=None)
+                        build_value(place)
                     )
                 if start_date and end_date:
                     conference_dates.append(
                         build_value(
-                            f"{start_date} - {end_date}", confidence=-1, language=None
+                            f"{start_date} - {end_date}"
                         )
                     )
                 conference_types.append(
-                    build_value("conference", confidence=-1, language=None)
+                    build_value("conference")
                 )
 
             if conference_types:
                 operations.append(
-                    (
-                        "/sections/conference_event/epfl.relation.conferenceType",
-                        conference_types,
-                        "add",
-                    )
+                    {"op": "add", "path": "/sections/conference_event/epfl.relation.conferenceType", "value": conference_types}    
                 )
             if conference_names:
                 operations.append(
-                    (
-                        "/sections/conference_event/dc.relation.conference",
-                        conference_names,
-                        "add",
-                    )
+                    {"op": "add", "path": "/sections/conference_event/dc.relation.conference", "value": conference_names}    
                 )
             if conference_places:
                 operations.append(
-                    (
-                        "/sections/conference_event/oaire.citation.conferencePlace",
-                        conference_places,
-                        "add",
-                    )
+                    {"op": "add", "path": "/sections/conference_event/oaire.citation.conferencePlace", "value": conference_places}    
                 )
             if conference_dates:
                 operations.append(
-                    (
-                        "/sections/conference_event/oaire.citation.conferenceDate",
-                        conference_dates,
-                        "add",
-                    )
+                    {"op": "add", "path": "/sections/conference_event/oaire.citation.conferenceDate", "value": conference_dates}    
                 )
 
             operations.append(
-                (
-                    "/sections/conference_event/oairecerif.acronym",
-                    [
+                {
+                    "op": "add",
+                    "path": "/sections/conference_event/oairecerif.acronym",
+                    "value": [
                         build_value(
                             "#PLACEHOLDER_PARENT_METADATA_VALUE#",
                             confidence=-1,
                             language=None,
                         )
                     ],
-                    "add",
-                )
+                }
             )
 
             return operations
@@ -308,7 +305,7 @@ class Loader:
                     funder, grantno = grant.split("::", 1)
                     if funder.strip():
                         funders.append(
-                            build_value(funder.strip(), confidence=-1, language=None)
+                            build_value(funder.strip())
                         )
                     grant_nos.append(
                         build_value(
@@ -317,56 +314,186 @@ class Loader:
                                 if grantno.strip()
                                 else "#PLACEHOLDER_PARENT_METADATA_VALUE#"
                             ),
-                            confidence=-1,
-                            language=None,
                         )
                     )
                 elif grant.strip():
                     funders.append(
-                        build_value(grant.strip(), confidence=-1, language=None)
+                        build_value(grant.strip())
                     )
                     grant_nos.append(
                         build_value(
                             "#PLACEHOLDER_PARENT_METADATA_VALUE#",
-                            confidence=-1,
-                            language=None,
                         )
                     )
 
             if funders:
                 operations.append(
-                    ("/sections/grants/oairecerif.funder", funders, "add")
+                    {"op": "add", "path": "/sections/grants/oairecerif.funder", "value": funders}
                 )
             if grant_nos:
                 operations.append(
-                    ("/sections/grants/dc.relation.grantno", grant_nos, "add")
+                    {
+                        "op": "add",
+                        "path": "/sections/grants/dc.relation.grantno",
+                        "value": grant_nos,
+                    }
                 )
             return operations
+        
+        def parse_editors(editors):
+                """Parses the editors field into structured metadata."""
+                if not editors:
+                    return []
 
-        metadata_definitions = [
+                editor_list = [
+                    build_value(editor.strip())
+                    for editor in editors.split("||")
+                    if editor.strip()
+                ]
+
+                affiliation_placeholder = [
+                    build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#") for _ in editor_list
+                ]
+                orcid_placeholder = [
+                    build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#") for _ in editor_list
+                ]
+
+                operations = []
+                if editor_list:
+                    operations.append(
+                        {
+                            "op": "add",
+                            "path": "/sections/bookcontainer_details/dc.contributor.scientificeditor",
+                            "value": editor_list,
+                        }
+                    )
+                    operations.append(
+                        {
+                            "op": "add",
+                            "path": "/sections/bookcontainer_details/oairecerif.scientificeditor.affiliation",
+                            "value": affiliation_placeholder,
+                        }
+                    )
+                    operations.append(
+                        {
+                            "op": "add",
+                            "path": "/sections/bookcontainer_details/oairecerif.affiliation.orgunit",
+                            "value": affiliation_placeholder,
+                        }
+                    )
+                    operations.append(
+                        {
+                            "op": "add",
+                            "path": "/sections/bookcontainer_details/person.identifier.orcid",
+                            "value": orcid_placeholder,
+                        }
+                    )
+
+                return operations        
+
+        metadata_definitions = []
+
+        fields = [
             (
-                f"/sections/{dc_type_path_suffix}/dc.type/0",
-                build_value(
-                    row.get("dc.type"),
-                    authority=row.get("dc.type_authority"),
-                    language=None,
-                ),
-                "replace",
+                f"/sections/{dc_type_path_suffix}/dc.type",
+                [
+                    build_value(
+                        row.get("dc.type"),
+                        authority=row.get("dc.type_authority"),
+                        language="en",
+                        confidence=600,
+                    )
+                ],
+                False,
             ),
             (
-                f"/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
-                [build_value(row.get("license"))],
-                "add",
+                "/sections/journalcontainer_details/dc.relation.journal",
+                [build_value(row.get("journalTitle"))],
+                False,
+            ),
+            (
+                "/sections/journalcontainer_details/dc.relation.issn",
+                [
+                    build_value(issn)
+                    for issn in str(row.get("journalISSN", "")).split("||")
+                    if issn.strip()
+                ],
+                True,
+            ),
+            (
+                "/sections/journalcontainer_details/oaire.citation.volume",
+                [build_value(row.get("journalVolume"))],
+                False,
+            ),
+            (
+                "/sections/journalcontainer_details/oaire.citation.issue",
+                [build_value(row.get("issue"))],
+                False,
+            ),
+            (
+                "/sections/journalcontainer_details/oaire.citation.articlenumber",
+                [build_value(row.get("artno"))],
+                False,
+            ),
+            (
+                "/sections/journalcontainer_details/oaire.citation.startPage",
+                [build_value(row.get("startingPage"))],
+                False,
+            ),
+            (
+                "/sections/journalcontainer_details/oaire.citation.endPage",
+                [build_value(row.get("endingPage"))],
+                False,
+            ),
+            (
+                f"/sections/bookcontainer_details/dc.publisher",
+                [build_value(row.get("publisher"))],
+                False,
+            ),
+            (
+                f"/sections/bookcontainer_details/dc.relation.ispartofseries",
+                [
+                    build_value(
+                        f"{row.get('seriesTitle', '')}; {row.get('seriesVolume', '')}".strip(
+                            "; "
+                        )
+                    )
+                ],
+                True,
+            ),
+            (
+                f"/sections/bookcontainer_details/dc.relation.serieissn",
+                [
+                    build_value(issn)
+                    for issn in str(row.get("seriesISSN", "")).split("||")
+                    if issn.strip()
+                ],
+                True,
+            ),
+            (
+                f"/sections/bookcontainer_details/dc.relation.ispartof",
+                [build_value(row.get("bookTitle"))],
+                False,
+            ),
+            (
+                f"/sections/bookcontainer_details/epfl.part.number",
+                [build_value(row.get("bookPart"))],
+                False,
+            ),
+            (
+                f"/sections/bookcontainer_details/dc.relation.ispartof",
+                [build_value(row.get("bookPart"))],
+                False,
             ),
             (
                 f"/sections/{form_section}details/epfl.writtenAt",
                 [build_value("EPFL")],
-                "add",
+                False,
             ),
             (
                 f"/sections/{form_section}details/dc.description.abstract",
-                [build_value(row.get("abstract"), language="en", confidence=-1)],
-                "add",
+                [build_value(row.get("abstract"), language="en")],
+                False,
             ),
             (
                 f"/sections/{form_section}details/dc.description.sponsorship",
@@ -374,35 +501,51 @@ class Loader:
                     build_value(
                         unit.get("acro"),
                         f"will be referenced::ACRONYM::{unit.get('acro')}",
+                        confidence=600,
                     )
                     for unit in units
                     if unit.get("acro")
                 ],
-                "add",
+                True,
             ),
             (
                 f"/sections/{form_section}details/epfl.peerreviewed",
                 [build_value("REVIEWED")],
-                "add",
+                False,
             ),
-            ("/sections/license/granted", "true", "add"),
+            (
+                f"/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
+                [build_value(row.get("license"))],
+                False,
+            ),
         ]
+
+        for path, value, is_repeatable in fields:
+            if value and not all(v is None for v in value if isinstance(value, list)):  # Skip invalid or empty values
+                op = determine_operation(path, is_repeatable)
+                if op == "replace" and not is_repeatable:
+                    if isinstance(value, list) and len(value) == 1:
+                        value = value[0]  # Unwrap value if replace and only one element
+                    path = f"{path}/0"
+                metadata_definitions.append({"op": op, "path": path, "value": value})
 
         metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
         metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
+        # Process editors
+        metadata_definitions.extend(parse_editors(row.get("editors")))
+        # Add specific patch for license/granted
+        metadata_definitions.append({
+            "op": "add",
+            "path": "/sections/license/granted",
+            "value": "true"
+        })
 
-        filtered_operations = []
-        for path, value, op in metadata_definitions:
-            operation = create_metadata_operation(path, value, op)
-            if operation:
-                filtered_operations.append(operation)
+        logger.info(f"metadata_definitions : {metadata_definitions}")
 
-        if not filtered_operations:
-            logger.warning(
-                "No operations constructed; required paths might be missing."
-            )
+        if not metadata_definitions:
+            logger.warning("No operations constructed; required paths might be missing.")
 
-        return filtered_operations
+        return metadata_definitions
 
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
         """Patch metadata for file."""
@@ -567,15 +710,15 @@ class Loader:
                             f"File {file_path} does not exist. Skipping file upload."
                         )
 
-                    workflow_response = self.dspace_wrapper._create_workflowitem(
-                        workspace_id
-                    )
-                    if workflow_response and "id" in workflow_response:
-                        workflow_id = workflow_response["id"]
-                        logger.info(
-                            f"Successfully created workflow item with ID: {workflow_id}"
-                        )
-                        df_items_imported.at[index, "workflow_id"] = workflow_id
+                    # workflow_response = self.dspace_wrapper._create_workflowitem(
+                    #     workspace_id
+                    # )
+                    # if workflow_response and "id" in workflow_response:
+                    #     workflow_id = workflow_response["id"]
+                    #     logger.info(
+                    #         f"Successfully created workflow item with ID: {workflow_id}"
+                    #     )
+                    #     df_items_imported.at[index, "workflow_id"] = workflow_id
                 else:
                     logger.warning(
                         f"No matching units found for row ID: {row['row_id']}."
