@@ -147,9 +147,13 @@ class DSpaceClientWrapper:
             self.logger.debug(
                 f"Single record found for {query} in DspaceCris. Processing record."
             )
+            sciper_metadata = dsos_persons[0].metadata.get("epfl.sciperId")
+            sciper_id = (
+                sciper_metadata[0]["value"] if sciper_metadata and len(sciper_metadata) > 0 else ""
+            )
             return {
                 "uuid": dsos_persons[0].uuid,
-                "sciper_id": dsos_persons[0].metadata.get("epfl.sciperId")[0]["value"],
+                "sciper_id": sciper_id,
             }
         elif num_items_persons == 0:
             self.logger.warning(
