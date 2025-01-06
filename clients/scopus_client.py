@@ -229,6 +229,9 @@ class Client(APIClient):
         journal_volume = ""
         series_volume = ""
         book_part = ""
+        book_publisher = ""
+
+        bibrecord = x.get("item", {}).get("bibrecord", {})
 
         # Separate publicationName into specific fields based on aggregationType
         publication_name = coredata.get("prism:publicationName", "")
@@ -236,13 +239,14 @@ class Client(APIClient):
             journal_title = publication_name
             journal_issn = self._normalize_issn(coredata.get("prism:issn", ""))
             journal_volume = coredata.get("prism:volume", "")
+
         elif aggregation_type == "book series":
             series_title = publication_name
             series_issn = self._normalize_issn(coredata.get("prism:issn", ""))
             series_volume = coredata.get("prism:volume", "")
+            book_publisher = coredata.get("dc:publisher", ""),
 
             # Check for a book title in the `bibrecord` node
-            bibrecord = x.get("item", {}).get("bibrecord", {})
             source = bibrecord.get("head", {}).get("source", {})
             book_title_from_source= source.get("issuetitle", "")
             if book_title_from_source:
@@ -252,6 +256,13 @@ class Client(APIClient):
             book_title = publication_name
             book_isbn = self._extract_first_isbn(coredata.get("prism:isbn", ""))
             book_part = coredata.get("prism:volume", "")
+            book_publisher = coredata.get("dc:publisher", ""),
+
+        # Extract collaboration.ce:text
+        collaboration = (
+            bibrecord.get("head", {}).get("author-group", {}).get("collaboration", {})
+        )
+        self.logger.debug(f"Processing collaboration: {collaboration}")
 
         # Return a dictionary of the extracted metadata fields
         return {
@@ -261,7 +272,7 @@ class Client(APIClient):
             "title": coredata.get("dc:title"),
             "doctype": self._extract_first_doctype(x),
             "pubyear": coredata.get("prism:coverDate", "")[:4],
-            "publisher": coredata.get("dc:publisher", ""),
+            "publisher": book_publisher,
             "journalTitle": journal_title,
             "seriesTitle": series_title,
             "bookTitle": book_title,
@@ -277,6 +288,7 @@ class Client(APIClient):
             "endingPage": coredata.get("prism:endingPage", ""),
             "pmid": coredata.get("pubmed-id", ""),
             "artno": coredata.get("article-number", ""),
+            "corporateAuthor": corporate_author,
         }
 
     def _extract_ifs3_digest_record_info(self, x):
@@ -698,13 +710,13 @@ class Client(APIClient):
         """
         try:
             if not date_obj:
-                return None  # Return None if date_obj is missing
-            day = date_obj.get("@day", "01")  # Default to "01" if missing
-            month = date_obj.get("@month", "01")
-            year = date_obj.get("@year", "None")
+                return ""  # Return None if date_obj is missing
+            day = date_obj.get("@day", "")  # Default to "01" if missing
+            month = date_obj.get("@month", "")
+            year = date_obj.get("@year", "")
             return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
         except Exception:
-            return None
+            return ""
 
     def _get_country_name_from_code(self, country_code):
         """
@@ -772,7 +784,7 @@ class Client(APIClient):
                 grant_ids_str = ",".join(filter(None, grant_ids))  # Remove empty values
                 funding_infos.append(f"{agency}::{grant_ids_str}")
             else:
-                funding_infos.append(f"{agency}::None")
+                funding_infos.append(f"{agency}::")
 
         # Join all funding entries with "||"
         return "||".join(funding_infos) if funding_infos else ""
