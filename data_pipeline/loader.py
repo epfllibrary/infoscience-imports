@@ -44,7 +44,7 @@ class Loader:
             for author in authors:
                 author.pop("authority", None)
                 author.pop("confidence", None)
-            logger.info(f"Processed authors: {authors}")
+            logger.info(f"Cleaned auto-guessing authors: {authors}")
             return authors
         logger.warning("No authors found in workspace response.")
         return []
@@ -107,17 +107,32 @@ class Loader:
             return
 
         try:
+
+            # Construct remove operations
+            remove_operations = self._construct_remove_operations(workspace_response)
+            if remove_operations:
+                try:
+                    updated_workspace = self.dspace_wrapper._update_workspace(
+                        workspace_id, remove_operations
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to execute remove operations: {e}")
+
+            if not updated_workspace:
+                logger.error("Updated workspace is None after remove operations.")
+                return
+
             # Process authors in the workspace response
             cleaned_authors = self._clean_guessing_authors(
-                workspace_response, form_section
+                updated_workspace, form_section
             )
             updated_authors = self._process_authors(
-                workspace_response, row["row_id"], form_section
+                updated_workspace, row["row_id"], form_section
             )
 
             required_paths = []
-            if "errors" in workspace_response:
-                for error in workspace_response["errors"]:
+            if "errors" in updated_workspace:
+                for error in updated_workspace["errors"]:
                     if error.get("message") == "error.validation.required":
                         required_paths.extend(error.get("paths", []))
                     elif error.get("message") == "error.validation.license.required":
@@ -126,7 +141,7 @@ class Loader:
             logger.debug(f"Required paths to update: {required_paths}")
 
             patch_operations = self._construct_patch_operations(
-                row, units, form_section, workspace_response
+                row, units, form_section, updated_workspace
             )
 
             # Add operation to update authors
@@ -149,24 +164,59 @@ class Loader:
 
             logger.info(f"Patch operations: {patch_operations}")
 
-            response = self.dspace_wrapper._update_workspace(
-                workspace_id, patch_operations
-            )
-
-            if "errors" in response:
-                errors = response["errors"]
-                for error in errors:
-                    error_message = error.get("message", "No message provided")
-                    error_paths = (
-                        ", ".join(error.get("paths", [])) or "No paths provided"
-                    )
-                    logger.error(f"Error message: {error_message}")
-                    logger.error(f"Paths concerned: {error_paths}")
+            # Apply patch operations
+            try:
+                response = self.dspace_wrapper._update_workspace(
+                    workspace_id, patch_operations
+                )
+            except Exception as e:
+                logger.error(f"Failed to execute patch operations: {e}")
                 return
 
+            # Handle errors in the response
+            for error in response.get("errors", []):
+                error_message = error.get("message", "No message provided")
+                error_paths = ", ".join(error.get("paths", [])) or "No paths provided"
+                logger.error(f"Error message: {error_message}")
+                logger.error(f"Paths concerned: {error_paths}")
+
             logger.info(f"Metadata patched successfully for workspace {workspace_id}.")
+
         except Exception as e:
             logger.error(f"An error occurred while patching additional metadata: {e}")
+
+    def _metadata_exists(self, path, workspace_response):
+        """Check if the metadata exists in the workspace response."""
+        sections = workspace_response.get("sections", {})
+        keys = path.split("/")[2:]  # Remove "/sections/" from path
+        current = sections
+
+        for key in keys:
+            if isinstance(current, list):
+                return len(current) > 0
+            elif key in current:
+                current = current[key]
+            else:
+                return False
+        return bool(current)
+
+    def _construct_remove_operations(self, workspace_response):
+
+        metadata_definitions = []
+
+        # Check for existing metadata and add remove operations if needed
+        removable_metadata_paths = [
+            "/sections/bookcontainer_details/dc.relation.ispartof",
+            "/sections/journalcontainer_details/dc.relation.journal",
+            "/sections/journalcontainer_details/dc.relation.issn",
+            "/sections/journalcontainer_details/oaire.citation.volume",
+        ]
+
+        for path in removable_metadata_paths:
+            if self._metadata_exists(path, workspace_response):
+                metadata_definitions.append({"op": "remove", "path": path})
+
+        return metadata_definitions
 
     def _construct_patch_operations(self, row, units, form_section, workspace_response):
         """Construct PATCH operations for metadata updates with optimized error handling."""
@@ -184,34 +234,11 @@ class Loader:
                 "place": place,
             }
 
-        def metadata_exists(path, workspace_response):
-            """Check if the metadata exists in the workspace response."""
-            sections = workspace_response.get("sections", {})
-            keys = path.split("/")[2:]  # Remove "/sections/" from path
-            current = sections
-
-            for key in keys:
-                if isinstance(current, list):
-                    return len(current) > 0
-                elif key in current:
-                    current = current[key]
-                else:
-                    return False
-            return bool(current)
-
         def determine_operation(path, is_repeatable):
             """Determine if the operation should be replace or add."""
-            if not is_repeatable and metadata_exists(path, workspace_response):
+            if not is_repeatable and self._metadata_exists(path, workspace_response):
                 return "replace"
             return "add"
-
-        def determine_section_path(base_path, form_section):
-            """Determine correct path suffix based on form_section."""
-            if form_section in ["conference_", "book_"]:
-                return f"{form_section}details"
-            return f"{form_section}type"
-
-        dc_type_path_suffix = determine_section_path("dc.type", form_section)
 
         def parse_conference_info(conference_info):
             """Parses the conference_info string into structured metadata."""
@@ -339,49 +366,49 @@ class Loader:
                     }
                 )
             return operations
-        
-        def parse_editors(editors):
-                """Parses the editors field into structured metadata."""
-                if not editors:
-                    return []
 
-                editor_list = [
+        def parse_editors(editors):
+            """Parses the editors field into structured metadata."""
+            if not editors:
+                return []
+
+            editor_list = [
                     build_value(editor.strip())
                     for editor in editors.split("||")
                     if editor.strip()
                 ]
 
-                affiliation_placeholder = [
+            affiliation_placeholder = [
                     build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#") for _ in editor_list
                 ]
-                orcid_placeholder = [
+            orcid_placeholder = [
                     build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#") for _ in editor_list
                 ]
 
-                operations = []
-                if editor_list:
-                    operations.append(
+            operations = []
+            if editor_list:
+                operations.append(
                         {
                             "op": "add",
                             "path": "/sections/bookcontainer_details/dc.contributor.scientificeditor",
                             "value": editor_list,
                         }
                     )
-                    operations.append(
+                operations.append(
                         {
                             "op": "add",
                             "path": "/sections/bookcontainer_details/oairecerif.scientificeditor.affiliation",
                             "value": affiliation_placeholder,
                         }
                     )
-                    operations.append(
+                operations.append(
                         {
                             "op": "add",
                             "path": "/sections/bookcontainer_details/oairecerif.affiliation.orgunit",
                             "value": affiliation_placeholder,
                         }
                     )
-                    operations.append(
+                operations.append(
                         {
                             "op": "add",
                             "path": "/sections/bookcontainer_details/person.identifier.orcid",
@@ -389,13 +416,30 @@ class Loader:
                         }
                     )
 
-                return operations        
+            return operations 
+
+        # Determine correct form_section and related sections
+        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_'] else 'type'}"
+
+        dc_type = row.get("dc.type")
+        if dc_type in ["text::book/monograph::book part or chapter", "text::book/monograph"]:
+            pagination_section = "book_details"
+            isbn_section = "book_details" if dc_type == "text::book/monograph" else "bookcontainer_details"
+            isbn_metadata = (
+                "dc.identifier.isbn"
+                if dc_type == "text::book/monograph"
+                else "dc.relation.isbn"
+            )
+        else:
+            pagination_section = "journalcontainer_details"
+            isbn_section = "bookcontainer_details"
+            isbn_metadata = "dc.relation.isbn"
 
         metadata_definitions = []
 
         fields = [
             (
-                f"/sections/{dc_type_path_suffix}/dc.type",
+                f"/sections/{type_section}/dc.type",
                 [
                     build_value(
                         row.get("dc.type"),
@@ -436,12 +480,12 @@ class Loader:
                 False,
             ),
             (
-                "/sections/journalcontainer_details/oaire.citation.startPage",
+                f"/sections/{pagination_section}/oaire.citation.startPage",
                 [build_value(row.get("startingPage"))],
                 False,
             ),
             (
-                "/sections/journalcontainer_details/oaire.citation.endPage",
+                f"/sections/{pagination_section}/oaire.citation.endPage",
                 [build_value(row.get("endingPage"))],
                 False,
             ),
@@ -456,7 +500,7 @@ class Loader:
                     build_value(
                         f"{row.get('seriesTitle', '')}; {row.get('seriesVolume', '')}".strip(
                             "; "
-                        )
+                        ),
                     )
                 ],
                 True,
@@ -481,14 +525,24 @@ class Loader:
                 False,
             ),
             (
+                f"/sections/{isbn_section}/{isbn_metadata}",
+                [build_value(row.get("bookISBN"))],
+                True,
+            ),
+            (
                 f"/sections/bookcontainer_details/dc.relation.ispartof",
                 [build_value(row.get("bookPart"))],
                 False,
             ),
             (
-                f"/sections/{form_section}details/epfl.writtenAt",
-                [build_value("EPFL")],
+                f"/sections/{form_section}details/oaire.citation.volume",
+                [build_value(row.get("journalVolume"))],
                 False,
+            ),
+            (
+                f"/sections/{form_section}details/dc.contributor",
+                [build_value(row.get("coporateAuthor"))],
+                True,
             ),
             (
                 f"/sections/{form_section}details/dc.description.abstract",
