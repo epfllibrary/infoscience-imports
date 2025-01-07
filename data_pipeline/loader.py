@@ -110,6 +110,8 @@ class Loader:
 
             # Construct remove operations
             remove_operations = self._construct_remove_operations(workspace_response)
+            logger.debug(f"remove_operations: {remove_operations}")
+
             if remove_operations:
                 try:
                     updated_workspace = self.dspace_wrapper._update_workspace(
@@ -117,10 +119,9 @@ class Loader:
                     )
                 except Exception as e:
                     logger.error(f"Failed to execute remove operations: {e}")
-
-            if not updated_workspace:
-                logger.error("Updated workspace is None after remove operations.")
-                return
+            else:
+                # If remove_operations is empty, set updated_workspace to workspace_response
+                updated_workspace = workspace_response
 
             # Process authors in the workspace response
             cleaned_authors = self._clean_guessing_authors(
@@ -451,6 +452,11 @@ class Loader:
                 False,
             ),
             (
+                f"/sections/alternative_identifiers/dc.identifier.pmid",
+                [build_value(row.get("pmid"))],
+                False,
+            ),
+            (
                 "/sections/journalcontainer_details/dc.relation.journal",
                 [build_value(row.get("journalTitle"))],
                 False,
@@ -530,18 +536,8 @@ class Loader:
                 True,
             ),
             (
-                f"/sections/bookcontainer_details/dc.relation.ispartof",
-                [build_value(row.get("bookPart"))],
-                False,
-            ),
-            (
-                f"/sections/{form_section}details/oaire.citation.volume",
-                [build_value(row.get("journalVolume"))],
-                False,
-            ),
-            (
                 f"/sections/{form_section}details/dc.contributor",
-                [build_value(row.get("coporateAuthor"))],
+                [build_value(row.get("corporateAuthor"))],
                 True,
             ),
             (
@@ -561,6 +557,11 @@ class Loader:
                     if unit.get("acro")
                 ],
                 True,
+            ),
+            (
+                f"/sections/{form_section}details/epfl.writtenAt",
+                [build_value("EPFL")],
+                False,
             ),
             (
                 f"/sections/{form_section}details/epfl.peerreviewed",
@@ -764,15 +765,15 @@ class Loader:
                             f"File {file_path} does not exist. Skipping file upload."
                         )
 
-                    # workflow_response = self.dspace_wrapper._create_workflowitem(
-                    #     workspace_id
-                    # )
-                    # if workflow_response and "id" in workflow_response:
-                    #     workflow_id = workflow_response["id"]
-                    #     logger.info(
-                    #         f"Successfully created workflow item with ID: {workflow_id}"
-                    #     )
-                    #     df_items_imported.at[index, "workflow_id"] = workflow_id
+                    workflow_response = self.dspace_wrapper._create_workflowitem(
+                        workspace_id
+                    )
+                    if workflow_response and "id" in workflow_response:
+                        workflow_id = workflow_response["id"]
+                        logger.info(
+                            f"Successfully created workflow item with ID: {workflow_id}"
+                        )
+                        df_items_imported.at[index, "workflow_id"] = workflow_id
                 else:
                     logger.warning(
                         f"No matching units found for row ID: {row['row_id']}."
