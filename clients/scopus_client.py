@@ -235,34 +235,54 @@ class Client(APIClient):
 
         # Separate publicationName into specific fields based on aggregationType
         publication_name = coredata.get("prism:publicationName", "")
+
         if aggregation_type == "journal":
             journal_title = publication_name
             journal_issn = self._normalize_issn(coredata.get("prism:issn", ""))
             journal_volume = coredata.get("prism:volume", "")
 
+        elif aggregation_type in {"book", "conference proceeding"}:
+            book_isbn = self._extract_first_isbn(coredata.get("prism:isbn", ""))
+            book_part = coredata.get("prism:volume", "")
+            book_publisher = coredata.get("dc:publisher", "")
+            book_title = publication_name
+
+            # specific case for "conference proceeding"
+            if (
+                aggregation_type == "conference proceeding"
+                and (not book_isbn or book_isbn.strip() == "")
+                and coredata.get("prism:volume", "").strip()
+            ):
+                series_title = publication_name
+                series_volume = coredata.get("prism:volume", "")
+                series_issn = self._normalize_issn(coredata.get("prism:issn", ""))
+                book_title = ""
+                book_part = ""
+
         elif aggregation_type == "book series":
             series_title = publication_name
             series_issn = self._normalize_issn(coredata.get("prism:issn", ""))
             series_volume = coredata.get("prism:volume", "")
-            book_publisher = coredata.get("dc:publisher", ""),
+            book_publisher = coredata.get("dc:publisher", "")
 
             # Check for a book title in the `bibrecord` node
             source = bibrecord.get("head", {}).get("source", {})
-            book_title_from_source= source.get("issuetitle", "")
+            book_title_from_source = source.get("issuetitle", "")
             if book_title_from_source:
                 book_title = book_title_from_source
                 self.logger.debug(f"Found container title in source: {book_title}")
-        elif aggregation_type in {"book", "conference proceeding"}:
-            book_title = publication_name
-            book_isbn = self._extract_first_isbn(coredata.get("prism:isbn", ""))
-            book_part = coredata.get("prism:volume", "")
-            book_publisher = coredata.get("dc:publisher", ""),
 
         # Extract collaboration.ce:text
-        collaboration = (
-            bibrecord.get("head", {}).get("author-group", {}).get("collaboration", {})
-        )
-        self.logger.debug(f"Processing collaboration: {collaboration}")
+        author_group = bibrecord.get("head", {}).get("author-group", [])
+        collaboration_text = ""
+
+        if isinstance(author_group, list):
+            for group in author_group:
+                collaboration = group.get("collaboration", {})
+                if collaboration and "ce:text" in collaboration:
+                    collaboration_text = collaboration["ce:text"]
+
+        self.logger.debug(f"Collected collaboration texts: {collaboration_text}")
 
         # Return a dictionary of the extracted metadata fields
         return {
@@ -288,7 +308,7 @@ class Client(APIClient):
             "endingPage": coredata.get("prism:endingPage", ""),
             "pmid": coredata.get("pubmed-id", ""),
             "artno": coredata.get("article-number", ""),
-            "corporateAuthor": corporate_author,
+            "corporateAuthor": collaboration_text,
         }
 
     def _extract_ifs3_digest_record_info(self, x):
@@ -385,21 +405,28 @@ class Client(APIClient):
             return subtype[0] if subtype else None
         return subtype
 
+
     def _extract_abstract(self, x):
         """
         Extracts the abstract from the Scopus record.
+        Handles cases where the abstract is None, null, or empty.
         """
         try:
             abstract_text = (
                 x.get("item", {})
                 .get("bibrecord", {})
                 .get("head", {})
-                .get("abstracts", "")
-                .strip()
+                .get("abstracts", "")  # Default to None if "abstracts" key is missing
             )
 
+            # Ensure the abstract_text is a string and strip whitespace
+            if abstract_text and isinstance(abstract_text, str):
+                abstract_text = abstract_text.strip()
+
+            # Return the abstract text if it's non-empty, otherwise return an empty string
             if abstract_text:
                 return abstract_text
+
             return ""
         except KeyError as e:
             self.logger.error(f"Error during abstract retrieval: {e}")
