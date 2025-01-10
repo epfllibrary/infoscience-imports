@@ -242,7 +242,7 @@ class Client(APIClient):
             journal_volume = coredata.get("prism:volume", "")
 
         elif aggregation_type in {"book", "conference proceeding"}:
-            book_isbn = self._extract_first_isbn(coredata.get("prism:isbn", ""))
+            book_isbn = self._extract_all_isbns(coredata.get("prism:isbn", ""))
             book_part = coredata.get("prism:volume", "")
             book_publisher = coredata.get("dc:publisher", "")
             book_title = publication_name
@@ -288,6 +288,7 @@ class Client(APIClient):
         return {
             "source": "scopus",
             "internal_id": coredata.get("eid"),
+            "issueDate": self._extract_publication_date(x),
             "doi": coredata.get("prism:doi", "").lower(),
             "title": coredata.get("dc:title"),
             "doctype": self._extract_first_doctype(x),
@@ -340,9 +341,61 @@ class Client(APIClient):
 
         return rec
 
-    def _extract_first_isbn(self, isbn_field):
+    def _extract_publication_date(self, x):
         """
-        Extract the first ISBN value from the provided field.
+        Extracts the publication date from the Scopus API response.
+
+        Parameters:
+        x (dict): JSON data from the Scopus API response.
+
+        Returns:
+        str: The formatted publication date ("YYYY-MM-DD", "YYYY-MM", or "YYYY") depending on available data, or "" if not available.
+        """
+        try:
+            self.logger.debug("Attempting to extract publication date.")
+
+            # Access the publicationdate node in the specific path
+            publication_date_node = (
+                x.get("item", {})
+                .get("bibrecord", {})
+                .get("head", {})
+                .get("source", {})
+                .get("publicationdate", {})
+            )
+
+            if not publication_date_node:
+                self.logger.warning("No publicationdate node found in the data.")
+                return ""
+
+            # Extract date components
+            year = publication_date_node.get("year", "")
+            month = publication_date_node.get("month", "")
+            day = publication_date_node.get("day", "")
+
+            # Construct the formatted date based on available components
+            if year:
+                if month:
+                    if day:
+                        formatted_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                        self.logger.debug(f"Formatted date with day: {formatted_date}")
+                        return formatted_date
+                    formatted_date = f"{year}-{month.zfill(2)}"
+                    self.logger.debug(f"Formatted date without day: {formatted_date}")
+                    return formatted_date
+                self.logger.debug(f"Formatted year-only date: {year}")
+                return year
+
+            # If year is missing, log a warning
+            self.logger.warning("Year is missing in publicationdate.")
+            return ""
+
+        except Exception as e:
+            self.logger.error(f"Error extracting publicationDate: {e}")
+            return ""
+
+    def _extract_all_isbns(self, isbn_field):
+        """
+        Extract all ISBN values from the provided field, separated by '||'.
 
         Parameters
         ----------
@@ -351,17 +404,22 @@ class Client(APIClient):
 
         Returns
         -------
-        str : The first ISBN value found, or an empty string if none are valid.
+        str : All ISBN values found, separated by '||', or an empty string if none are valid.
         """
         if not isbn_field:
             return ""
 
+        isbns = []
+
         if isinstance(isbn_field, list):
             for item in isbn_field:
                 if isinstance(item, dict) and "$" in item:
-                    return item["$"]
+                    isbns.append(item["$"])
         elif isinstance(isbn_field, str):
-            return isbn_field
+            isbns.append(isbn_field)
+
+        if isbns:
+            return "||".join(isbns)
 
         self.logger.warning("No valid ISBN format encountered.")
         return ""
@@ -384,15 +442,15 @@ class Client(APIClient):
         if not issn_field:
             return ""
 
-        # Split multiple ISSNs (if any) by spaces
-        issns = issn_field.split()
+        # Split multiple ISSNs (if any) by spaces or other delimiters (e.g., commas or pipes)
+        issns = re.split(r"[\s,|]+", issn_field)
 
         # Normalize each ISSN to the format XXXX-XXXX
         normalized_issns = []
         for issn in issns:
-            match = re.match(r"^(\d{4})(\d{4})$", issn)
+            match = re.match(r"^(\d{4})(\d{3}[\dX])$", issn, re.IGNORECASE)
             if match:
-                normalized_issn = f"{match.group(1)}-{match.group(2)}"
+                normalized_issn = f"{match.group(1)}-{match.group(2).upper()}"
                 normalized_issns.append(normalized_issn)
             else:
                 self.logger.warning(f"Invalid ISSN format encountered: {issn}")
@@ -405,7 +463,6 @@ class Client(APIClient):
             return subtype[0] if subtype else None
         return subtype
 
-
     def _extract_abstract(self, x):
         """
         Extracts the abstract from the Scopus record.
@@ -416,18 +473,24 @@ class Client(APIClient):
                 x.get("item", {})
                 .get("bibrecord", {})
                 .get("head", {})
-                .get("abstracts", "")  # Default to None if "abstracts" key is missing
+                .get("abstracts", "")
             )
 
             # Ensure the abstract_text is a string and strip whitespace
             if abstract_text and isinstance(abstract_text, str):
                 abstract_text = abstract_text.strip()
 
+            if abstract_text and abstract_text.startswith("©"):
+                first_period_index = abstract_text.find('.')
+                if first_period_index != -1:
+                    abstract_text = abstract_text[first_period_index + 1:].strip()
+
             # Return the abstract text if it's non-empty, otherwise return an empty string
             if abstract_text:
                 return abstract_text
 
             return ""
+
         except KeyError as e:
             self.logger.error(f"Error during abstract retrieval: {e}")
             return ""
@@ -452,22 +515,30 @@ class Client(APIClient):
                 .get("contributor-group", [])
             )
 
-            # List to hold formatted editor names
-            editors = []
+            # If contributor-group is a dictionary, wrap it in a list for uniform processing
+            if isinstance(contributor_group, dict):
+                contributor_group = [contributor_group]
 
-            # Iterate through each contributor-group
-            for contributor_entry in contributor_group:
-                contributor = contributor_entry.get("contributor", {})
-
-                # Check if the role is "edit"
+            # Helper function to extract and format editor names
+            def extract_names(contributor):
                 if contributor.get("@role") == "edit":
                     surname = contributor.get("ce:surname", "")
                     given_name = contributor.get("ce:given-name", "")
-
                     if surname and given_name:
-                        # Format the name as "Surname, Given-name"
-                        formatted_name = f"{surname}, {given_name}"
-                        editors.append(formatted_name)
+                        return f"{surname}, {given_name}"
+                return None
+
+            # Collect all formatted editor names
+            editors = []
+            for contributor_entry in contributor_group:
+                contributor = contributor_entry.get("contributor")
+
+                if isinstance(contributor, list):
+                    editors.extend(filter(None, (extract_names(c) for c in contributor)))
+                elif isinstance(contributor, dict):
+                    name = extract_names(contributor)
+                    if name:
+                        editors.append(name)
 
             # Join all formatted names with "||"
             return "||".join(editors) if editors else ""
@@ -479,30 +550,47 @@ class Client(APIClient):
 
     def extract_orcids_from_bibrecord(self, bibrecord_data):
         """
-        Extracts ORCID based on @auid from the provided bibrecord data.
+        Extracts ORCID based on @auid from the provided bibrecord data,
+        handling cases where author-group is a list or a single dictionary.
         """
         orcid_map = {}
 
         try:
-            # Parcours des groupes d'auteurs dans le bibrecord
             author_groups = bibrecord_data.get("head", {}).get("author-group", [])
 
-            for author_group in author_groups:
-                # Liste des auteurs dans chaque groupe d'auteurs
-                authors = author_group.get("author", [])
+            if isinstance(author_groups, dict):
+                author_groups = [author_groups]
 
-                # Parcours de chaque auteur dans le groupe
+            if not isinstance(author_groups, list):
+                self.logger.warning("Invalid format for 'author-group' in bibrecord data.")
+                return orcid_map
+
+            for author_group in author_groups:
+                if not isinstance(author_group, dict):
+                    self.logger.warning("Invalid author group format; skipping.")
+                    continue
+
+                authors = author_group.get("author", [])
+                if not isinstance(authors, list):
+                    self.logger.warning(
+                        "Invalid format for 'author' in author group; skipping."
+                    )
+                    continue
+
                 for author in authors:
+                    if not isinstance(author, dict):
+                        self.logger.warning("Invalid author format; skipping.")
+                        continue
+
                     auid = author.get("@auid")
                     orcid = author.get("@orcid")
 
                     if auid and orcid:
-                        # Associer l'@auid à l'@orcid
                         orcid_map[auid] = orcid
                     elif auid:
-                        self.logger.warning(f"Missing ORCID for author with @auid: {auid}")
+                        self.logger.debug(f"Missing ORCID for author with @auid: {auid}")
                     else:
-                        self.logger.warning("Missing @auid for an author; skipping.")
+                        self.logger.debug("Missing @auid for an author; skipping.")
 
         except Exception as e:
             self.logger.error(f"An error occurred while extracting ORCID: {e}")

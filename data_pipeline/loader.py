@@ -11,8 +11,10 @@ logger = manage_logger(log_file_path)
 
 
 class Loader:
-    def __init__(self, df_metadata, df_authors):
+
+    def __init__(self, df_metadata, df_epfl_authors, df_authors):
         self.df_metadata = df_metadata
+        self.df_epfl_authors = df_epfl_authors
         self.df_authors = df_authors
         self.dspace_wrapper = DSpaceClientWrapper()
 
@@ -32,64 +34,198 @@ class Loader:
         logger.error(f"No section found for collection ID: {ifs3_collection_id}")
         return None
 
-    def _clean_guessing_authors(self, workspace_response, form_section):
-        """Process the `dc.contributor.author` field to remove `authority` and `confidence`."""
+    def _process_and_replace_authors(self, workspace_response, row_id, form_section):
+        """Prepare and process a patch operation to replace and enrich the `dc.contributor.author` field."""
         if (
             "sections" in workspace_response
             and f"{form_section}details" in workspace_response["sections"]
         ):
-            authors = workspace_response["sections"][f"{form_section}details"].get(
-                "dc.contributor.author", []
-            )
-            for author in authors:
-                author.pop("authority", None)
-                author.pop("confidence", None)
-            logger.info(f"Cleaned auto-guessing authors: {authors}")
-            return authors
-        logger.warning("No authors found in workspace response.")
-        return []
+            # Filter authors for the specific row_id from df_authors
+            matching_authors = self.df_authors[self.df_authors["row_id"] == row_id]
 
-    def _process_authors(self, workspace_response, row_id, form_section):
-        """Process the `dc.contributor.author` field to enrich authors with information from df_authors."""
-        if (
-            "sections" in workspace_response
-            and f"{form_section}details" in workspace_response["sections"]
-        ):
-            authors = workspace_response["sections"][f"{form_section}details"].get(
-                "dc.contributor.author", []
-            )
-            for author in authors:
-                author_name = author.get("value")
-                if not author_name:
-                    continue
+            if matching_authors.empty:
+                logger.warning(
+                    f"No matching authors found in df_authors for row_id: {row_id}."
+                )
+                return []
 
-                # Find matching author in df_authors for the corresponding row_id
-                matching_author = self.df_authors[
-                    (self.df_authors["row_id"] == row_id)
-                    & (self.df_authors["author"].str.lower() == author_name.lower())
+            # Initialize metadata containers
+            authors_metadata = []
+            affiliations_metadata = []
+            orgunit_metadata = []
+            orcid_metadata = []
+            roles_metadata = []
+
+            # Loop through each author row and process affiliation/orgunit
+            for i, author_row in matching_authors.iterrows():
+                # Prepare author metadata
+                author_data = {
+                    "value": author_row["author"],
+                    "authority": None,
+                    "display": author_row["author"],
+                    "confidence": -1,
+                }
+                authors_metadata.append(author_data)
+
+                # Add ORCID metadata
+                orcid_value = (
+                    author_row["orcid_id"]
+                    if pd.notna(author_row["orcid_id"])
+                    else "#PLACEHOLDER_PARENT_METADATA_VALUE#"
+                )
+                orcid_metadata.append(
+                    # BUG in dspace-cris
+                    # {
+                    #     "value": orcid_value,
+                    #     "authority": None,
+                    #     "display": orcid_value,
+                    #     "confidence": -1,
+                    # }
+                    {
+                        "value": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                        "authority": None,
+                        "display": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                        "confidence": -1,
+                    }
+                )
+
+                # Extract and process the first affiliation
+                organizations = (
+                    author_row["organizations"].split("|")
+                    if pd.notna(author_row["organizations"])
+                    else []
+                )
+                if organizations:
+                    affiliation_name = organizations[0].split(":", 1)[-1].strip()
+                    affiliations_metadata.append(
+                        {
+                            "value": affiliation_name,
+                            "authority": None,
+                            "display": affiliation_name,
+                            "confidence": -1,
+                        }
+                    )
+                else:
+                    affiliations_metadata.append(
+                        {
+                            "value": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            "authority": None,
+                            "display": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            "confidence": -1,
+                        }
+                    )
+
+                # Extract and process the first orgunit
+                suborgs = (
+                    author_row["suborganization"].split("|")
+                    if pd.notna(author_row["suborganization"])
+                    else []
+                )
+                if suborgs:
+                    orgunit_name = suborgs[0].strip()
+                    orgunit_metadata.append(
+                        {
+                            "value": orgunit_name,
+                            "authority": None,
+                            "display": orgunit_name,
+                            "confidence": -1,
+                        }
+                    )
+                else:
+                    orgunit_metadata.append(
+                        {
+                            "value": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            "authority": None,
+                            "display": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            "confidence": -1,
+                        }
+                    )
+
+                roles_metadata.append(
+                    {
+                        "value": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                        "authority": None,
+                        "display": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                        "confidence": -1,
+                    }
+                )
+
+            # Enrich affiliations and orgunits with `df_epfl_authors`
+            for i, author in enumerate(authors_metadata):
+                author_name = author["value"]
+                matching_epfl_author = self.df_epfl_authors[
+                    (self.df_epfl_authors["row_id"] == row_id)
+                    & (self.df_epfl_authors["author"] == author_name)
                 ]
 
-                if not matching_author.empty:
-                    # Use the first match (if duplicates exist)
-                    match = matching_author.iloc[0]
-                    if pd.notna(match["dspace_uuid"]) and self._is_valid_uuid(
-                        match["dspace_uuid"]
-                    ):
-                        authority_prefix = "will be referenced::SCIPER-ID::"
-                    else:
-                        authority_prefix = "will be generated::SCIPER-ID::"
+                if not matching_epfl_author.empty:
+                    for _, match in matching_epfl_author.iterrows():
+                        # Enrich author authority and confidence
+                        if pd.notna(match["sciper_id"]):
+                            author["authority"] = (
+                                f"will be referenced::SCIPER-ID::{match['sciper_id']}"
+                            )
+                            author["confidence"] = 600
 
-                    # Enrich author data
-                    author["authority"] = (
-                        f"{authority_prefix}{str(match['sciper_id'])}"
-                        if pd.notna(match["sciper_id"])
-                        else None
-                    )
-                    author["confidence"] = 600 if pd.notna(match["sciper_id"]) else -1
+                        # Replace affiliation with enriched EPFL data
+                        if pd.notna(match["organizations"]):
+                            affiliations_metadata[i] = {
+                                "value": "École Polytechnique Fédérale de Lausanne",
+                                "authority": "will be referenced::ROR-ID::https://ror.org/02s376052",
+                                "display": "École Polytechnique Fédérale de Lausanne",
+                                "confidence": 600,
+                            }
 
-            logger.info(f"Enriched authors: {authors}")
-            return authors
-        logger.warning("No authors found in workspace response.")
+                        # Replace organizational unit with enriched EPFL data
+                        if pd.notna(match["epfl_api_mainunit_name"]):
+                            # BUG in dspace-cris
+
+                            # orgunit_metadata[i] = {
+                            #     "value": match["epfl_api_mainunit_name"],
+                            #     "authority": f"will be referenced::ACRONYM::{match['epfl_api_mainunit_name']}",
+                            #     "display": match["epfl_api_mainunit_name"],
+                            #     "confidence": 600,
+                            # }
+                            orgunit_metadata[i] = {
+                                "value": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                                "authority": None,
+                                "display": "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                                "confidence": -1,
+                            }
+
+            # Construct the patch operations
+            patch_operations = [
+                {
+                    "op": "add",
+                    "path": f"/sections/{form_section}details/dc.contributor.author",
+                    "value": authors_metadata,
+                },
+                {
+                    "op": "add",
+                    "path": f"/sections/{form_section}details/oairecerif.author.affiliation",
+                    "value": affiliations_metadata,
+                },
+                {
+                    "op": "add",
+                    "path": f"/sections/{form_section}details/oairecerif.affiliation.orgunit",
+                    "value": orgunit_metadata,
+                },
+                {
+                    "op": "add",
+                    "path": f"/sections/{form_section}details/person.identifier.orcid",
+                    "value": orcid_metadata,
+                },
+                {
+                    "op": "add",
+                    "path": f"/sections/{form_section}details/epfl.contributor.role",
+                    "value": roles_metadata,
+                },
+            ]
+
+            # logger.debug(f"Generated patch operations: {patch_operations}")
+            return patch_operations
+
+        logger.warning("No authors section found in workspace response.")
         return []
 
     def _patch_additional_metadata(
@@ -107,10 +243,9 @@ class Loader:
             return
 
         try:
-
             # Construct remove operations
-            remove_operations = self._construct_remove_operations(workspace_response)
-            logger.debug(f"remove_operations: {remove_operations}")
+            remove_operations = self._construct_remove_operations(workspace_response, form_section)
+            # logger.debug(f"remove_operations: {remove_operations}")
 
             if remove_operations:
                 try:
@@ -122,14 +257,6 @@ class Loader:
             else:
                 # If remove_operations is empty, set updated_workspace to workspace_response
                 updated_workspace = workspace_response
-
-            # Process authors in the workspace response
-            cleaned_authors = self._clean_guessing_authors(
-                updated_workspace, form_section
-            )
-            updated_authors = self._process_authors(
-                updated_workspace, row["row_id"], form_section
-            )
 
             required_paths = []
             if "errors" in updated_workspace:
@@ -145,25 +272,17 @@ class Loader:
                 row, units, form_section, updated_workspace
             )
 
-            # Add operation to update authors
-            if cleaned_authors:
-                patch_operations.append(
-                    {
-                        "op": "add",
-                        "path": f"/sections/{form_section}details/dc.contributor.author",
-                        "value": cleaned_authors,
-                    }
-                )
-            if updated_authors:
-                patch_operations.append(
-                    {
-                        "op": "add",
-                        "path": f"/sections/{form_section}details/dc.contributor.author",
-                        "value": updated_authors,
-                    }
-                )
+            # Replace authors using the updated function
+            author_patch = self._process_and_replace_authors(
+                updated_workspace, row["row_id"], form_section
+            )
+            logger.debug(f"Patch author_patch: {author_patch}")
 
-            logger.info(f"Patch operations: {patch_operations}")
+            # Add operation to update authors
+            if author_patch:
+                patch_operations.extend(author_patch)
+
+            logger.debug(f"Patch operations: {patch_operations}")
 
             # Apply patch operations
             try:
@@ -201,12 +320,26 @@ class Loader:
                 return False
         return bool(current)
 
-    def _construct_remove_operations(self, workspace_response):
+    def _create_op(self, path, values):
+        return {
+            "op": "add",
+            "path": path,
+            "value": [{"value": value, "language": None, "authority": None, "display": value, 
+                    "securityLevel": 0, "confidence": -1, "place": 0, "source": None, "otherInformation": None} 
+                    for value in values]
+        }   
+
+    def _construct_remove_operations(self, workspace_response, form_section):
 
         metadata_definitions = []
 
         # Check for existing metadata and add remove operations if needed
         removable_metadata_paths = [
+            f"/sections/{form_section}details/dc.contributor.author",
+            f"/sections/{form_section}details/oairecerif.author.affiliation",
+            f"/sections/{form_section}details/oairecerif.affiliation.orgunit",
+            f"/sections/{form_section}details/person.identifier.orcid",
+            f"/sections/{form_section}details/epfl.contributor.role",
             "/sections/bookcontainer_details/dc.relation.ispartof",
             "/sections/journalcontainer_details/dc.relation.journal",
             "/sections/journalcontainer_details/dc.relation.issn",
@@ -225,7 +358,7 @@ class Loader:
         def build_value(value, authority=None, language="en", confidence=-1, place=0):
             """Helper function to build a metadata value structure."""
             if not isinstance(value, str) or not value.strip():
-                logger.warning(f"Invalid value provided: {value}")
+                # logger.debug(f"Invalid value provided: {value}")
                 return None
             return {
                 "value": value,
@@ -253,6 +386,7 @@ class Loader:
             conference_names = []
             conference_places = []
             conference_dates = []
+            conference_acronymes = []
 
             for conf in conferences:
                 parts = conf.split("::")
@@ -319,105 +453,111 @@ class Loader:
             return operations
 
         def parse_funding_info(funding_info):
-            """Parses the funding_info string into structured metadata."""
-            operations = []
-            if not funding_info:
-                return operations
+            """Parses the funding_info string into structured metadata with additional fields, handling missing data properly.
 
+            Args:
+                funding_info (str): A string containing the funding information, separated by '||' for multiple entries.
+
+            Returns:
+                list: A list of operations to add the parsed funding information in a structured format, or None if no funder information is present.
+            """
+
+            # Initialize lists for funders, funding names, grant numbers, and award URIs
+            funders, funding_names, grant_nos, award_uris = [], [], [], []
+
+            # Split input string into individual grants
             grants = funding_info.split("||")
-            funders = []
-            grant_nos = []
 
             for grant in grants:
-                if "::" in grant:
-                    funder, grantno = grant.split("::", 1)
-                    if funder.strip():
-                        funders.append(
-                            build_value(funder.strip())
-                        )
-                    grant_nos.append(
-                        build_value(
-                            (
-                                grantno.strip()
-                                if grantno.strip()
-                                else "#PLACEHOLDER_PARENT_METADATA_VALUE#"
-                            ),
-                        )
+                # Split the grant info by "::" into funder and grant number (if available)
+                parts = grant.split("::", 1)
+                funder = parts[0].strip() if parts[0].strip() else None
+                grantno = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+
+                # Only process entries with a non-empty funder
+                if funder:
+                    funders.append(funder)
+                    grant_nos.append(grantno if grantno else "#PLACEHOLDER_PARENT_METADATA_VALUE#")
+                    funding_names.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+                    award_uris.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+
+            # Create the operations for each section if funders list is not empty
+            operations = []
+            if funders:
+                operations.append(self._create_op("/sections/grants/oairecerif.funder", funders))
+                if funding_names:
+                    operations.append(
+                        self._create_op("/sections/grants/dc.relation.funding", funding_names)
                     )
-                elif grant.strip():
-                    funders.append(
-                        build_value(grant.strip())
+                if grant_nos:
+                    operations.append(
+                        self._create_op("/sections/grants/dc.relation.grantno", grant_nos)
                     )
-                    grant_nos.append(
-                        build_value(
-                            "#PLACEHOLDER_PARENT_METADATA_VALUE#",
-                        )
+                if award_uris:
+                    operations.append(
+                        self._create_op("/sections/grants/crisfund.award.uri", award_uris)
                     )
 
-            if funders:
-                operations.append(
-                    {"op": "add", "path": "/sections/grants/oairecerif.funder", "value": funders}
-                )
-            if grant_nos:
-                operations.append(
-                    {
-                        "op": "add",
-                        "path": "/sections/grants/dc.relation.grantno",
-                        "value": grant_nos,
-                    }
-                )
             return operations
 
         def parse_editors(editors):
-            """Parses the editors field into structured metadata."""
-            if not editors:
-                return []
+            """Parses the editors field into structured metadata, handling missing data properly.
 
-            editor_list = [
-                    build_value(editor.strip())
-                    for editor in editors.split("||")
-                    if editor.strip()
-                ]
+            Args:
+                editors (str): A string containing the editor information, separated by '||' for multiple entries.
 
-            affiliation_placeholder = [
-                    build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#") for _ in editor_list
-                ]
-            orcid_placeholder = [
-                    build_value("#PLACEHOLDER_PARENT_METADATA_VALUE#") for _ in editor_list
-                ]
+            Returns:
+                list: A list of operations to add the parsed editor information in a structured format, or None if no valid editor names are present.
+            """
 
+            # Initialize lists for editors, affiliations, and ORCIDs
+            editors_list, affiliations, orcids = [], [], []
+
+            # Split input string into individual editors
+            editors_split = editors.split("||")
+
+            for editor in editors_split:
+                # Process each editor (name)
+                editor_name = editor.strip()
+
+                # Only process entries with a non-empty editor_name
+                if editor_name:
+                    editors_list.append(editor_name)
+                    # Add placeholders for affiliations and ORCIDs (same for all editors)
+                    affiliations.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+                    orcids.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+
+            # Create the operations for each section (editors, affiliations, ORCIDs) if editors_list is not empty
             operations = []
-            if editor_list:
+            if editors_list:
                 operations.append(
-                        {
-                            "op": "add",
-                            "path": "/sections/bookcontainer_details/dc.contributor.scientificeditor",
-                            "value": editor_list,
-                        }
+                    self._create_op(
+                        "/sections/bookcontainer_details/dc.contributor.scientificeditor",
+                        editors_list,
                     )
-                operations.append(
-                        {
-                            "op": "add",
-                            "path": "/sections/bookcontainer_details/oairecerif.scientificeditor.affiliation",
-                            "value": affiliation_placeholder,
-                        }
+                )
+                if affiliations:
+                    operations.append(
+                        self._create_op(
+                            "/sections/bookcontainer_details/oairecerif.scientificeditor.affiliation",
+                            affiliations,
+                        )
                     )
-                operations.append(
-                        {
-                            "op": "add",
-                            "path": "/sections/bookcontainer_details/oairecerif.affiliation.orgunit",
-                            "value": affiliation_placeholder,
-                        }
+                    operations.append(
+                        self._create_op(
+                            "/sections/bookcontainer_details/oairecerif.affiliation.orgunit",
+                            affiliations,
+                        )
                     )
-                operations.append(
-                        {
-                            "op": "add",
-                            "path": "/sections/bookcontainer_details/person.identifier.orcid",
-                            "value": orcid_placeholder,
-                        }
+                if orcids:
+                    operations.append(
+                        self._create_op(
+                            "/sections/bookcontainer_details/person.identifier.orcid",
+                            orcids,
+                        )
                     )
 
-            return operations 
+            return operations
 
         # Determine correct form_section and related sections
         type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_'] else 'type'}"
@@ -449,6 +589,11 @@ class Loader:
                         confidence=600,
                     )
                 ],
+                False,
+            ),
+            (
+                f"/sections/{form_section}details/dc.date.issued",
+                [build_value(row.get("issueDate"))],
                 False,
             ),
             (
@@ -532,7 +677,11 @@ class Loader:
             ),
             (
                 f"/sections/{isbn_section}/{isbn_metadata}",
-                [build_value(row.get("bookISBN"))],
+                [
+                    build_value(isbn)
+                    for isbn in str(row.get("bookISBN", "")).split("||")
+                    if isbn.strip()
+                ],
                 True,
             ),
             (
@@ -595,7 +744,7 @@ class Loader:
             "value": "true"
         })
 
-        logger.info(f"metadata_definitions : {metadata_definitions}")
+        # logger.debug(f"metadata_definitions : {metadata_definitions}")
 
         if not metadata_definitions:
             logger.warning("No operations constructed; required paths might be missing.")
@@ -675,8 +824,8 @@ class Loader:
 
     def _filter_publications_by_valid_affiliations(self):
         """Filter publications with valid author affiliations."""
-        valid_author_ids = self.df_authors[
-            self.df_authors["epfl_api_mainunit_name"].notnull()
+        valid_author_ids = self.df_epfl_authors[
+            self.df_epfl_authors["epfl_api_mainunit_name"].notnull()
         ]["row_id"].unique()
 
         if len(valid_author_ids) > 0:
@@ -726,8 +875,8 @@ class Loader:
                 logger.info(f"Successfully pushed publication with ID: {workspace_id}")
                 df_items_imported.at[index, "workspace_id"] = workspace_id
 
-                matching_authors = self.df_authors[
-                    self.df_authors["row_id"] == row["row_id"]
+                matching_authors = self.df_epfl_authors[
+                    self.df_epfl_authors["row_id"] == row["row_id"]
                 ]
                 units = [
                     {"acro": author["epfl_api_mainunit_name"]}
@@ -784,23 +933,3 @@ class Loader:
                 )
 
         return df_items_imported
-
-    def manage_person(self):
-        """Update or create person records in DSpace."""
-        for index, row in self.df_metadata.iterrows():
-            if pd.notna(row.get("sciper_id")):
-                if "Dspace" in row.get("dspace_uuid", ""):
-                    data = {"epfl_api_mainunit_name": row["epfl_api_mainunit_name"]}
-                    self.dspace_wrapper._update_object(row["dspace_uuid"], data)
-                    logger.info(
-                        f"Updated person with DSpace UUID: {row['dspace_uuid']}"
-                    )
-                else:
-                    data = {
-                        "sciper_id": row["sciper_id"],
-                        "epfl_api_mainunit_name": row["epfl_api_mainunit_name"],
-                    }
-                    self.dspace_wrapper._create_object(data)
-                    logger.info(f"Created person with SCIPER ID: {row['sciper_id']}")
-            else:
-                logger.warning(f"SCIPER ID is missing or NA for row: {index}")
