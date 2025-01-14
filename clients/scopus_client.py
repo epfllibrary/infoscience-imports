@@ -851,59 +851,78 @@ class Client(APIClient):
 
     def _extract_funding_info(self, x):
         """
-        Extracts funding information from the Scopus record and formats it as:
-        'funding_agency::grant_id1,grant_id2'.
-        - Missing fields are replaced with "None".
-        - If multiple fundings are found, they are separated by "||".
+        Extracts and consolidates funding information from Scopus JSON data.
+        Funding entries for the same funder are grouped, even if repeated.
 
-        Parameters:
-        x (dict): A Scopus record containing funding data.
+        Args:
+            x (dict): JSON data containing funding information.
 
         Returns:
-        str: A formatted string with funding information or "None" if no data is found.
+            str: A formatted string with consolidated funding information,
+                or an empty string if no data is available.
         """
-        # Navigate to the funding list
-        funding_data = (
-            x.get("item", {})
-            .get("xocs:meta", {})
-            .get("xocs:funding-list", {})
-            .get("xocs:funding", [])
-        )
+        try:
+            # Navigate to the funding list
+            funding_data = (
+                x.get("item", {})
+                .get("xocs:meta", {})
+                .get("xocs:funding-list", {})
+                .get("xocs:funding", [])
+            )
 
-        # Handle the case where funding_data is a dictionary instead of a list
-        if isinstance(funding_data, dict):
-            funding_data = [funding_data]
+            # Handle the case where funding_data is a dictionary instead of a list
+            if isinstance(funding_data, dict):
+                funding_data = [funding_data]
 
-        if not funding_data:
+            if not funding_data:
+                return ""
+
+            # Dictionary to group funding entries by funder
+            funding_dict = {}
+
+            for funding in funding_data:
+                # Extract the funding agency name
+                agency = funding.get("xocs:funding-agency-matched-string", "").strip()
+
+                # Extract grant IDs (can be a string, list, or dictionary)
+                grant_ids = funding.get("xocs:funding-id", [])
+                if isinstance(grant_ids, str):
+                    grant_ids = [grant_ids]  # Wrap a single string in a list
+                elif isinstance(grant_ids, list):
+                    # Normalize grant IDs from dictionaries or strings
+                    grant_ids = [
+                        (
+                            grant.get("$", "").strip()
+                            if isinstance(grant, dict)
+                            else str(grant).strip()
+                        )
+                        for grant in grant_ids
+                    ]
+                elif isinstance(grant_ids, dict):
+                    grant_ids = [
+                        grant_ids.get("$", "").strip()
+                    ]  # Handle the dictionary case
+
+                # Add grant IDs to the dictionary for the agency
+                if agency in funding_dict:
+                    funding_dict[agency].extend(grant_ids)
+                else:
+                    funding_dict[agency] = grant_ids
+
+            # Build the consolidated funding string
+            funding_infos = []
+            for agency, ids in funding_dict.items():
+                # Remove duplicates and sort grant IDs
+                ids_str = ",".join(sorted(set(filter(None, ids))))
+                funding_infos.append(f"{agency}::{ids_str}")
+
+            # Join all funding entries with "||"
+            return "||".join(funding_infos) if funding_infos else ""
+
+        except Exception as e:
+            # Log the error and return an empty string
+            self.logger.error(f"Error extracting funding information: {e}")
             return ""
-
-        funding_infos = []
-        for funding in funding_data:
-            # Extract funding agency name
-            agency = funding.get("xocs:funding-agency-matched-string", "")
-
-            # Extract funding IDs (may be a string, a list, or a dict)
-            grant_ids = funding.get("xocs:funding-id", [])
-            if isinstance(grant_ids, str):
-                grant_ids = [grant_ids]  # Wrap single string in a list
-            elif isinstance(grant_ids, list):
-                grant_ids = [
-                    grant.get("$", "") if isinstance(grant, dict) else str(grant)
-                    for grant in grant_ids
-                ]
-            elif isinstance(grant_ids, dict):
-                grant_ids = [grant_ids.get("$", "")]  # Handle dict case
-
-            # Combine agency and grant IDs, separating grant IDs by commas if multiple exist
-            if grant_ids:
-                grant_ids_str = ",".join(filter(None, grant_ids))  # Remove empty values
-                funding_infos.append(f"{agency}::{grant_ids_str}")
-            else:
-                funding_infos.append(f"{agency}::")
-
-        # Join all funding entries with "||"
-        return "||".join(funding_infos) if funding_infos else ""
-
 
 ScopusClient = Client(
     authentication_method=scopus_authentication_method,
