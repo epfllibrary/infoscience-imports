@@ -355,7 +355,7 @@ class Loader:
     def _construct_patch_operations(self, row, units, form_section, workspace_response):
         """Construct PATCH operations for metadata updates with optimized error handling."""
 
-        def build_value(value, authority=None, language="en", confidence=-1, place=0):
+        def build_value(value, authority=None, language=None, confidence=-1, place=0):
             """Helper function to build a metadata value structure."""
             if not isinstance(value, str) or not value.strip():
                 # logger.debug(f"Invalid value provided: {value}")
