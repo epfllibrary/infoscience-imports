@@ -68,18 +68,18 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::research article",
         },
-        "Book": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        "Book Chapter": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "Conference Paper": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings::conference paper",
-        },
+        # "Book": {
+        #     "collection": "Books and Book parts",
+        #     "dc.type": "text::book/monograph",
+        # },
+        # "Book Chapter": {
+        #     "collection": "Books and Book parts",
+        #     "dc.type": "text::book/monograph::book part or chapter",
+        # },
+        # "Conference Paper": {
+        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
+        #     "dc.type": "text::conference output::conference proceedings::conference paper",
+        # },
         # "Conference Review": {
         #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
         #     "dc.type": "text::conference output::conference proceedings::conference paper",
@@ -418,7 +418,6 @@ types_authority_mapping = {
     "text::conference output::conference poster not in proceedings": "conference-coar-types:c_18co",
     "text::conference output::conference presentation": "conference-coar-types:R60J-J5BD",
     "text::conference output::conference proceedings": "conference-coar-types:c_f744",
-    "text::conference output": "conference-coar-types:c_8544",
     "dataset::aggregated data": "dataset-coar-types:ACF7-8YT9",
     "dataset::clinical trial data": "dataset-coar-types:c_cb28",
     "dataset::compiled data": "dataset-coar-types:FXF3-D3G7",
