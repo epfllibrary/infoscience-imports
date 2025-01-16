@@ -19,7 +19,14 @@ default_queries = {
 source_order = ["wos", "scopus", "openalex", "zenodo"]
 
 # Define types of unit to retrieve from api.epfl.ch
-unit_types = ["Laboratoire", "Groupe", "Chaire"]
+unit_types = [
+    "Laboratoire",
+    "Swiss Plasma Center",
+    "Groupe",
+    "Chaire",
+    "Plateforme",
+    "Centre",
+]
 
 # Scopus : EPFL labs internal IDs
 scopus_epfl_afids = [
