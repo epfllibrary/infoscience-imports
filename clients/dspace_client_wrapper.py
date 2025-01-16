@@ -1,5 +1,6 @@
+import os
+import re
 from dspace.dspace_rest_client.client import DSpaceClient
-import os, re
 from dotenv import load_dotenv
 from utils import manage_logger
 from config import logs_dir
@@ -10,6 +11,7 @@ ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 
 
 class DSpaceClientWrapper:
+    """Wrapper for Dspace client"""
     def __init__(self):
         log_file_path = os.path.join(logs_dir, "dspace_client.log")
         self.logger = manage_logger(log_file_path)
@@ -17,7 +19,8 @@ class DSpaceClientWrapper:
         self.client = DSpaceClient()
 
         authenticated = self.client.authenticate()
-        self.logger.info(f"Authentication status {authenticated}.")
+        if authenticated is not True:
+            self.logger.info("DSpace API Authentication failed.")
 
     def _get_item(self, uuid):
         return self.client.get_item(uuid)
@@ -84,7 +87,7 @@ class DSpaceClientWrapper:
             query_parts.append(f'(itemidentifier_keyword:"{item_id}")')
 
         query_parts.append(
-            f"(title:({cleaned_title}) AND (dateIssued:{pubyear} OR dateIssued:{previous_year} OR dateIssued:{next_year}))"
+            f"(title:({cleaned_title}) AND (dateIssued.year:{pubyear} OR dateIssued.year:{previous_year} OR dateIssued.year:{next_year}))"
         )
 
         if "doi" in x and x["doi"] not in ["", None]:
@@ -191,19 +194,19 @@ class DSpaceClientWrapper:
             )
             return None
 
-    def _update_workspace(self, workspace_id, patch_operations):
+    def update_workspace(self, workspace_id, patch_operations):
         return self.client.update_workspaceitem(workspace_id, patch_operations)
 
-    def _create_workflowitem(self, workspace_id):
+    def create_workflowitem(self, workspace_id):
         return self.client.create_workflowitem(workspace_id)
 
-    def _upload_file_to_workspace(self, workspace_id, file_path):
+    def upload_file_to_workspace(self, workspace_id, file_path):
         return self.client.upload_file_to_workspace(workspace_id, file_path)
 
-    def _delete_workspace(self, workspace_id):
+    def delete_workspace(self, workspace_id):
         return self.client.delete_workspace_item(workspace_id)
 
-    def _search_authority(
+    def search_authority(
         self,
         authority_type="AuthorAuthority",
         metadata="dc.contributor.author",
@@ -230,7 +233,6 @@ class DSpaceClientWrapper:
                     return authority.metadata.get("epfl.sciperId")[0]["value"]
 
         return None
-
 
 def clean_title(title):
     title = re.sub(r"<[^>]+>", "", title)
