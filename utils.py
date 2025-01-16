@@ -18,7 +18,7 @@ def manage_logger(logfile_name):
         # Create a console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(
-            logging.INFO
+            logging.DEBUG
         )  # Set the level for the console handler to INFO
 
         # Create a formatter and set it for both handlers
