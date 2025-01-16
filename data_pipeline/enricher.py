@@ -4,7 +4,6 @@ import string
 import time
 import re
 import os
-from unidecode import unidecode
 
 import pandas as pd
 from fuzzywuzzy import fuzz, process
@@ -64,10 +63,31 @@ class AuthorProcessor:
                 self.df.at[index, 'epfl_affiliation'] = False
         return self.df if return_df else self
 
-    def _process_scopus(self, text):
+    def _process_scopus(self, text, check_all=False):
+        """
+        Checks if an EPFL affiliation is present in the 'organizations' field for Scopus.
+
+        Args:
+            text (str): The text to analyze.
+            check_all (bool): If True, compares all values separated by '|'.
+                            If False, only compares the first value.
+
+        Returns:
+            bool: True if an EPFL affiliation is detected, False otherwise.
+        """
         if not isinstance(text, str):
             return False
-        return any(value in text for value in scopus_epfl_afids)
+
+        # Split the text into values separated by '|'
+        values = [v.strip() for v in text.split("|")]
+
+        # Compare based on the check_all flag
+        if check_all:
+            # Check all values
+            return any(any(value in v for value in scopus_epfl_afids) for v in values)
+        else:
+            # Check only the first value
+            return any(value in values[0] for value in scopus_epfl_afids)
 
     def _process_zenodo(self, text):
         if not isinstance(text, str):
@@ -195,7 +215,7 @@ class AuthorProcessor:
         """
 
         try:
-            response = dspace_wrapper._search_authority(filter_text=query)
+            response = dspace_wrapper.search_authority(filter_text=query)
             self.logger.info(f"Querying DSpace for author {query}")
             sciper_id = dspace_wrapper.get_sciper_from_authority(response)
             self.logger.info(f"Sciper {sciper_id} was retrieved in DSpace for author {query}")
@@ -268,22 +288,46 @@ class AuthorProcessor:
                 self.logger.debug(f"Person record: {records}")
 
                 if isinstance(records, list) and records:
-                    # Step 1: Prioritize a unit with unit_order == 1 and an allowed unit_type
-                    for record in records:
-                        if record.get('unit_order') == 1 and record.get('unit_type') in unit_types:
-                            return record['unit_id'], record['unit_name']
+                    # Step 1: Initialize variables to track results for each condition
+                    prioritized_unit = None  # For unit_order == 1 and allowed unit_type
+                    allowed_units = []       # Collect allowed units for priority sorting
+                    fallback_unit = None     # For unit_order == 1 regardless of unit_type
 
-                    # Step 2: Check if there is any unit with an allowed unit_type (regardless of unit_order)
+                    # Iterate through records and classify them
                     for record in records:
-                        if record.get('unit_type') in unit_types:
-                            return record['unit_id'], record['unit_name']
+                        unit_order = record.get('unit_order')
+                        unit_type = record.get('unit_type')
+                        unit_id = record.get('unit_id')
+                        unit_name = record.get('unit_name')
 
-                    # Step 3: If no allowed unit_type is found, return a unit with unit_order == 1 (any type)
-                    for record in records:
-                        if record.get('unit_order') == 1:
-                            return record['unit_id'], record['unit_name']
+                        if unit_order == 1 and unit_type in unit_types and not prioritized_unit:
+                            prioritized_unit = (unit_id, unit_name)
 
-                    # Step 4: If no conditions above apply, return the first record in the list
+                        if unit_type in unit_types:
+                            allowed_units.append((unit_id, unit_name, unit_type))
+
+                        if unit_order == 1 and not fallback_unit:
+                            fallback_unit = (unit_id, unit_name)
+
+                    # Step 2: Return the highest priority result available
+                    if prioritized_unit:
+                        self.logger.debug(f"Main unit retrieved: {prioritized_unit}")
+                        return prioritized_unit
+
+                    if allowed_units:
+                        # Sort allowed units by the priority in unit_types
+                        allowed_units.sort(key=lambda x: unit_types.index(x[2]))
+                        self.logger.debug(
+                            f"Main unit retrieved: {allowed_units[0][:2]}"
+                        )
+
+                        return allowed_units[0][:2]  # Return (unit_id, unit_name)
+
+                    if fallback_unit:
+                        self.logger.debug(f"Main unit retrieved: {fallback_unit}")
+                        return fallback_unit
+
+                    # Step 3: If no conditions above apply, return the first record in the list
                     self.logger.warning("No authorized unit type found. Returning the first record.")
                     first_record = records[0]
                     return first_record['unit_id'], first_record['unit_name']
