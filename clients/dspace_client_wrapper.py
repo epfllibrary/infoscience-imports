@@ -148,15 +148,24 @@ class DSpaceClientWrapper:
         num_items_persons = len(dsos_persons)
         if num_items_persons == 1:
             self.logger.debug(
-                f"Single record found for {query} in DspaceCris. Processing record."
+                "Single record found for %s in DspaceCris. Processing record.", query
             )
             sciper_metadata = dsos_persons[0].metadata.get("epfl.sciperId")
             sciper_id = (
                 sciper_metadata[0]["value"] if sciper_metadata and len(sciper_metadata) > 0 else ""
             )
+            affiliation_metadata = dsos_persons[0].metadata.get("person.affiliation.name", "")
+
+            self.logger.debug("affiliation_metadata: %s", affiliation_metadata)
+
+            main_affiliation = (
+                affiliation_metadata[0]["value"]
+                if affiliation_metadata else ""
+            )
             return {
                 "uuid": dsos_persons[0].uuid,
                 "sciper_id": sciper_id,
+                "main_affiliation": main_affiliation,
             }
         elif num_items_persons == 0:
             self.logger.warning(
@@ -216,23 +225,54 @@ class DSpaceClientWrapper:
         return self.client.get_authority(authority_type, metadata, filter_text, exact)
 
     def get_sciper_from_authority(self, response):
-        if response.get("page", {}).get("totalElements", 0) == 1:
-            entry = response.get("_embedded", {}).get("entries", [])[0]
-            auth_id = entry.get("authority") if entry else None
+        """
+        Extracts a SCIPER-ID from an authority response.
+        If multiple entries exist but all have the same 'authority' value,
+        only the first entry is processed.
 
-            # Vérifier si auth_id commence par "will be generated"
-            if auth_id and auth_id.startswith("will be generated"):
-                # Extraire le nombre à la fin du format "UUID: will be generated::SCIPER-ID::123456"
-                match = re.search(r"::(\d+)$", auth_id)
-                if match:
-                    return int(match.group(1))  # Retourne l'ID en tant qu'entier
-            # Si auth_id ne correspond pas au format, appeler _get_item
-            else:
-                authority = self._get_item(auth_id)
-                if authority:
-                    return authority.metadata.get("epfl.sciperId")[0]["value"]
+        Args:
+            response (dict): The JSON response containing authority data.
 
+        Returns:
+            int | None: The extracted SCIPER-ID or None if not found.
+        """
+        # Retrieve entries from the response
+        entries = response.get("_embedded", {}).get("entries", [])
+        if not entries:
+            return None
+
+        # Check if all entries have the same 'authority' value
+        authorities = {entry.get("authority") for entry in entries}
+        if len(authorities) > 1:
+            # If multiple different 'authority' values are found, do not process
+            return None
+
+        # Process the first entry if all authorities are identical
+        first_entry = entries[0]
+        auth_id = first_entry.get("authority")
+        if not auth_id:
+            return None
+
+        # Check if auth_id starts with "will be generated"
+        if auth_id.startswith("will be generated"):
+            match = re.search(r"::(\d+)$", auth_id)
+            if match:
+                return int(match.group(1))  # Return the ID as an integer
+        else:
+            # Use an external method to retrieve metadata for the given authority
+            authority = self._get_item(auth_id)
+            if authority:
+                sciper_data = authority.metadata.get("epfl.sciperId", [])
+                if (
+                    sciper_data
+                    and isinstance(sciper_data, list)
+                    and "value" in sciper_data[0]
+                ):
+                    return sciper_data[0]["value"]
+
+        # Return None if no valid SCIPER-ID is found
         return None
+
 
 def clean_title(title):
     title = re.sub(r"<[^>]+>", "", title)
