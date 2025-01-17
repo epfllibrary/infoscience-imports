@@ -116,23 +116,23 @@ class AuthorProcessor:
         self.df = self.df[self.df['epfl_affiliation']]
         return self.df if return_df else self
 
-    def clean_authors(self, return_df=False):
-        self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
+    # def clean_authors(self, return_df=False):
+    #     self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
 
-        # Function to clean author names
-        def clean_author(author):
-            author = author.lower()
-            author = author.translate(
-                str.maketrans(string.punctuation, " " * len(string.punctuation))
-            )
-            author = remove_accents(author)
-            author = author.encode("ascii", "ignore").decode("utf-8")
-            return author
+    #     # Function to clean author names
+    #     def clean_author(author):
+    #         author = author.lower()
+    #         author = author.translate(
+    #             str.maketrans(string.punctuation, " " * len(string.punctuation))
+    #         )
+    #         author = remove_accents(author)
+    #         author = author.encode("ascii", "ignore").decode("utf-8")
+    #         return author
 
-        # Apply the cleaning function to the 'authors' column
-        self.df["author_cleaned"] = self.df["author"].apply(clean_author)
+    #     # Apply the cleaning function to the 'authors' column
+    #     self.df["author_cleaned"] = self.df["author"].apply(clean_author)
 
-        return self.df if return_df else self
+    #     return self.df if return_df else self
 
     def clean_authors(self, return_df=False):
         self.df = self.df.copy()
@@ -148,6 +148,8 @@ class AuthorProcessor:
                 str.maketrans("", "", string.punctuation)
             )
             formatted_name = clean_value(formatted_name)
+            formatted_name = remove_accents(formatted_name)
+            formatted_name = formatted_name.encode("ascii", "ignore").decode("utf-8")
             formatted_name = " ".join(formatted_name.split())
 
             return formatted_name
@@ -265,6 +267,7 @@ class AuthorProcessor:
 
         # Query the ApiEpflClient for each cleaned author and store the sciper_id
         # Pass the entire row to the query_person function
+
         self.df["sciper_id"] = self.df.apply(query_person, axis=1)
 
         # Optionally return the modified DataFrame if required
@@ -342,46 +345,86 @@ class AuthorProcessor:
         return self.df if return_df else self
 
     def generate_dspace_uuid(self, return_df=False):
+        """
+        Generates DSpace UUID for each row in the DataFrame by querying a DSpace database.
+        The function checks if the necessary columns ('sciper_id', 'orcid_id', 'author') exist
+        before constructing queries. If the columns do not exist, the queries for those columns are skipped.
+        The generated UUID is added to the 'dspace_uuid' column, and if applicable, the 'sciper_id' column is updated.
+
+        Parameters:
+        - return_df (bool): If True, the modified DataFrame is returned. If False, the instance is returned.
+
+        Returns:
+        - DataFrame or self: The modified DataFrame if return_df is True, else returns the instance.
+        """
+
+        # Create a copy of the original DataFrame to avoid modifying it directly
         self.df = self.df.copy()
 
         def get_dspace_data(row):
-            # Liste des requêtes avec priorité décroissante
-            queries = [
-                (
-                    f"epfl.sciperId:({row['sciper_id']})"
-                    if pd.notna(row["sciper_id"])
-                    else None
-                ),
-                (
-                    f"person.identifier.orcid:({row['orcid_id']})"
-                    if pd.notna(row["orcid_id"])
-                    else None
-                ),
-                (
-                    f"itemauthoritylookup:\"{row['author'].replace(',', '')}*\""
-                    if pd.notna(row["author"])
-                    else None
-                ),
-            ]
+            """
+            Queries the DSpace database based on available information in the row
+            and returns the UUID and associated sciper_id if found.
 
+            Parameters:
+            - row (pd.Series): A row from the DataFrame containing the necessary fields.
+
+            Returns:
+            - tuple: A tuple containing the UUID and sciper_id, or (None, None) if no result is found.
+            """
+
+            queries = []  # List to store queries for the DSpace database
+
+            # Only generate query if the column exists in the row and the value is not NaN
+            if "sciper_id" in row and pd.notna(row.get("sciper_id")):
+                queries.append(f"epfl.sciperId:({row['sciper_id']})")
+
+            if "orcid_id" in row and pd.notna(row.get("orcid_id")):
+                queries.append(f"person.identifier.orcid:({row['orcid_id']})")
+
+            if "author" in row and pd.notna(row.get("author")):
+                queries.append(f"itemauthoritylookup:\"{row['author'].replace(',', '')}\"")
+
+            # Iterate through each query and execute if valid
             for query in queries:
-                if query:  # Vérifie que la query n'est pas None
-                    result = dspace_wrapper.find_person(query=query)
-                    if result:  # Si un résultat est trouvé, retourne les données
-                        return result["uuid"], result["sciper_id"]
-            return None, None  # Retourne None si aucune requête n'a donné de résultats
+                if query:  # Ensure the query is not None
+                    result = dspace_wrapper.find_person(
+                        query=query
+                    )  # Call the dspace_wrapper to search
+                    if result:  # If a result is found, return the UUID and sciper_id
+                        return result["uuid"], result["sciper_id"], result["main_affiliation"]
 
-        # Applique la logique à chaque ligne du DataFrame
+            return None, None, None  # Return None if no result is found for any of the queries
+
         def update_row(row):
-            uuid, found_sciper_id = get_dspace_data(row)
-            # Mise à jour de la colonne sciper_id si elle est vide
-            if pd.isna(row["sciper_id"]) and found_sciper_id:
+            """
+            Updates the row with the DSpace UUID and potentially the sciper_id.
+
+            Parameters:
+            - row (pd.Series): A row from the DataFrame to be updated.
+
+            Returns:
+            - pd.Series: The updated row with the DSpace UUID and sciper_id if found.
+            """
+
+            # Get the DSpace UUID and associated sciper_id for the row
+            uuid, found_sciper_id, main_affiliation = get_dspace_data(row)
+
+            # If the sciper_id is empty and a sciper_id is found, update the column
+            if pd.isna(row.get("sciper_id")) and found_sciper_id:
                 row["sciper_id"] = found_sciper_id
+
+            if pd.isna(row.get("epfl_api_mainunit_name")) and main_affiliation:
+                row["epfl_api_mainunit_name"] = main_affiliation
+
+            # Update the row with the DSpace UUID
             row["dspace_uuid"] = uuid
             return row
 
+        # Apply the update_row function to each row in the DataFrame
         self.df = self.df.apply(update_row, axis=1)
 
+        # Return either the modified DataFrame or the instance based on the return_df flag
         return self.df if return_df else self
 
     ##### Inutilisé #####################
