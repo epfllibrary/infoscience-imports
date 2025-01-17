@@ -470,29 +470,28 @@ class Client(APIClient):
         """
         try:
             abstract_text = (
-                x.get("item", {})
-                .get("bibrecord", {})
-                .get("head", {})
-                .get("abstracts", "")
+                x.get("item", {}).get("bibrecord", {}).get("head", {}).get("abstracts", "")
             )
+            coredata = x.get("coredata", {})
+            copyright_statement = coredata.get("publishercopyright", "")
+            # self.logger.debug("Copyright statement : %s", copyright_statement)
 
             # Ensure the abstract_text is a string and strip whitespace
             if abstract_text and isinstance(abstract_text, str):
                 abstract_text = abstract_text.strip()
+                # self.logger.debug("abstract_text : %s", abstract_text)
 
-            if abstract_text and abstract_text.startswith("©"):
-                first_period_index = abstract_text.find('.')
-                if first_period_index != -1:
-                    abstract_text = abstract_text[first_period_index + 1:].strip()
+            if copyright_statement and copyright_statement in abstract_text:
+                abstract_text = abstract_text.replace(copyright_statement, "").strip()
+                # self.logger.debug("Altered abstract_text : %s", abstract_text)
 
             # Return the abstract text if it's non-empty, otherwise return an empty string
             if abstract_text:
                 return abstract_text
-
             return ""
 
         except KeyError as e:
-            self.logger.error(f"Error during abstract retrieval: {e}")
+            self.logger.error("Error during abstract retrieval : %s", e)
             return ""
 
     def _extract_editors_from_scopus_record(self, x):
@@ -923,6 +922,7 @@ class Client(APIClient):
             # Log the error and return an empty string
             self.logger.error(f"Error extracting funding information: {e}")
             return ""
+
 
 ScopusClient = Client(
     authentication_method=scopus_authentication_method,
