@@ -239,6 +239,28 @@ class AuthorProcessor:
                 sciper_id = self._query_dspace_authority(orcid_id)
                 if sciper_id:
                     return sciper_id
+            # Add the condition for 'source' == 'scopus' and 'internal_author_id' exists and is not null
+            if (
+                "source" in row
+                and row["source"] == "scopus"
+                and "internal_author_id" in row
+                and pd.notna(row.get("internal_author_id"))
+            ):
+                sciper_id = self._query_dspace_authority(f"person.identifier.scopus-author-id:({row['internal_author_id']})")
+                if sciper_id:
+                    return sciper_id
+            # Add the condition for 'source' == 'wos' and 'internal_author_id' exists and is not null
+            if (
+                "source" in row
+                and row["source"] == "wos"
+                and "internal_author_id" in row
+                and pd.notna(row.get("internal_author_id"))
+            ):
+                sciper_id = self._query_dspace_authority(
+                    f"person.identifier.rid:({row['internal_author_id']})"
+                )
+                if sciper_id:
+                    return sciper_id
 
             # Attempt to retrieve author info from DSpace by name
             # Construct the query from the 'author_cleaned' column
@@ -307,7 +329,7 @@ class AuthorProcessor:
                             prioritized_unit = (unit_id, unit_name)
 
                         if unit_type in unit_types:
-                            allowed_units.append((unit_id, unit_name, unit_type))
+                            allowed_units.append((unit_id, unit_name, unit_type, unit_order))
 
                         if unit_order == 1 and not fallback_unit:
                             fallback_unit = (unit_id, unit_name)
@@ -318,12 +340,9 @@ class AuthorProcessor:
                         return prioritized_unit
 
                     if allowed_units:
-                        # Sort allowed units by the priority in unit_types
-                        allowed_units.sort(key=lambda x: unit_types.index(x[2]))
-                        self.logger.debug(
-                            f"Main unit retrieved: {allowed_units[0][:2]}"
-                        )
-
+                        # Sort allowed units by unit_order (ascending)
+                        allowed_units.sort(key=lambda x: x[3])
+                        self.logger.debug(f"Main unit retrieved: {allowed_units[0][:2]}")
                         return allowed_units[0][:2]  # Return (unit_id, unit_name)
 
                     if fallback_unit:
@@ -384,6 +403,28 @@ class AuthorProcessor:
 
             if "author" in row and pd.notna(row.get("author")):
                 queries.append(f"itemauthoritylookup:\"{row['author'].replace(',', '')}\"")
+
+            # Add the condition for 'source' == 'scopus' and 'internal_author_id' exists and is not null
+            if (
+                "source" in row
+                and row["source"] == "scopus"
+                and "internal_author_id" in row
+                and pd.notna(row.get("internal_author_id"))
+            ):
+                queries.append(
+                    f"person.identifier.scopus-author-id:({row['internal_author_id']})"
+                )
+
+                # Add the condition for 'source' == 'scopus' and 'internal_author_id' exists and is not null
+            if (
+                "source" in row
+                and row["source"] == "wos"
+                and "internal_author_id" in row
+                and pd.notna(row.get("internal_author_id"))
+            ):
+                queries.append(
+                    f"person.identifier.rid:({row['internal_author_id']})"
+                )
 
             # Iterate through each query and execute if valid
             for query in queries:
