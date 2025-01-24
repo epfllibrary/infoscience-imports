@@ -57,10 +57,24 @@ class Loader:
                 "confidence": confidence,
             }
 
+
         def get_first_split(
             value, delimiter="|", default="#PLACEHOLDER_PARENT_METADATA_VALUE#"
         ):
-            return value.split(delimiter, 1)[-1].strip() if pd.notna(value) else default
+            """
+            Extracts the first part after the delimiter in the given string.
+            If a prefix consisting of digits followed by ':' is present, returns the part after ':'.
+            If no valid prefix is present, returns the first part as is.
+            Returns the default value if the string is NaN or empty.
+            """
+            if pd.notna(value) and value.strip():
+                first_part = value.split(delimiter, 1)[0].strip()
+                # Check if the prefix consists of digits followed by ':'
+                if re.match(r"^\d+:", first_part):
+                    return first_part.split(":", 1)[-1].strip()
+                return first_part
+            else:
+                return default
 
         authors_metadata = []
         affiliations_metadata = []
@@ -73,7 +87,7 @@ class Loader:
 
             orcid_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
-            affiliation_name = get_first_split(author_row.get("organizations", ""), ":")
+            affiliation_name = get_first_split(author_row.get("organizations", ""))
             affiliations_metadata.append(create_metadata(affiliation_name))
 
             # orgunit_name = get_first_split(author_row.get("suborganization", ""))
