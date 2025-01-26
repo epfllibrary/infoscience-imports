@@ -104,10 +104,11 @@ class DSpaceClientWrapper:
         # Check the researchoutput configuration
         dsos_researchoutputs = self._search_objects(
             query=final_query,
+            filters={'f.entityType': 'Publication,equals'},
             page=0,
             size=1,
             dso_type="item",
-            configuration="researchoutputs",
+            configuration="administrativeView",
         )
         num_items_researchoutputs = len(dsos_researchoutputs)
 
