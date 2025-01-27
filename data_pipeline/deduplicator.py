@@ -59,7 +59,6 @@ class DataFrameProcessor:
 
         # Return a tuple of both IDs
         return doi_id, title_pubyear_id
-    
 
     def deduplicate_dataframes(self):
         """
@@ -169,6 +168,7 @@ class DataFrameProcessor:
                 new_row = {
                     "row_id": row_id,
                     "source": source,
+                    "role": author_data.get("role", None),
                     "author": author_data.get("author", None),
                     "orcid_id": author_data.get("orcid_id", None),
                     "internal_author_id": author_data.get("internal_author_id", None),
