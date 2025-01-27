@@ -8,6 +8,7 @@ from apiclient import (
     exceptions,
 )
 import os
+import re
 import tenacity
 from datetime import datetime
 from apiclient.retrying import retry_if_api_request_error
@@ -255,6 +256,7 @@ class Client(APIClient):
             "pmid": self._extract_pmid(x),
             "artno": self._extract_artno(x),
             "corporateAuthor": self._extract_corporate_authors(x),
+            "keywords": self._extract_keywords(x),
         }
         return record
 
@@ -287,6 +289,60 @@ class Client(APIClient):
         rec["conference_info"] = self._extract_conference_info(x)
         rec["fundings_info"] = self._extract_funding_info(x)
         return rec
+
+    def _extract_ifs3_record_info(self, x):
+        """
+        Returns
+        A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors, conference_info, fundings_info
+        """
+
+        rec = self._extract_ifs3_digest_record_info(x)
+        rec["abstract"] = self._extract_abstract(x)
+        authors = self._extract_ifs3_authors(x)
+        rec["authors"] = authors
+        # Conference metadata as a single field
+        rec["conference_info"] = self._extract_conference_info(x)
+        rec["fundings_info"] = self._extract_funding_info(x)
+        return rec
+
+    def _extract_keywords(self, x):
+        """
+        Extract keywords from a publication's JSON data.
+
+        Parameters:
+            x (dict): The JSON data of the publication containing the keywords attribute.
+
+        Returns:
+            str: A string of keywords separated by '||' (empty if no keywords are present).
+        """
+        try:
+            # Navigate to the keywords in the dictionary
+            keywords_data = (
+                x.get("static_data", {})
+                .get("fullrecord_metadata", {})
+                .get("keywords", {})
+                .get("keyword", [])
+            )
+
+            # If keywords_data is a list, join them into a single string separated by '||'
+            if isinstance(keywords_data, list):
+                return "||".join(
+                    keyword.strip()
+                    for keyword in keywords_data
+                    if isinstance(keyword, str)
+                )
+
+            # If keywords_data is a single string (rare case), return it directly
+            elif isinstance(keywords_data, str):
+                return keywords_data.strip()
+
+            # Return an empty string if no valid keywords are found
+            return ""
+
+        except Exception as e:
+            # Log any error to assist debugging
+            self.logger.error(f"Error extracting keywords: {e}")
+            return ""
 
     def _extract_abstract(self, x):
         """
@@ -436,6 +492,9 @@ class Client(APIClient):
         elif not isinstance(fundings_data, list):
             return ""  # If 'grant' is neither a dict nor a list, return empty string
 
+        # Regex to detect DOI-like patterns
+        doi_pattern = re.compile(r"http://dx\.doi\.org/\d+\.\d+/[0-9a-zA-Z]+")
+
         # List to store formatted funding information
         funding_infos = []
 
@@ -454,6 +513,10 @@ class Client(APIClient):
                     None,
                 )
             agency_name = preferred_agency or funding.get("grant_agency", "")
+
+            # Remove any DOI from the agency name
+            if agency_name:
+                agency_name = doi_pattern.sub("", agency_name).strip()
 
             # Extract grant ID(s)
             grant_ids = funding.get("grant_ids", {})
@@ -706,7 +769,7 @@ class Client(APIClient):
         full_title_words = full_title.split()
         abbrev_iso_words = abbrev_iso.split()
 
-        # Create a set of words in uppercase from the ISO abbreviation 
+        # Create a set of words in uppercase from the ISO abbreviation
         uppercase_words = {word for word in abbrev_iso_words if word.isupper()}
 
         # Build the resulting title, preserving uppercase for acronyms and title case otherwise
@@ -895,33 +958,7 @@ class Client(APIClient):
                 address_entries = [address_entries]
 
             # Map addr_no to affiliations for easy lookup
-            addr_to_affiliation = {}
-            for address_entry in address_entries:
-                addr_no = address_entry.get("address_spec", {}).get("addr_no")
-                organizations = (
-                    address_entry.get("address_spec", {})
-                    .get("organizations", {})
-                    .get("organization", [])
-                )
-                suborganization = (
-                    address_entry.get("address_spec", {})
-                    .get("suborganizations", {})
-                    .get("suborganization")
-                )
-
-                if isinstance(organizations, dict):
-                    organizations = [organizations]
-                if isinstance(suborganization, list):
-                    suborganization = "|".join(suborganization)
-
-                organizations_str = "|".join(
-                    [org.get("content", "") for org in organizations]
-                )
-
-                addr_to_affiliation[addr_no] = {
-                    "organizations": organizations_str,
-                    "suborganization": suborganization,
-                }
+            addr_to_affiliation = self._map_affiliations(address_entries)
 
             # Process each author and link affiliations using addr_no
             for author in names:
@@ -935,15 +972,32 @@ class Client(APIClient):
                     author_name = preferred_name or full_name or display_name
 
                     if not author_name:
-                        self.logger.warning(f"Skipping author due to missing name.")
+                        self.logger.warning("Skipping author due to missing name.")
                         continue
 
                     # Extract seq_no, addr_no, and other details
                     seq_no = int(author.get("seq_no", 0))  # Ensure seq_no is an integer
                     addr_no = author.get("addr_no")
-                    affiliation = addr_to_affiliation.get(
-                        addr_no, {"organizations": None, "suborganization": None}
-                    )
+
+                    # Handle cases where addr_no is an integer or a space-separated string
+                    affiliations = []
+                    if addr_no:
+                        if isinstance(addr_no, str):
+                            addr_no_list = [int(addr.strip()) for addr in addr_no.split() if addr.strip().isdigit()]
+                        elif isinstance(addr_no, int):
+                            addr_no_list = [addr_no]
+                        else:
+                            addr_no_list = []
+
+                        for addr in addr_no_list:
+                            affiliation = addr_to_affiliation.get(
+                                addr, {"organizations": None, "suborganization": None}
+                            )
+                            affiliations.append(affiliation)
+
+                    # Combine all organizations and suborganizations into single text values separated by |
+                    organizations = "|".join({aff["organizations"] for aff in affiliations if aff["organizations"]})
+                    suborganizations = "|".join({aff["suborganization"] for aff in affiliations if aff["suborganization"]})
 
                     # Build author info
                     author_info = {
@@ -953,8 +1007,10 @@ class Client(APIClient):
                             author.get("data-item-ids", {}).get("data-item-id", None)
                         ),
                         "orcid_id": author.get("orcid_id"),
-                        "organizations": affiliation["organizations"],
-                        "suborganization": affiliation["suborganization"],
+                        "organizations": organizations if organizations else None,
+                        "suborganization": (
+                            suborganizations if suborganizations else None
+                        ),
                         "role": author.get("role"),
                     }
 
@@ -972,6 +1028,44 @@ class Client(APIClient):
             self.logger.error(f"Error processing record: {error_message}")
 
         return authors
+
+    def _map_affiliations(self, address_entries):
+        addr_to_affiliation = {}
+        for address_entry in address_entries:
+            addr_no = address_entry.get("address_spec", {}).get("addr_no")
+            organizations = (
+                address_entry.get("address_spec", {})
+                .get("organizations", {})
+                .get("organization", [])
+            )
+            suborganization = (
+                address_entry.get("address_spec", {})
+                .get("suborganizations", {})
+                .get("suborganization")
+            )
+
+            if isinstance(organizations, dict):
+                organizations = [organizations]
+
+            preferred_organizations = [
+                org.get("content", "") for org in organizations if org.get("pref") == "Y"
+            ]
+
+            if preferred_organizations:
+                organizations_to_keep = preferred_organizations
+            else:
+                organizations_to_keep = [org.get("content", "") for org in organizations]
+
+            organizations_str = "|".join(organizations_to_keep)
+
+            if isinstance(suborganization, list):
+                suborganization = "|".join(suborganization)
+
+            addr_to_affiliation[addr_no] = {
+                "organizations": organizations_str or None,
+                "suborganization": suborganization or None,
+            }
+        return addr_to_affiliation
 
     def _get_internal_author_id(self, data_item_id):
         """
