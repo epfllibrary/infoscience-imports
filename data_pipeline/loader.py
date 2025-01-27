@@ -57,7 +57,6 @@ class Loader:
                 "confidence": confidence,
             }
 
-
         def get_first_split(
             value, delimiter="|", default="#PLACEHOLDER_PARENT_METADATA_VALUE#"
         ):
@@ -567,6 +566,15 @@ class Loader:
                 False,
             ),
             (
+                f"/sections/{form_section}details/dc.subject",
+                [
+                    build_value(keyword)
+                    for keyword in str(row.get("keywords", "")).split("||")
+                    if keyword.strip()
+                ],
+                True,
+            ),
+            (
                 "/sections/journalcontainer_details/dc.relation.journal",
                 [build_value(row.get("journalTitle"))],
                 False,
@@ -651,7 +659,11 @@ class Loader:
             ),
             (
                 f"/sections/{form_section}details/dc.contributor",
-                [build_value(row.get("corporateAuthor"))],
+                [
+                    build_value(corp)
+                    for corp in str(row.get("corporateAuthor", "")).split("||")
+                    if corp.strip()
+                ],
                 True,
             ),
             (
