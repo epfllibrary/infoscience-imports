@@ -14,6 +14,7 @@ from collections import defaultdict
 import ast
 import os
 import time
+import re
 import pycountry
 from dotenv import load_dotenv
 from utils import manage_logger
@@ -26,7 +27,9 @@ load_dotenv(os.path.join(os.getcwd(), ".env"))
 scopus_api_key = os.environ.get("SCOPUS_API_KEY")
 scopus_inst_token = os.environ.get("SCOPUS_INST_TOKEN")
 
-accepted_doctypes = [key for key in mappings.doctypes_mapping_dict["source_scopus"].keys()]
+accepted_doctypes = [
+    key for key in mappings.doctypes_mapping_dict["source_scopus"].keys()
+]
 
 scopus_authentication_method = HeaderAuthentication(
     token=scopus_api_key,
@@ -76,7 +79,7 @@ class Client(APIClient):
         return self.get(Endpoint.search, params=self.params)
 
     @retry_request
-    def count_results(self, **param_kwargs)-> int:
+    def count_results(self, **param_kwargs) -> int:
         """
         Base request example
         https://api.elsevier.com/content/search/scopus?query=all(gene)&count=1&start=1&field=dc:identifier
@@ -93,20 +96,22 @@ class Client(APIClient):
         Returns
         The number of records found for the request
         """
-        param_kwargs.setdefault('count', 1)
-        param_kwargs.setdefault('start', 0)
-        param_kwargs.setdefault('field', "dc:identifier") #to get minimal records
+        param_kwargs.setdefault("count", 1)
+        param_kwargs.setdefault("start", 0)
+        param_kwargs.setdefault("field", "dc:identifier")  # to get minimal records
         self.params = {**param_kwargs}
-        return self.search_query(**self.params)["search-results"]["opensearch:totalResults"]
+        return self.search_query(**self.params)["search-results"][
+            "opensearch:totalResults"
+        ]
 
     @retry_decorator
     def fetch_ids(self, **param_kwargs) -> List[str]:
         """
         Fetches SCOPUS IDs based on the query parameters, handling cases with no or single results.
         """
-        param_kwargs.setdefault('count', 10)
-        param_kwargs.setdefault('start', 0)
-        param_kwargs.setdefault('field', "dc:identifier")  # Minimal records
+        param_kwargs.setdefault("count", 10)
+        param_kwargs.setdefault("start", 0)
+        param_kwargs.setdefault("field", "dc:identifier")  # Minimal records
 
         self.params = {**param_kwargs}
         response = self.search_query(**self.params)
@@ -160,7 +165,7 @@ class Client(APIClient):
             return None
 
     @retry_decorator
-    def fetch_record_by_unique_id(self, scopus_id, format="digest"):
+    def fetch_record_by_unique_id(self, unique_id: str, format="digest"):
         """
         Base request example
         https://api.elsevier.com/content/abstract/scopus_id/SCOPUS_ID:85145343484
@@ -174,16 +179,29 @@ class Client(APIClient):
             ScopusClient.fetch_record_by_unique_id("SCOPUS_ID:85200150104", format="ifs3")
         """
         try:
-            headers = {"Accept": "application/json"}
-            result = self.get(
-                Endpoint.scopusId.format(scopusId=scopus_id),
-                headers=headers
-            )
+            # Check if unique_id is empty or None, return immediately if true
+            if not unique_id:
+                self.logger.warning(
+                    "No valid unique_id provided. Aborting the request."
+                )
+                return None
+
+            if unique_id.lower().startswith("10.") and unique_id.count("/") > 0:
+                # It's a DOI, use the DOI-based endpoint
+                url = Endpoint.doi.format(doi=unique_id)
+            else:
+                # It's a Scopus ID, use the Scopus ID-based endpoint
+                url = Endpoint.scopusId.format(scopusId=unique_id)
+
+            # Fetch the record using the correct URL
+            result = self.get(url, headers={"Accept": "application/json"})
+
             item = result.get("abstracts-retrieval-response", {})
+
             return self._process_record(item, format)
 
         except Exception as e:
-            self.logger.error(f"Error fetching record by unique ID {scopus_id}: {e}")
+            self.logger.debug(f"Error fetching record by unique ID {unique_id}: {e}")
             return None
 
     def _process_record(self, record, format):
@@ -193,6 +211,8 @@ class Client(APIClient):
             return self._extract_ifs3_digest_record_info(record)
         elif format == "ifs3":
             return self._extract_ifs3_record_info(record)
+        elif format == "affiliations":
+            return self._extract_only_affiliations(record)
         elif format == "scopus":
             return record
 
@@ -437,7 +457,6 @@ class Client(APIClient):
         -------
         str : A single string containing normalized ISSNs separated by commas.
         """
-        import re
 
         if not issn_field:
             return ""
@@ -470,7 +489,10 @@ class Client(APIClient):
         """
         try:
             abstract_text = (
-                x.get("item", {}).get("bibrecord", {}).get("head", {}).get("abstracts", "")
+                x.get("item", {})
+                .get("bibrecord", {})
+                .get("head", {})
+                .get("abstracts", "")
             )
             coredata = x.get("coredata", {})
             copyright_statement = coredata.get("publishercopyright", "")
@@ -533,7 +555,9 @@ class Client(APIClient):
                 contributor = contributor_entry.get("contributor")
 
                 if isinstance(contributor, list):
-                    editors.extend(filter(None, (extract_names(c) for c in contributor)))
+                    editors.extend(
+                        filter(None, (extract_names(c) for c in contributor))
+                    )
                 elif isinstance(contributor, dict):
                     name = extract_names(contributor)
                     if name:
@@ -561,7 +585,9 @@ class Client(APIClient):
                 author_groups = [author_groups]
 
             if not isinstance(author_groups, list):
-                self.logger.warning("Invalid format for 'author-group' in bibrecord data.")
+                self.logger.warning(
+                    "Invalid format for 'author-group' in bibrecord data."
+                )
                 return orcid_map
 
             for author_group in author_groups:
@@ -587,7 +613,9 @@ class Client(APIClient):
                     if auid and orcid:
                         orcid_map[auid] = orcid
                     elif auid:
-                        self.logger.debug(f"Missing ORCID for author with @auid: {auid}")
+                        self.logger.debug(
+                            f"Missing ORCID for author with @auid: {auid}"
+                        )
                     else:
                         self.logger.debug("Missing @auid for an author; skipping.")
 
@@ -625,7 +653,9 @@ class Client(APIClient):
                 return result
 
             # Ensure affiliations_data is always a list, even if it's a single dictionary
-            if isinstance(affiliations_data, dict):  # If affiliation is a single dictionary
+            if isinstance(
+                affiliations_data, dict
+            ):  # If affiliation is a single dictionary
                 affiliations_data = [affiliations_data]
 
             # Create a dictionary to map afid to their corresponding organization name and affiliation details
@@ -640,7 +670,9 @@ class Client(APIClient):
                 # Prioritize 'preferred-name' fields
                 preferred_name = author.get("preferred-name", {})
                 surname = preferred_name.get("ce:surname", author.get("ce:surname", ""))
-                given_name = preferred_name.get("ce:given-name", author.get("ce:given-name", ""))
+                given_name = preferred_name.get(
+                    "ce:given-name", author.get("ce:given-name", "")
+                )
                 name = f"{surname}, {given_name}".strip(", ")
                 self.logger.debug(f"Processing Author : {name}")
 
@@ -659,7 +691,9 @@ class Client(APIClient):
 
                 # Check if affiliation is either a dictionary or a list
                 affiliations = author.get("affiliation", [])
-                if isinstance(affiliations, dict):  # If affiliation is a single dictionary
+                if isinstance(
+                    affiliations, dict
+                ):  # If affiliation is a single dictionary
                     affiliations = [affiliations]
                 elif not isinstance(
                     affiliations, list
@@ -677,7 +711,9 @@ class Client(APIClient):
                 ]
 
                 if not organizations:
-                    self.logger.warning(f"No valid affiliations found for author '{name}'.")
+                    self.logger.warning(
+                        f"No valid affiliations found for author '{name}'."
+                    )
                     continue  # Skip this author if no valid affiliations are found
 
                 organizations_str = "|".join(organizations)
@@ -696,6 +732,50 @@ class Client(APIClient):
             self.logger.error(f"An error occurred during author extraction: {e}")
 
         return result
+
+    def _extract_only_affiliations(self, x):
+        """
+        Extracts a string of affiliations from a Scopus record, formatted as:
+        "affiliation_id:affiliation_name" separated by '|'.
+
+        Args:
+            record (dict): The Scopus record in JSON format.
+
+        Returns:
+            str: A string of affiliations formatted as "affiliation_id:affiliation_name", separated by '|'.
+        """
+        try:
+            # Extract the affiliations (which can be a single dict or a list of dicts)
+            affiliations_data = x.get("affiliation", [])
+
+            # If affiliations_data is a single dictionary, wrap it in a list for uniform processing
+            if isinstance(affiliations_data, dict):
+                affiliations_data = [affiliations_data]
+
+            if not affiliations_data:
+                self.logger.warning("No affiliation data found in the record.")
+                return ""
+
+            # Initialize a list to collect the formatted affiliation strings
+            affiliations_list = []
+
+            # Iterate through the affiliations and extract relevant information
+            for affiliation in affiliations_data:
+                # Extract the affiliation ID and affiliation name
+                affil_id = affiliation.get("@id", "").strip()
+                affil_name = affiliation.get("affilname", "").strip()
+
+                # Construct the affiliation string in the format "id:name"
+                if affil_id and affil_name:
+                    affiliation_str = f"{affil_id}:{affil_name}"
+                    affiliations_list.append(affiliation_str)
+
+            # Join the affiliations by '|' and return as a single string
+            return "||".join(affiliations_list)
+
+        except Exception as e:
+            self.logger.error(f"Error extracting affiliations from the record: {e}")
+            return ""
 
     def get_dc_type_info(self, x):
         """
@@ -784,7 +864,9 @@ class Client(APIClient):
             confnumber = confevent.get("confnumber", "")
             confseriestitle = confevent.get("confseriestitle", "")
             full_title = (
-                f"{confnumber} {confseriestitle}".strip() if confseriestitle else confname
+                f"{confnumber} {confseriestitle}".strip()
+                if confseriestitle
+                else confname
             )
 
             # Extract conference location
