@@ -16,7 +16,7 @@ from clients.unpaywall_client import UnpaywallClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
-from config import scopus_epfl_afids, unit_types
+from config import scopus_epfl_afids, unit_types #, excluded_unit_types
 from config import logs_dir
 
 
@@ -33,8 +33,8 @@ class AuthorProcessor:
 
     Methods:
         process(): Processes the DataFrame and enriches it with EPFL affiliation information.
-          _process_scopus(text): Processes the organization text for Scopus publications to check for EPFL affiliations.
-          _process_wos(text): Processes the organization text for WOS publications to check for EPFL affiliations.
+          process_scopus(text): Processes the organization text for Scopus publications to check for EPFL affiliations.
+          process_wos(text): Processes the organization text for WOS publications to check for EPFL affiliations.
     Usage
     processor = Processor(your_dataframe)
     processor.process().nameparse_authors().services_istex_orcid_reconciliation().orcid_data_reconciliation()
@@ -50,20 +50,20 @@ class AuthorProcessor:
         self.df = self.df.copy()
         for index, row in self.df.iterrows():
             if row['source'] == 'scopus':
-                self.df.at[index, 'epfl_affiliation'] = self._process_scopus(row['organizations'])
+                self.df.at[index, 'epfl_affiliation'] = self.process_scopus(row['organizations'])
             elif row['source'] == 'wos':
-                self.df.at[index, 'epfl_affiliation'] = self._process_wos(row['organizations'])
+                self.df.at[index, 'epfl_affiliation'] = self.process_wos(row['organizations'])
             elif row['source'] == 'openalex':
-                self.df.at[index, 'epfl_affiliation'] = self._process_openalex(row['organizations'])    
+                self.df.at[index, 'epfl_affiliation'] = self.process_openalex(row['organizations'])    
             elif row['source'] == 'zenodo':
-                self.df.at[index, 'epfl_affiliation'] = self._process_zenodo(row['organizations'])
+                self.df.at[index, 'epfl_affiliation'] = self.process_zenodo(row['organizations'])
             else:
                 # Default to False for unknown sources
                 self.logger.error(f"Unknown source: {row['source']}")
                 self.df.at[index, 'epfl_affiliation'] = False
         return self.df if return_df else self
 
-    def _process_scopus(self, text, check_all=False):
+    def process_scopus(self, text, check_all=False):
         """
         Checks if an EPFL affiliation is present in the 'organizations' field for Scopus.
 
@@ -89,19 +89,19 @@ class AuthorProcessor:
             # Check only the first value
             return any(value in values[0] for value in scopus_epfl_afids)
 
-    def _process_zenodo(self, text):
+    def process_zenodo(self, text):
         if not isinstance(text, str):
             return False
         pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
         return bool(re.search(pattern, text))
 
-    def _process_openalex(self, text):
+    def process_openalex(self, text):
         if not isinstance(text, str):
             return False
         pattern = r"(02s376052|EPFL|École Polytechnique Fédérale de Lausanne)"
         return bool(re.search(pattern, text, re.IGNORECASE))
 
-    def _process_wos(self, text):
+    def process_wos(self, text):
         keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
         if not isinstance(text, str):  # Vérifie que text est bien une chaîne
             return False
@@ -116,23 +116,6 @@ class AuthorProcessor:
         self.df = self.df[self.df['epfl_affiliation']]
         return self.df if return_df else self
 
-    # def clean_authors(self, return_df=False):
-    #     self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
-
-    #     # Function to clean author names
-    #     def clean_author(author):
-    #         author = author.lower()
-    #         author = author.translate(
-    #             str.maketrans(string.punctuation, " " * len(string.punctuation))
-    #         )
-    #         author = remove_accents(author)
-    #         author = author.encode("ascii", "ignore").decode("utf-8")
-    #         return author
-
-    #     # Apply the cleaning function to the 'authors' column
-    #     self.df["author_cleaned"] = self.df["author"].apply(clean_author)
-
-    #     return self.df if return_df else self
 
     def clean_authors(self, return_df=False):
         self.df = self.df.copy()
@@ -325,11 +308,15 @@ class AuthorProcessor:
                         unit_id = record.get('unit_id')
                         unit_name = record.get('unit_name')
 
+                        # if excluded_unit_types is not None and unit_type in excluded_unit_types:
+                        #     continue  # Skip if unit_type is in the excluded list
+
                         if unit_order == 1 and unit_type in unit_types and not prioritized_unit:
                             prioritized_unit = (unit_id, unit_name)
 
                         if unit_type in unit_types:
                             allowed_units.append((unit_id, unit_name, unit_type, unit_order))
+
 
                         if unit_order == 1 and not fallback_unit:
                             fallback_unit = (unit_id, unit_name)
