@@ -28,6 +28,11 @@ unit_types = [
     "Centre",
 ]
 
+# excluded_unit_types = [
+
+# ]
+
+
 # Scopus : EPFL labs internal IDs
 scopus_epfl_afids = [
     "60028186",

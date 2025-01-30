@@ -17,10 +17,10 @@ from collections import defaultdict
 import ast
 import traceback
 from dotenv import load_dotenv
-from utils import manage_logger
+from utils import manage_logger, normalize_title
 import mappings
-from utils import normalize_title
 from config import logs_dir
+from clients.scopus_client import ScopusClient
 
 wos_api_base_url = "https://api.clarivate.com/api/wos"
 # env var
@@ -232,10 +232,12 @@ class Client(APIClient):
         Returns
         A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear
         """
+        doi = self._extract_doi(x)
+
         record = {
             "source": "wos",
             "internal_id": x["UID"],
-            "doi": self._extract_doi(x),
+            "doi": doi,
             "title": self._extract_title(x),
             "doctype": self._extract_first_doctype(x),
             "pubyear": self._extract_pubyear(x),
@@ -257,6 +259,9 @@ class Client(APIClient):
             "artno": self._extract_artno(x),
             "corporateAuthor": self._extract_corporate_authors(x),
             "keywords": self._extract_keywords(x),
+            "affiliation_controlled": ScopusClient.fetch_record_by_unique_id(
+                doi, format="affiliations"
+            ),
         }
         return record
 
