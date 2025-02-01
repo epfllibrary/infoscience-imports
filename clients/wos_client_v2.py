@@ -233,24 +233,70 @@ class Client(APIClient):
         A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear
         """
         doi = self._extract_doi(x)
+        pub_info = x["static_data"]["summary"].get("pub_info", {})
+        aggregation_type = pub_info.get("pubtype", "").lower()
+
+        # Initialize separated fields for publicationName
+        journal_title = ""
+        series_title = ""
+        book_title = ""
+
+        # Initialize separated fields for ISSN, ISBN, and volume
+        journal_issn = ""
+        series_issn = ""
+        book_isbn = ""
+        journal_volume = ""
+        series_volume = ""
+        book_part = ""
+        book_publisher = ""
+        book_publisher_place = ""
+        editors = ""
+
+        if aggregation_type == "journal":
+            journal_title = self._extract_container_title(x)
+            journal_issn = self._extract_issns(x)
+            journal_volume = self._extract_volume(x)
+        elif aggregation_type in {"book"}:
+            book_isbn = self._extract_isbns(x)
+            book_publisher = self._extract_publisher(x)
+            book_publisher_place = self._extract_publisher_place(x)
+            book_title = self._extract_container_title(x)
+            editors = self._extract_editors(x)
+
+        elif aggregation_type == "book in series":
+            series_title = self._extract_container_series(x)
+            series_issn = self._extract_issns(x)
+            series_volume = self._extract_volume(x)
+            book_publisher = self._extract_publisher(x)
+            book_publisher_place = self._extract_publisher_place(x)
+
+            # Check for a book title in the `title` node
+            book_title_from_source = self._extract_container_title(x)
+            if book_title_from_source:
+                book_title = book_title_from_source
+                self.logger.debug(f"Found container title in source: {book_title}")
+                book_isbn = self._extract_isbns(x)
+                editors = self._extract_editors(x)
 
         record = {
             "source": "wos",
             "internal_id": x["UID"],
+            "issueDate": self._extract_publication_date(x),
             "doi": doi,
             "title": self._extract_title(x),
             "doctype": self._extract_first_doctype(x),
             "pubyear": self._extract_pubyear(x),
-            "publisher": "",
-            "journalTitle": self._extract_container_title(x),
-            "seriesTitle": "",
-            "bookTitle": "",
-            "editors": "",
-            "journalISSN": self._extract_issns(x),
-            "seriesISSN": "",
-            "bookISBN": "",
-            "journalVolume": self._extract_volume(x),
-            "seriesVolume": "",
+            "publisher": book_publisher,
+            "publisherPlace": book_publisher_place,
+            "journalTitle": journal_title,
+            "seriesTitle": series_title,
+            "bookTitle": book_title,
+            "editors": editors,
+            "journalISSN": journal_issn,
+            "seriesISSN": series_issn,
+            "bookISBN": book_isbn,
+            "journalVolume": journal_volume,
+            "seriesVolume": series_volume,
             "bookPart": "",
             "issue": self._extract_issue(x),
             "startingPage": self._extract_starting_page(x),
@@ -650,15 +696,8 @@ class Client(APIClient):
         pub_info = x["static_data"]["summary"].get("pub_info", {})
         return pub_info.get("pubyear") if not isinstance(pub_info.get("pubyear"), list) else None
 
-    def _extract_publication_date(self, x):
-        pub_info = x["static_data"]["summary"].get("pub_info", {})
-        return (
-            pub_info.get("sortdate")
-            if not isinstance(pub_info.get("sortdate"), list)
-            else None
-        )
 
-    def _extract_issue_date(self, x):
+    def _extract_publication_date(self, x):
         """
         Extracts the publication date (issueDate) in YYYY-MM-DD format if available.
         """
@@ -701,7 +740,7 @@ class Client(APIClient):
                     # Check for 'unified_name' first, then fallback to 'full_name'
                     publisher_name = name.get("unified_name") or name.get("full_name")
                     if publisher_name:
-                        publishers.append(publisher_name.strip().title())  # Convert to Title Case
+                        publishers.append(publisher_name.strip())  # Convert to Title Case
 
             if not publishers:
                 self.logger.debug("No publisher found.")
@@ -711,6 +750,32 @@ class Client(APIClient):
             return result
         except Exception as e:
             self.logger.error(f"Error extracting publisher: {e}")
+            return ""
+
+    def _extract_publisher_place(self, x):
+        """
+        Extracts the city associated with the publisher from the metadata.
+
+        Parameters:
+            x (dict): The JSON containing metadata.
+
+        Returns:
+            str: The city of the publisher, or an empty string if not found.
+        """
+        try:
+            publisher_data = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("publishers", {})
+                .get("publisher", {})
+            )
+
+            address_data = publisher_data.get("address_spec", {})
+            city = address_data.get("city", "")
+
+            return city.strip().title() if city else ""
+        except Exception as e:
+            self.logger.error(f"Error extracting publisher place: {e}")
             return ""
 
     def _extract_container_title(self, x):
@@ -755,6 +820,42 @@ class Client(APIClient):
         except Exception as e:
             # Log any unexpected errors with the input data for debugging purposes
             self.logger.error(f"Error extracting container title: {e}, input: {x}")
+            return ""
+
+    def _extract_container_series(self, x):
+        """
+        Extracts the journal title from the record and adjusts capitalization intelligently
+        using 'abbrev_iso' as a reference to preserve acronyms and proper formatting.
+
+        Args:
+            x (dict): JSON object containing metadata, including the journal titles.
+
+        Returns:
+            str: The formatted journal title, or an empty string if not found.
+        """
+        try:
+            # Extract the list of titles from the JSON object
+            titles = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("titles", {})
+                .get("title", [])
+            )
+
+            # Find the series title (type "series")
+            series_title = next(
+                (t.get("content", "") for t in titles if t.get("type") == "series"), ""
+            )
+
+            if not series_title:
+                # Return an empty string if the full title is not found
+                return ""
+
+            return series_title
+
+        except Exception as e:
+            # Log any unexpected errors with the input data for debugging purposes
+            self.logger.error(f"Error extracting series title: {e}, input: {x}")
             return ""
 
     def _apply_custom_title_case(self, full_title, abbrev_iso):
@@ -822,11 +923,33 @@ class Client(APIClient):
 
     def _extract_isbns(self, x):
         """
-        Extracts the ISBN for books.
+        Extracts all ISBN and eISBN values from the record.
+        Combines them into a single string separated by '||'.
+
+        Returns:
+            str: A string in the format "ISBN1||ISBN2||...||eISBN1||eISBN2...", or an empty string if none are found.
         """
         try:
-            return x["static_data"]["summary"]["pub_info"].get("isbn", "")
-        except Exception:
+            identifiers = (
+                x.get("dynamic_data", {})
+                .get("cluster_related", {})
+                .get("identifiers", {})
+                .get("identifier", [])
+            )
+
+            isbns = []
+            eisbns = []
+
+            for identifier in identifiers:
+                if identifier.get("type") == "isbn":
+                    isbns.append(identifier.get("value", ""))
+                elif identifier.get("type") == "eisbn":
+                    eisbns.append(identifier.get("value", ""))
+
+            # Combine ISBN and eISBN lists, separated by '||'
+            return "||".join(isbns + eisbns) if isbns or eisbns else ""
+        except Exception as e:
+            self.logger.debug(f"Error extracting ISBNs: {e}")
             return ""
 
     def _extract_volume(self, x):
@@ -925,6 +1048,44 @@ class Client(APIClient):
             return ""
         except Exception as e:
             self.logger.error(f"Error extracting Article Number: {e}")
+            return ""
+
+    def _extract_editors(self, x):
+        """
+        Extracts editors with the role `book_editor` and returns a string of names separated by `||`.
+
+        Parameters:
+            x (dict): The JSON containing metadata.
+
+        Returns:
+            str: A string of editor names, sorted by `seq_no` and separated by `||`.
+        """
+        editors = []
+        try:
+            # Extract contributors from static_data > summary > names
+            names = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("names", {})
+                .get("name", [])
+            )
+            if isinstance(names, dict):
+                names = [names]
+
+            # Filter only contributors with the role 'book_editor'
+            for contributor in names:
+                if contributor.get("role") == "book_editor":
+                    full_name = contributor.get("full_name")
+                    if full_name:
+                        seq_no = int(contributor.get("seq_no", 0))
+                        editors.append((seq_no, full_name))
+
+            # Sort editors by seq_no and concatenate them with '||'
+            editors = sorted(editors, key=lambda x: x[0])
+            return "||".join([editor[1] for editor in editors]) if editors else ""
+
+        except Exception as e:
+            self.logger.error(f"Error extracting editors: {e}")
             return ""
 
     def _extract_ifs3_authors(self, x):
