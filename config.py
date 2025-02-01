@@ -49,6 +49,7 @@ scopus_epfl_afids = [
     "60122563",
     "60210160",
     "60204331",
+    "126395205",
 ]
 
 # License conditions for Unpaywall
