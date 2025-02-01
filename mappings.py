@@ -6,10 +6,10 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::research article",
         },
-        # "Proceedings Paper": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings::conference paper",
-        # },
+        "Proceedings Paper": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
         # "Meeting Abstract": {
         #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
         #     "dc.type": "text::conference output::conference proceedings::conference paper",
@@ -22,14 +22,14 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::editorial",
         },
-        # "Book Chapter": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph::book part or chapter",
-        # },
-        # "Book": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph",
-        # },
+        "Book Chapter": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph::book part or chapter",
+        },
+        "Book": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph",
+        },
         # "Book Review": {
         #     "collection": "Books and Book parts",
         #     "dc.type": "text",
