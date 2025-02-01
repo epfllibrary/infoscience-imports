@@ -297,9 +297,10 @@ class Loader:
 
         def build_value(value, authority=None, language=None, confidence=-1, place=0):
             """Helper function to build a metadata value structure."""
-            if not isinstance(value, str) or not value.strip():
-                # logger.debug(f"Invalid value provided: {value}")
+            if value is None or (isinstance(value, str) and not value.strip()):
+                logger.debug(f"Invalid value provided: {value}")
                 return None
+
             return {
                 "value": value,
                 "language": language,
@@ -616,6 +617,11 @@ class Loader:
             (
                 "/sections/bookcontainer_details/dc.publisher",
                 [build_value(row.get("publisher"))],
+                False,
+            ),
+            (
+                "/sections/bookcontainer_details/dc.publisher.place",
+                [build_value(row.get("publisherPlace"))],
                 False,
             ),
             (
