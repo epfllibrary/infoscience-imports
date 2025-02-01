@@ -314,6 +314,7 @@ class Client(APIClient):
             "doctype": self._extract_first_doctype(x),
             "pubyear": coredata.get("prism:coverDate", "")[:4],
             "publisher": book_publisher,
+            "publisherPlace": "",
             "journalTitle": journal_title,
             "seriesTitle": series_title,
             "bookTitle": book_title,
