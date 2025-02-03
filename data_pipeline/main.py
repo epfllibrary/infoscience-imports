@@ -43,11 +43,10 @@ def main(start_date="2024-01-01", end_date="2025-01-01", queries=None):
     # Generate publications dataframe enriched with OA attributes
     publication_processor = PublicationProcessor(df_metadata)
     df_oa_metadata = publication_processor.process(return_df=True)
-    return df_oa_metadata, df_authors, df_epfl_authors, df_unloaded
-    # Create publications in Dspace
-    # Loader.create_complete_publication(df_metadata)
-    # Create or update person entities in Dspace
-    # Loader.manage_person(df_epfl_authors)
+    Loader(df_oa_metadata, df_epfl_authors)
+    df_loaded = Loader.create_complete_publication()
+
+    return df_oa_metadata, df_authors, df_epfl_authors, df_unloaded, df_loaded
 
 if __name__ == "__main__":
     main()
