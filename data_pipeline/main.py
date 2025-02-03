@@ -43,8 +43,8 @@ def main(start_date="2024-01-01", end_date="2025-01-01", queries=None):
     # Generate publications dataframe enriched with OA attributes
     publication_processor = PublicationProcessor(df_metadata)
     df_oa_metadata = publication_processor.process(return_df=True)
-    Loader(df_oa_metadata, df_epfl_authors, df_authors)
-    df_loaded = Loader.create_complete_publication()
+    loader_instance = Loader(df_oa_metadata, df_epfl_authors, df_authors)
+    df_loaded = loader_instance.create_complete_publication()
 
     return df_oa_metadata, df_authors, df_epfl_authors, df_unloaded, df_loaded
 
