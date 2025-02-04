@@ -331,6 +331,7 @@ class Client(APIClient):
             "pmid": coredata.get("pubmed-id", ""),
             "artno": coredata.get("article-number", ""),
             "corporateAuthor": collaboration_text,
+            "keywords": self._extract_keywords(x),
         }
 
     def _extract_ifs3_digest_record_info(self, x):
@@ -361,6 +362,45 @@ class Client(APIClient):
         rec["fundings_info"] = self._extract_funding_info(x)
 
         return rec
+
+    def _extract_keywords(self, x):
+        """
+        Extract keywords from the Scopus JSON response.
+
+        Parameters:
+            x (dict): The JSON data of the publication, typically from the
+                    'abstracts-retrieval-response' node.
+
+        Returns:
+            str: A string of keywords separated by '||', or an empty string if no keywords are found.
+        """
+        try:
+            # Access the 'authkeywords' node from the JSON data
+            authkeywords = x.get("authkeywords", {})
+            if not authkeywords:
+                return ""
+
+            # Retrieve the content under the 'author-keyword' key
+            keywords_data = authkeywords.get("author-keyword", [])
+
+            # If multiple keywords are present (list of dictionaries), extract and join them
+            if isinstance(keywords_data, list):
+                keywords_list = [
+                    keyword.get("$", "").strip()
+                    for keyword in keywords_data
+                    if "$" in keyword and keyword.get("$").strip()
+                ]
+                return "||".join(keywords_list)
+
+            # In the rare case that keywords_data is a single dictionary, extract the keyword
+            elif isinstance(keywords_data, dict):
+                return keywords_data.get("$", "").strip()
+
+            # Return an empty string if no valid keywords are found
+            return ""
+        except Exception as e:
+            self.logger.error(f"Error extracting keywords: {e}")
+            return ""
 
     def _extract_publication_date(self, x):
         """
@@ -414,36 +454,50 @@ class Client(APIClient):
             self.logger.error(f"Error extracting publicationDate: {e}")
             return ""
 
-    def _extract_all_isbns(self, isbn_field):
+    def _extract_keywords(self, x):
         """
-        Extract all ISBN values from the provided field, separated by '||'.
+        Extract keywords from the Scopus JSON response.
 
-        Parameters
-        ----------
-        isbn_field : str or list
-            The raw ISBN field from the Scopus API response, which may contain a single value or a list of dictionaries.
+        Parameters:
+            x (dict): The JSON data of the publication, typically from the
+                    'abstracts-retrieval-response' node.
 
-        Returns
-        -------
-        str : All ISBN values found, separated by '||', or an empty string if none are valid.
+        Returns:
+            str: A string of keywords separated by '||', or an empty string if no keywords are found.
         """
-        if not isbn_field:
+        try:
+            # Access the 'authkeywords' node from the JSON data
+            authkeywords = x.get("authkeywords", {})
+            if not authkeywords:
+                return ""
+
+            # Retrieve the content under the 'author-keyword' key
+            keywords_data = authkeywords.get("author-keyword", [])
+
+            # If keywords_data is a list, extract and join the keywords
+            if isinstance(keywords_data, list):
+                keywords_list = [
+                    keyword.get("$", "").strip()
+                    for keyword in keywords_data
+                    if isinstance(keyword, dict)
+                    and "$" in keyword
+                    and keyword.get("$").strip()
+                ]
+                return "||".join(keywords_list)
+
+            # If keywords_data is a dictionary, extract the keyword
+            elif isinstance(keywords_data, dict):
+                return keywords_data.get("$", "").strip()
+
+            # If keywords_data is a string, return it directly after stripping whitespace
+            elif isinstance(keywords_data, str):
+                return keywords_data.strip()
+
+            # Return an empty string if no valid keywords are found
             return ""
-
-        isbns = []
-
-        if isinstance(isbn_field, list):
-            for item in isbn_field:
-                if isinstance(item, dict) and "$" in item:
-                    isbns.append(item["$"])
-        elif isinstance(isbn_field, str):
-            isbns.append(isbn_field)
-
-        if isbns:
-            return "||".join(isbns)
-
-        self.logger.warning("No valid ISBN format encountered.")
-        return ""
+        except Exception as e:
+            self.logger.error(f"Error extracting keywords: {e}")
+            return ""
 
     def _normalize_issn(self, issn_field):
         """
