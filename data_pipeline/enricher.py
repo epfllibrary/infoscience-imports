@@ -50,7 +50,7 @@ class AuthorProcessor:
         self.df = self.df.copy()
         for index, row in self.df.iterrows():
             if row['source'] == 'scopus':
-                self.df.at[index, 'epfl_affiliation'] = self.process_scopus(row['organizations'])
+                self.df.at[index, 'epfl_affiliation'] = self.process_scopus(row['organizations'], check_all=True)
             elif row['source'] == 'wos':
                 self.df.at[index, 'epfl_affiliation'] = self.process_wos(row['organizations'])
             elif row['source'] == 'openalex':
