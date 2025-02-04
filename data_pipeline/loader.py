@@ -543,6 +543,10 @@ class Loader:
 
         metadata_definitions = []
 
+        journal_issn = str(row.get("journalISSN", ""))
+        issn_list = [issn.strip() for issn in journal_issn.split("||") if issn.strip()]
+        authority_journal = f"will be generated::ISSN::{issn_list[0]}" if issn_list else None
+
         fields = [
             (
                 f"/sections/{type_section}/dc.type",
@@ -577,7 +581,13 @@ class Loader:
             ),
             (
                 "/sections/journalcontainer_details/dc.relation.journal",
-                [build_value(row.get("journalTitle"))],
+                [
+                    build_value(
+                        row.get("journalTitle"),
+                        authority=authority_journal,
+                        confidence=500,
+                    )
+                ],
                 False,
             ),
             (
