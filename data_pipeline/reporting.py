@@ -1,6 +1,8 @@
 import pandas as pd
 import os
+import smtplib
 import datetime
+from email.message import EmailMessage
 
 
 class GenerateReports:
@@ -11,7 +13,9 @@ class GenerateReports:
         self.df_epfl_authors = df_epfl_authors.copy()
         self.df_loaded = df_loaded.copy()
         # Ensure 'upw_is_oa' column is boolean, replacing NaN with False
-        self.df["upw_is_oa"] = self.df["upw_is_oa"].fillna(False).astype(bool)
+        self.df["upw_is_oa"] = (
+            self.df["upw_is_oa"].fillna(False).infer_objects(copy=False).astype(bool)
+        )
 
     def total_publications_found(self):
         """Return the total number of unique publications found."""
@@ -24,8 +28,8 @@ class GenerateReports:
     def publications_by_collection(self):
         """Return the number of publications grouped by collection."""
         return (
-            self.df.groupby("ifs3_collection").size().reset_index(name="count"),
-            self.df,
+            self.df.groupby("dc.type").size().reset_index(name="count"),
+            self.df.groupby("dc.type").size().reset_index(name="count"),
         )
 
     def open_access_publications(self):
@@ -79,6 +83,13 @@ class GenerateReports:
         df_workflow = self.df_loaded[self.df_loaded["workflow_id"].notna()]
         return df_workflow.shape[0], df_workflow
 
+    def imported_publications_by_journal(self):
+        """Return the number of imported publications grouped by journal title."""
+        df_workflow = self.df_loaded[self.df_loaded["workflow_id"].notna()]
+        return df_workflow.groupby("journalTitle").size().reset_index(
+            name="count"
+        ), df_workflow.groupby("journalTitle").size().reset_index(name="count")
+
     def failed_imports(self):
         """Return the number of publications where import failed and list affected items."""
         df_failed = self.df_loaded[
@@ -117,20 +128,61 @@ class GenerateReports:
 
         return output_path
 
+    def send_report_by_email(
+        self,
+        recipient_email,
+        sender_email,
+        smtp_server,
+        import_start_date,
+        import_end_date,
+        file_path=None,
+    ):
+        """Send the generated Excel report via email without authentication."""
+        if file_path is None:
+            file_path = self.generate_excel_report()
+
+        msg = EmailMessage()
+        msg["Subject"] = "Infoscience Import Report"
+        msg["From"] = sender_email
+        msg["To"] = recipient_email
+        msg.set_content(
+            f"Please find attached the latest Infoscience Import Report for the date interval from  {import_start_date} to {import_end_date}."
+        )
+
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+            file_name = os.path.basename(file_path)
+
+        msg.add_attachment(
+            file_data,
+            maintype="application",
+            subtype="octet-stream",
+            filename=file_name,
+        )
+
+        with smtplib.SMTP(smtp_server) as server:
+            server.send_message(msg)
+            server.quit()
+
+        print(
+            f"Email sent successfully to {recipient_email} with attachment {file_name}."
+        )
+
     def generate_report(self):
         """Generate a consolidated report with the required indicators and corresponding data rows."""
         return {
-            "Total Publications Found": self.total_publications_found(),
+            "Publications harvested": self.total_publications_found(),
             "Publications by Source": self.publications_by_source(),
-            "Publications by Collection": self.publications_by_collection(),
-            "Open Access Publications": self.open_access_publications(),
-            "Open Access with PDF": self.open_access_with_pdf(),
-            "Duplicated Publications": self.duplicated_publications_count(),
-            "EPFL Affiliated Publications": self.epfl_affiliated_publications(),
-            "EPFL Reconciled Authors": self.epfl_reconciled_authors(),
-            "EPFL Authors with Unit": self.epfl_reconciled_authors_with_unit(),
+            "Publications by Type": self.publications_by_collection(),
+            "Rejected Duplicated": self.duplicated_publications_count(),
+            "Rejected Not Reconciliated": self.excluded_publications_count(),
             "Imported in Workspace": self.imported_publications_workspace(),
             "Imported in Workflow": self.imported_publications_workflow(),
+            "Imported by Journal": self.imported_publications_by_journal(),
+            "Open Access Publications": self.open_access_publications(),
+            "Open Access with PDF": self.open_access_with_pdf(),
+            "EPFL Affiliated Authors": self.epfl_affiliated_publications(),
+            "EPFL Reconciled Authors": self.epfl_reconciled_authors(),
+            "EPFL Authors with Unit": self.epfl_reconciled_authors_with_unit(),
             "Failed Imports": self.failed_imports(),
-            "Rejected Publications": self.excluded_publications_count(),
         }
