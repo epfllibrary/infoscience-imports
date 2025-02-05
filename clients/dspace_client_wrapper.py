@@ -1,5 +1,6 @@
+import os
+import re
 from dspace.dspace_rest_client.client import DSpaceClient
-import os, re
 from dotenv import load_dotenv
 from utils import manage_logger
 from config import logs_dir
@@ -10,6 +11,7 @@ ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 
 
 class DSpaceClientWrapper:
+    """Wrapper for Dspace client"""
     def __init__(self):
         log_file_path = os.path.join(logs_dir, "dspace_client.log")
         self.logger = manage_logger(log_file_path)
@@ -17,7 +19,8 @@ class DSpaceClientWrapper:
         self.client = DSpaceClient()
 
         authenticated = self.client.authenticate()
-        self.logger.info(f"Authentication status {authenticated}.")
+        if authenticated is not True:
+            self.logger.info("DSpace API Authentication failed.")
 
     def _get_item(self, uuid):
         return self.client.get_item(uuid)
@@ -84,7 +87,7 @@ class DSpaceClientWrapper:
             query_parts.append(f'(itemidentifier_keyword:"{item_id}")')
 
         query_parts.append(
-            f"(title:({cleaned_title}) AND (dateIssued:{pubyear} OR dateIssued:{previous_year} OR dateIssued:{next_year}))"
+            f"(title:({cleaned_title}) AND (dateIssued.year:{pubyear} OR dateIssued.year:{previous_year} OR dateIssued.year:{next_year}))"
         )
 
         if "doi" in x and x["doi"] not in ["", None]:
@@ -101,10 +104,11 @@ class DSpaceClientWrapper:
         # Check the researchoutput configuration
         dsos_researchoutputs = self._search_objects(
             query=final_query,
+            filters={'f.entityType': 'Publication,equals'},
             page=0,
             size=1,
             dso_type="item",
-            configuration="researchoutputs",
+            configuration="administrativeView",
         )
         num_items_researchoutputs = len(dsos_researchoutputs)
 
@@ -145,23 +149,35 @@ class DSpaceClientWrapper:
         num_items_persons = len(dsos_persons)
         if num_items_persons == 1:
             self.logger.debug(
-                f"Single record found for {query} in DspaceCris. Processing record."
+                "Single record found for %s in DspaceCris. Processing record.", query
             )
-            # return {
-            #    "uuid": dsos_persons[0].uuid,
-            #    "name": dsos_persons[0].metadata.get("dc.title")[0]["value"]
-            # }
-            return dsos_persons[0].uuid
+            sciper_metadata = dsos_persons[0].metadata.get("epfl.sciperId")
+            sciper_id = (
+                sciper_metadata[0]["value"] if sciper_metadata and len(sciper_metadata) > 0 else ""
+            )
+            affiliation_metadata = dsos_persons[0].metadata.get("person.affiliation.name", "")
+
+            self.logger.debug("affiliation_metadata: %s", affiliation_metadata)
+
+            main_affiliation = (
+                affiliation_metadata[0]["value"]
+                if affiliation_metadata else ""
+            )
+            return {
+                "uuid": dsos_persons[0].uuid,
+                "sciper_id": sciper_id,
+                "main_affiliation": main_affiliation,
+            }
         elif num_items_persons == 0:
             self.logger.warning(
                 f"No record found for {query} in DspaceCris: {num_items_persons} results."
             )
-            return "0 result on Infoscience"
+            return None
         elif num_items_persons > 1:
             self.logger.warning(
                 f"Multiple records found for {query} in DspaceCris: {num_items_persons} results."
             )
-            return "At least 1 result on Infoscience"
+            return None
 
     def push_publication(self, source, wos_id, collection_id):
         try:
@@ -188,19 +204,19 @@ class DSpaceClientWrapper:
             )
             return None
 
-    def _update_workspace(self, workspace_id, patch_operations):
+    def update_workspace(self, workspace_id, patch_operations):
         return self.client.update_workspaceitem(workspace_id, patch_operations)
 
-    def _create_workflowitem(self, workspace_id):
+    def create_workflowitem(self, workspace_id):
         return self.client.create_workflowitem(workspace_id)
 
-    def _upload_file_to_workspace(self, workspace_id, file_path):
+    def upload_file_to_workspace(self, workspace_id, file_path):
         return self.client.upload_file_to_workspace(workspace_id, file_path)
 
-    def _delete_workspace(self, workspace_id):
+    def delete_workspace(self, workspace_id):
         return self.client.delete_workspace_item(workspace_id)
 
-    def _search_authority(
+    def search_authority(
         self,
         authority_type="AuthorAuthority",
         metadata="dc.contributor.author",
@@ -210,27 +226,58 @@ class DSpaceClientWrapper:
         return self.client.get_authority(authority_type, metadata, filter_text, exact)
 
     def get_sciper_from_authority(self, response):
-        if response.get("page", {}).get("totalElements", 0) == 1:
-            entry = response.get("_embedded", {}).get("entries", [])[0]
-            auth_id = entry.get("authority") if entry else None
+        """
+        Extracts a SCIPER-ID from an authority response.
+        If multiple entries exist but all have the same 'authority' value,
+        only the first entry is processed.
 
-            # Vérifier si auth_id commence par "will be generated"
-            if auth_id and auth_id.startswith("will be generated"):
-                # Extraire le nombre à la fin du format "UUID: will be generated::SCIPER-ID::123456"
-                match = re.search(r"::(\d+)$", auth_id)
-                if match:
-                    return int(match.group(1))  # Retourne l'ID en tant qu'entier
-            # Si auth_id ne correspond pas au format, appeler _get_item
-            else:
-                authority = self._get_item(auth_id)
-                if authority:
-                    return authority.metadata.get("epfl.sciperId")[0]["value"]
+        Args:
+            response (dict): The JSON response containing authority data.
 
+        Returns:
+            int | None: The extracted SCIPER-ID or None if not found.
+        """
+        # Retrieve entries from the response
+        entries = response.get("_embedded", {}).get("entries", [])
+        if not entries:
+            return None
+
+        # Check if all entries have the same 'authority' value
+        authorities = {entry.get("authority") for entry in entries}
+        if len(authorities) > 1:
+            # If multiple different 'authority' values are found, do not process
+            return None
+
+        # Process the first entry if all authorities are identical
+        first_entry = entries[0]
+        auth_id = first_entry.get("authority")
+        if not auth_id:
+            return None
+
+        # Check if auth_id starts with "will be generated"
+        if auth_id.startswith("will be generated"):
+            match = re.search(r"::(\d+)$", auth_id)
+            if match:
+                return int(match.group(1))  # Return the ID as an integer
+        else:
+            # Use an external method to retrieve metadata for the given authority
+            authority = self._get_item(auth_id)
+            if authority:
+                sciper_data = authority.metadata.get("epfl.sciperId", [])
+                if (
+                    sciper_data
+                    and isinstance(sciper_data, list)
+                    and "value" in sciper_data[0]
+                ):
+                    return sciper_data[0]["value"]
+
+        # Return None if no valid SCIPER-ID is found
         return None
 
 
 def clean_title(title):
     title = re.sub(r"<[^>]+>", "", title)
-    title = re.sub(r"[^\w\s]", " ", title)
+    title = re.sub(r"[^\w\s-]", " ", title)
+    title = re.sub(r"(?<!\w)-|-(?!\w)", " ", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title

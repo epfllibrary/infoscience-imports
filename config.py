@@ -19,7 +19,19 @@ default_queries = {
 source_order = ["wos", "scopus", "openalex", "zenodo"]
 
 # Define types of unit to retrieve from api.epfl.ch
-unit_types = ["Laboratoire", "Groupe", "Chaire"]
+unit_types = [
+    "Laboratoire",
+    "Swiss Plasma Center",
+    "Groupe",
+    "Chaire",
+    "Plateforme",
+    "Centre",
+]
+
+# excluded_unit_types = [
+
+# ]
+
 
 # Scopus : EPFL labs internal IDs
 scopus_epfl_afids = [
@@ -37,6 +49,7 @@ scopus_epfl_afids = [
     "60122563",
     "60210160",
     "60204331",
+    "126395205",
 ]
 
 # License conditions for Unpaywall

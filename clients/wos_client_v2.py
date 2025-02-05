@@ -7,19 +7,20 @@ from apiclient import (
     JsonResponseHandler,
     exceptions,
 )
+import os
+import re
 import tenacity
 from datetime import datetime
 from apiclient.retrying import retry_if_api_request_error
 from typing import List, Dict
 from collections import defaultdict
 import ast
-import os
 import traceback
 from dotenv import load_dotenv
-from utils import manage_logger
+from utils import manage_logger, normalize_title
 import mappings
-from utils import normalize_title
 from config import logs_dir
+from clients.scopus_client import ScopusClient
 
 wos_api_base_url = "https://api.clarivate.com/api/wos"
 # env var
@@ -231,13 +232,82 @@ class Client(APIClient):
         Returns
         A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear
         """
+        doi = self._extract_doi(x)
+        pub_info = x["static_data"]["summary"].get("pub_info", {})
+        aggregation_type = pub_info.get("pubtype", "").lower()
+
+        # Initialize separated fields for publicationName
+        journal_title = ""
+        series_title = ""
+        book_title = ""
+
+        # Initialize separated fields for ISSN, ISBN, and volume
+        journal_issn = ""
+        series_issn = ""
+        book_isbn = ""
+        journal_volume = ""
+        series_volume = ""
+        book_part = ""
+        book_publisher = ""
+        book_publisher_place = ""
+        editors = ""
+
+        if aggregation_type == "journal":
+            journal_title = self._extract_container_title(x)
+            journal_issn = self._extract_issns(x)
+            journal_volume = self._extract_volume(x)
+        elif aggregation_type in {"book"}:
+            book_isbn = self._extract_isbns(x)
+            book_publisher = self._extract_publisher(x)
+            book_publisher_place = self._extract_publisher_place(x)
+            book_title = self._extract_container_title(x)
+            editors = self._extract_editors(x)
+
+        elif aggregation_type == "book in series":
+            series_title = self._extract_container_series(x)
+            series_issn = self._extract_issns(x)
+            series_volume = self._extract_volume(x)
+            book_publisher = self._extract_publisher(x)
+            book_publisher_place = self._extract_publisher_place(x)
+
+            # Check for a book title in the `title` node
+            book_title_from_source = self._extract_container_title(x)
+            if book_title_from_source:
+                book_title = book_title_from_source
+                self.logger.debug(f"Found container title in source: {book_title}")
+                book_isbn = self._extract_isbns(x)
+                editors = self._extract_editors(x)
+
         record = {
             "source": "wos",
             "internal_id": x["UID"],
-            "doi": self._extract_doi(x),
+            "issueDate": self._extract_publication_date(x),
+            "doi": doi,
             "title": self._extract_title(x),
-            "doctype": self._extract_first_doctype(x),            
-            "pubyear": self._extract_pubyear(x)
+            "doctype": self._extract_first_doctype(x),
+            "pubyear": self._extract_pubyear(x),
+            "publisher": book_publisher,
+            "publisherPlace": book_publisher_place,
+            "journalTitle": journal_title,
+            "seriesTitle": series_title,
+            "bookTitle": book_title,
+            "editors": editors,
+            "journalISSN": journal_issn,
+            "seriesISSN": series_issn,
+            "bookISBN": book_isbn,
+            "journalVolume": journal_volume,
+            "seriesVolume": series_volume,
+            "bookPart": "",
+            "issue": self._extract_issue(x),
+            "startingPage": self._extract_starting_page(x),
+            "endingPage": self._extract_ending_page(x),
+            "pmid": self._extract_pmid(x),
+            "artno": self._extract_artno(x),
+            "corporateAuthor": self._extract_corporate_authors(x),
+            "keywords": self._extract_keywords(x),
+            "affiliation_controlled": ScopusClient.fetch_record_by_unique_id(
+                doi, format="affiliations"
+            ),
         }
         return record
 
@@ -261,27 +331,131 @@ class Client(APIClient):
         Returns
         A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors, conference_info, fundings_info
         """
+
         rec = self._extract_ifs3_digest_record_info(x)
+        rec["abstract"] = self._extract_abstract(x)
         authors = self._extract_ifs3_authors(x)
         rec["authors"] = authors
         # Conference metadata as a single field
         rec["conference_info"] = self._extract_conference_info(x)
         rec["fundings_info"] = self._extract_funding_info(x)
-
         return rec
+
+    def _extract_ifs3_record_info(self, x):
+        """
+        Returns
+        A list of records dict containing the fields :  wos_id, title, DOI, doctype, pubyear, ifs3_collection, ifs3_collection_id, authors, conference_info, fundings_info
+        """
+
+        rec = self._extract_ifs3_digest_record_info(x)
+        rec["abstract"] = self._extract_abstract(x)
+        authors = self._extract_ifs3_authors(x)
+        rec["authors"] = authors
+        # Conference metadata as a single field
+        rec["conference_info"] = self._extract_conference_info(x)
+        rec["fundings_info"] = self._extract_funding_info(x)
+        return rec
+
+    def _extract_keywords(self, x):
+        """
+        Extract keywords from a publication's JSON data.
+
+        Parameters:
+            x (dict): The JSON data of the publication containing the keywords attribute.
+
+        Returns:
+            str: A string of keywords separated by '||' (empty if no keywords are present).
+        """
+        try:
+            # Navigate to the keywords in the dictionary
+            keywords_data = (
+                x.get("static_data", {})
+                .get("fullrecord_metadata", {})
+                .get("keywords", {})
+                .get("keyword", [])
+            )
+
+            # If keywords_data is a list, join them into a single string separated by '||'
+            if isinstance(keywords_data, list):
+                return "||".join(
+                    keyword.strip()
+                    for keyword in keywords_data
+                    if isinstance(keyword, str)
+                )
+
+            # If keywords_data is a single string (rare case), return it directly
+            elif isinstance(keywords_data, str):
+                return keywords_data.strip()
+
+            # Return an empty string if no valid keywords are found
+            return ""
+
+        except Exception as e:
+            # Log any error to assist debugging
+            self.logger.error(f"Error extracting keywords: {e}")
+            return ""
+
+    def _extract_abstract(self, x):
+        """
+        Extracts the abstract from the record, but only if the 'has_abstract' flag is 'Y'.
+
+        Parameters:
+        x (dict): A record containing the data from which the abstract needs to be extracted.
+
+        Returns:
+        str: The abstract text if available, or an empty string if not found or not available.
+        """
+        try:
+            # Check if the record has an abstract available
+            has_abstract = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("pub_info", {})
+                .get("has_abstract", "N")
+            )
+
+            if has_abstract == "Y":
+                # Navigate to the abstract data
+                abstract_data = (
+                    x.get("static_data", {})
+                    .get("fullrecord_metadata", {})
+                    .get("abstracts", {})
+                    .get("abstract", {})
+                    .get("abstract_text", {})
+                    .get("p", [])  # Paragraph(s) under 'p'
+                )
+
+                # Handle case where 'p' is a string instead of a list
+                if isinstance(abstract_data, str):
+                    return abstract_data.strip()
+
+                # Ensure abstract_data is a list, then join the paragraphs
+                elif isinstance(abstract_data, list):
+                    abstract_text = " ".join(
+                        paragraph.strip() for paragraph in abstract_data
+                    )
+                    return abstract_text.strip()
+
+            # Return an empty string if no abstract is available
+            return ""
+        except Exception as e:
+            # Log unexpected errors with context
+            self.logger.error(f"Error extracting abstract: {e}\nRecord: {x}")
+            return ""
 
     def _extract_conference_info(self, x):
         """
         Extracts information about conferences from the record and formats it as:
         'conference_title::conference_location::conference_startdate::conference_enddate'.
-        - If a field is missing, it is replaced with "None".
+        - If a field is missing, it is replaced with an empty string.
         - If there are multiple conferences, they are separated by "||".
+        - Returns an empty string if no valid conference title is found.
 
         Parameters:
         record (dict): A dictionary containing the record data from the API.
 
         Returns:
-        str: A formatted string with conference information or "None" if no conference data is found.
+        str: A formatted string with conference information or an empty string if no valid conference title is found.
         """
         # Retrieve the conference data from the record
         conferences_data = (
@@ -302,29 +476,34 @@ class Client(APIClient):
             # Extract conference title
             title = conference.get("conf_titles", {}).get("conf_title", None)
 
+            # Skip if the title is None, empty, or only contains whitespace
+            if not title or not title.strip():
+                continue
+
             # Extract conference location
             location_data = conference.get("conf_locations", {}).get("conf_location", {})
             location = f"{location_data.get('conf_city', '')}, {location_data.get('conf_state', '')}".strip(
                 ", "
             )
-            location = location if location else None  # Ensure location is None if no data
+            location = (
+                location if location else ""
+            )  # Ensure location is an empty string if no data
 
             # Extract conference dates
             date_data = conference.get("conf_dates", {}).get("conf_date", {})
             start_date = self.format_date(date_data.get("conf_start"))
             end_date = self.format_date(date_data.get("conf_end"))
 
-            # Format fields, replacing missing values with "None"
-            title = title or "None"
-            location = location or "None"
-            start_date = str(start_date) if start_date else "None"
-            end_date = str(end_date) if end_date else "None"
+            # Format fields, replacing missing values with empty strings
+            location = location or ""
+            start_date = str(start_date) if start_date else ""
+            end_date = str(end_date) if end_date else start_date
 
             # Build the formatted string for this conference
             conference_info = f"{title}::{location}::{start_date}::{end_date}"
             conference_infos.append(conference_info)
 
-        # Join all conference entries with "||" or return "None" if no conferences
+        # Join all conference entries with "||" or return an empty string if no valid titles
         return "||".join(conference_infos) if conference_infos else ""
 
     def _extract_funding_info(self, x):
@@ -364,6 +543,9 @@ class Client(APIClient):
         elif not isinstance(fundings_data, list):
             return ""  # If 'grant' is neither a dict nor a list, return empty string
 
+        # Regex to detect DOI-like patterns
+        doi_pattern = re.compile(r"http://dx\.doi\.org/\d+\.\d+/[0-9a-zA-Z]+")
+
         # List to store formatted funding information
         funding_infos = []
 
@@ -383,12 +565,25 @@ class Client(APIClient):
                 )
             agency_name = preferred_agency or funding.get("grant_agency", "")
 
-            # Extract grant ID
-            grant_ids = funding.get("grant_ids", {}).get("grant_id", "None")
+            # Remove any DOI from the agency name
+            if agency_name:
+                agency_name = doi_pattern.sub("", agency_name).strip()
 
-            # Build the formatted string for this funding
-            funding_info = f"{agency_name}::{grant_ids}"
-            funding_infos.append(funding_info)
+            # Extract grant ID(s)
+            grant_ids = funding.get("grant_ids", {})
+            if isinstance(grant_ids, dict):
+                grant_id = grant_ids.get("grant_id", "")
+            else:
+                grant_id = ""
+
+            # Handle the case where grant_id is nested or a list (if applicable)
+            if isinstance(grant_id, list):
+                grant_id = ";".join(grant_id)  # Combine multiple IDs into a single string
+
+            # Ensure agency and grant ID pair is properly associated
+            if agency_name or grant_id:
+                funding_info = f"{agency_name}::{grant_id}"
+                funding_infos.append(funding_info)
 
         # Join all funding entries with "||" or return an empty string if no funding info
         return "||".join(funding_infos) if funding_infos else ""
@@ -411,7 +606,6 @@ class Client(APIClient):
             None,
         )
         return normalize_title(raw_title) if raw_title else None
-
 
     def _extract_first_doctype(self, x):
         """
@@ -502,78 +696,542 @@ class Client(APIClient):
         pub_info = x["static_data"]["summary"].get("pub_info", {})
         return pub_info.get("pubyear") if not isinstance(pub_info.get("pubyear"), list) else None
 
+
+    def _extract_publication_date(self, x):
+        """
+        Extracts the publication date (issueDate) in YYYY-MM-DD format if available.
+        """
+        try:
+            pub_info = x.get("static_data", {}).get("summary", {}).get("pub_info", {})
+            pub_date = pub_info.get("sortdate", "")  # Format is usually YYYY-MM-DD
+            return pub_date if pub_date else ""
+        except Exception as e:
+            self.logger.error(f"Error extracting issueDate: {e}")
+            return ""
+
+    def _extract_publisher(self, x):
+        """
+        Extracts the 'unified_name' of all publishers (role == 'publisher') from the record.
+        If multiple publishers exist, concatenates them with '; ' as the separator.
+        Transforms the publisher names to title case.
+
+        Parameters:
+            x (dict): The JSON record containing publisher data.
+
+        Returns:
+            str: Concatenated unified_names of publishers in title case, or an empty string if none are found.
+        """
+        try:
+            publisher_data = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("publishers", {})
+                .get("publisher", {})
+            )
+
+            names_data = publisher_data.get("names", {}).get("name", None)
+
+            if isinstance(names_data, dict):
+                names_data = [names_data]
+
+            publishers = []
+            for name in names_data:
+                if name.get("role") == "publisher":
+                    # Check for 'unified_name' first, then fallback to 'full_name'
+                    publisher_name = name.get("unified_name") or name.get("full_name")
+                    if publisher_name:
+                        publishers.append(publisher_name.strip())  # Convert to Title Case
+
+            if not publishers:
+                self.logger.debug("No publisher found.")
+                return ""
+
+            result = "; ".join(publishers)
+            return result
+        except Exception as e:
+            self.logger.error(f"Error extracting publisher: {e}")
+            return ""
+
+    def _extract_publisher_place(self, x):
+        """
+        Extracts the city associated with the publisher from the metadata.
+
+        Parameters:
+            x (dict): The JSON containing metadata.
+
+        Returns:
+            str: The city of the publisher, or an empty string if not found.
+        """
+        try:
+            publisher_data = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("publishers", {})
+                .get("publisher", {})
+            )
+
+            address_data = publisher_data.get("address_spec", {})
+            city = address_data.get("city", "")
+
+            return city.strip().title() if city else ""
+        except Exception as e:
+            self.logger.error(f"Error extracting publisher place: {e}")
+            return ""
+
+    def _extract_container_title(self, x):
+        """
+        Extracts the journal title from the record and adjusts capitalization intelligently
+        using 'abbrev_iso' as a reference to preserve acronyms and proper formatting.
+
+        Args:
+            x (dict): JSON object containing metadata, including the journal titles.
+
+        Returns:
+            str: The formatted journal title, or an empty string if not found.
+        """
+        try:
+            # Extract the list of titles from the JSON object
+            titles = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("titles", {})
+                .get("title", [])
+            )
+
+            # Find the full title (type "source") and the ISO abbreviation (type "abbrev_iso")
+            full_title = next(
+                (t.get("content", "") for t in titles if t.get("type") == "source"), ""
+            )
+            abbrev_iso = next(
+                (t.get("content", "") for t in titles if t.get("type") == "abbrev_iso"), ""
+            )
+
+            if not full_title:
+                # Return an empty string if the full title is not found
+                return ""
+
+            if not abbrev_iso:
+                # If no ISO abbreviation is available, apply default title case formatting
+                return full_title.title()
+
+            # Apply custom title case using the ISO abbreviation as a reference
+            return self._apply_custom_title_case(full_title, abbrev_iso)
+
+        except Exception as e:
+            # Log any unexpected errors with the input data for debugging purposes
+            self.logger.error(f"Error extracting container title: {e}, input: {x}")
+            return ""
+
+    def _extract_container_series(self, x):
+        """
+        Extracts the journal title from the record and adjusts capitalization intelligently
+        using 'abbrev_iso' as a reference to preserve acronyms and proper formatting.
+
+        Args:
+            x (dict): JSON object containing metadata, including the journal titles.
+
+        Returns:
+            str: The formatted journal title, or an empty string if not found.
+        """
+        try:
+            # Extract the list of titles from the JSON object
+            titles = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("titles", {})
+                .get("title", [])
+            )
+
+            # Find the series title (type "series")
+            series_title = next(
+                (t.get("content", "") for t in titles if t.get("type") == "series"), ""
+            )
+
+            if not series_title:
+                # Return an empty string if the full title is not found
+                return ""
+
+            return series_title
+
+        except Exception as e:
+            # Log any unexpected errors with the input data for debugging purposes
+            self.logger.error(f"Error extracting series title: {e}, input: {x}")
+            return ""
+
+    def _apply_custom_title_case(self, full_title, abbrev_iso):
+        """
+        Adjusts the capitalization of the full title based on the ISO abbreviation.
+
+        This ensures acronyms and proper nouns are preserved in their intended format.
+
+        Args:
+            full_title (str): The full journal title.
+            abbrev_iso (str): The ISO abbreviation of the title.
+
+        Returns:
+            str: The intelligently formatted journal title.
+        """
+        # Split both full title and ISO abbreviation into individual words
+        full_title_words = full_title.split()
+        abbrev_iso_words = abbrev_iso.split()
+
+        # Create a set of words in uppercase from the ISO abbreviation
+        uppercase_words = {word for word in abbrev_iso_words if word.isupper()}
+
+        # Build the resulting title, preserving uppercase for acronyms and title case otherwise
+        result_words = []
+        for word in full_title_words:
+            if word.upper() in uppercase_words:
+                # Preserve words found in the ISO abbreviation as uppercase
+                result_words.append(word.upper())
+            else:
+                # Apply title case for all other words
+                result_words.append(word.capitalize())
+
+        # Join the formatted words into a single string
+        return " ".join(result_words)
+
+    def _extract_issns(self, x):
+        """
+        Extracts both the ISSN and eISSN from the record.
+        Combines them into a single string separated by '||'.
+
+        Returns:
+            str: A string in the format "ISSN||eISSN", or an empty string if neither is found.
+        """
+        try:
+            identifiers = (
+                x.get("dynamic_data", {})
+                .get("cluster_related", {})
+                .get("identifiers", {})
+                .get("identifier", [])
+            )
+            issn = None
+            eissn = None
+
+            for identifier in identifiers:
+                if identifier.get("type") == "issn":
+                    issn = identifier.get("value", "")
+                if identifier.get("type") == "eissn":
+                    eissn = identifier.get("value", "")
+
+            # Combine ISSN and eISSN, separated by '||'
+            return "||".join(filter(None, [issn, eissn]))  # Only include non-empty values
+        except Exception as e:
+            self.logger.debug(f"Error extracting ISSNs: {e}")
+            return ""
+
+    def _extract_isbns(self, x):
+        """
+        Extracts all ISBN and eISBN values from the record.
+        Combines them into a single string separated by '||'.
+
+        Returns:
+            str: A string in the format "ISBN1||ISBN2||...||eISBN1||eISBN2...", or an empty string if none are found.
+        """
+        try:
+            identifiers = (
+                x.get("dynamic_data", {})
+                .get("cluster_related", {})
+                .get("identifiers", {})
+                .get("identifier", [])
+            )
+
+            isbns = []
+            eisbns = []
+
+            for identifier in identifiers:
+                if identifier.get("type") == "isbn":
+                    isbns.append(identifier.get("value", ""))
+                elif identifier.get("type") == "eisbn":
+                    eisbns.append(identifier.get("value", ""))
+
+            # Combine ISBN and eISBN lists, separated by '||'
+            return "||".join(isbns + eisbns) if isbns or eisbns else ""
+        except Exception as e:
+            self.logger.debug(f"Error extracting ISBNs: {e}")
+            return ""
+
+    def _extract_volume(self, x):
+        """
+        Extracts the volume of the journal.
+        """
+        try:
+            return x["static_data"]["summary"]["pub_info"].get("vol", "")
+        except Exception:
+            return ""
+
+    def _extract_issue(self, x):
+        """
+        Extracts the issue number of the publication.
+        """
+        try:
+            return x["static_data"]["summary"]["pub_info"].get("issue", "")
+        except Exception:
+            return ""
+
+    def _extract_starting_page(self, x):
+        """
+        Extracts the starting page of the publication.
+        """
+        try:
+            return x["static_data"]["summary"]["pub_info"].get("page", {}).get("begin", "")
+        except Exception:
+            return ""
+
+    def _extract_ending_page(self, x):
+        """
+        Extracts the ending page of the publication.
+        """
+        try:
+            return x["static_data"]["summary"]["pub_info"].get("page", {}).get("end", "")
+        except Exception:
+            return ""
+
+    def _extract_pmid(self, x):
+        """
+        Extracts the PubMed ID (PMID) from the record and removes the prefix 'MEDLINE:' if present.
+
+        Returns:
+            str: The PMID as a string without the 'MEDLINE:' prefix, or an empty string if not found.
+        """
+        try:
+            identifiers = (
+                x.get("dynamic_data", {})
+                .get("cluster_related", {})
+                .get("identifiers", {})
+                .get("identifier", [])
+            )
+
+            # If identifiers is a dict instead of a list, convert it to a list
+            if isinstance(identifiers, dict):
+                identifiers = [identifiers]
+
+            # Look for the identifier with type "pmid"
+            for identifier in identifiers:
+                if identifier.get("type") == "pmid":
+                    pmid = identifier.get("value", "")
+                    # Remove the 'MEDLINE:' prefix if it exists
+                    return pmid.replace("MEDLINE:", "").strip()
+
+            return ""
+        except Exception as e:
+            self.logger.error(f"Error extracting PMID: {e}")
+            return ""
+
+    def _extract_artno(self, x):
+        """
+        Extracts the PubMed ID (PMID) from the record and removes the prefix 'MEDLINE:' if present.
+
+        Returns:
+            str: The PMID as a string without the 'MEDLINE:' prefix, or an empty string if not found.
+        """
+        try:
+            identifiers = (
+                x.get("dynamic_data", {})
+                .get("cluster_related", {})
+                .get("identifiers", {})
+                .get("identifier", [])
+            )
+
+            # If identifiers is a dict instead of a list, convert it to a list
+            if isinstance(identifiers, dict):
+                identifiers = [identifiers]
+
+            # Look for the identifier with type "art_no"
+            for identifier in identifiers:
+                if identifier.get("type") == "art_no":
+                    artno = identifier.get("value", "")
+                    # Remove the prefix if it exists
+                    return artno.replace("ARTN ", "").strip()
+
+            return ""
+        except Exception as e:
+            self.logger.error(f"Error extracting Article Number: {e}")
+            return ""
+
+    def _extract_editors(self, x):
+        """
+        Extracts editors with the role `book_editor` and returns a string of names separated by `||`.
+
+        Parameters:
+            x (dict): The JSON containing metadata.
+
+        Returns:
+            str: A string of editor names, sorted by `seq_no` and separated by `||`.
+        """
+        editors = []
+        try:
+            # Extract contributors from static_data > summary > names
+            names = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("names", {})
+                .get("name", [])
+            )
+            if isinstance(names, dict):
+                names = [names]
+
+            # Filter only contributors with the role 'book_editor'
+            for contributor in names:
+                if contributor.get("role") == "book_editor":
+                    full_name = contributor.get("full_name")
+                    if full_name:
+                        seq_no = int(contributor.get("seq_no", 0))
+                        editors.append((seq_no, full_name))
+
+            # Sort editors by seq_no and concatenate them with '||'
+            editors = sorted(editors, key=lambda x: x[0])
+            return "||".join([editor[1] for editor in editors]) if editors else ""
+
+        except Exception as e:
+            self.logger.error(f"Error extracting editors: {e}")
+            return ""
+
     def _extract_ifs3_authors(self, x):
-        # Initialize the authors list
+        """
+        Extracts authors and reconciles their affiliations using 'addr_no' to link
+        authors (from 'summary > names') with affiliations (from 'fullrecord_metadata > addresses').
+
+        Parameters:
+            record (dict): The JSON record containing author data.
+
+        Returns:
+            List[dict]: A sorted list of dictionaries containing author details, including name,
+            organizations, and affiliations.
+        """
         authors = []
 
         try:
-            # Safely navigate to the addresses section
-            # addresses = x.get("static_data", {}).get("fullrecord_metadata", {}).get("addresses", {}).get("address_name", [])
-            addresses = x["static_data"]["fullrecord_metadata"]["addresses"]["address_name"]
+            # Extract authors from static_data > summary > names
+            names = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("names", {})
+                .get("name", [])
+            )
+            if isinstance(names, dict):
+                names = [names]
 
-            # Handle the case where a single address is given as a dictionary instead of a list
-            if isinstance(addresses, dict):
-                addresses = [addresses]
+            # Extract affiliations from static_data > fullrecord_metadata > addresses
+            address_entries = (
+                x.get("static_data", {})
+                .get("fullrecord_metadata", {})
+                .get("addresses", {})
+                .get("address_name", [])
+            )
+            if isinstance(address_entries, dict):
+                address_entries = [address_entries]
 
-            # Iterate over each address entry
-            for address_entry in addresses:
+            # Map addr_no to affiliations for easy lookup
+            addr_to_affiliation = self._map_affiliations(address_entries)
+
+            # Process each author and link affiliations using addr_no
+            for author in names:
                 try:
-                    # Safely extract organizations and suborganizations
-                    organization_list = address_entry.get("address_spec", {}).get("organizations", {}).get("organization", [])
-                    suborganization = address_entry.get("address_spec", {}).get("suborganizations", {}).get("suborganization", None)
-                    if isinstance(suborganization, list):
-                        suborganization = '|'.join(suborganization)  # Join list elements with "|"
-                    # Handle cases where organizations might be a single dictionary instead of a list
-                    if isinstance(organization_list, dict):
-                        organization_list = [organization_list]
+                    if author.get("role") != "author":
+                        continue
+                    # Extract author details
+                    preferred_name = author.get("preferred_name", {}).get("full_name")
+                    full_name = author.get("full_name")
+                    display_name = author.get("display_name")
+                    author_name = preferred_name or full_name or display_name
 
-                    # Combine organization names into a single string separated by '|'
-                    organizations_str = '|'.join([org.get("content", "") for org in organization_list])
+                    if not author_name:
+                        self.logger.warning("Skipping author due to missing name.")
+                        continue
 
-                    # Safely extract the names section
-                    names = address_entry.get("names", {}).get("name", [])
+                    # Extract seq_no, addr_no, and other details
+                    seq_no = int(author.get("seq_no", 0))  # Ensure seq_no is an integer
+                    addr_no = author.get("addr_no")
 
-                    # Handle the case where a single name is given as a dictionary instead of a list
-                    if isinstance(names, dict):
-                        names = [names]
+                    # Handle cases where addr_no is an integer or a space-separated string
+                    affiliations = []
+                    if addr_no:
+                        if isinstance(addr_no, str):
+                            addr_no_list = [int(addr.strip()) for addr in addr_no.split() if addr.strip().isdigit()]
+                        elif isinstance(addr_no, int):
+                            addr_no_list = [addr_no]
+                        else:
+                            addr_no_list = []
 
-                    # Iterate over each author in the names list
-                    for author in names:
-                        try:
-                            # Extract author information
-                            author_info = {
-                                "author": author.get("display_name", None),
-                                #"internal_author_id": author.get("data-item-ids", {}).get("data-item-id", {}).get("content", None),
-                                "internal_author_id": self._get_internal_author_id(author.get("data-item-ids", {}).get("data-item-id", None)),
-                                "orcid_id": author.get("orcid_id", None),
-                                "organizations": organizations_str
-                            }
-
-                            # Add suborganization if it exists
-                            if suborganization:
-                                author_info["suborganization"] = suborganization
-
-                            # Append the author information to the authors list
-                            authors.append(author_info)
-
-                        except KeyError as e:
-                            # Handle missing keys for the author entry and continue
-                            self.logger.error(
-                                f"Skipping author due to missing key: {e}"
+                        for addr in addr_no_list:
+                            affiliation = addr_to_affiliation.get(
+                                addr, {"organizations": None, "suborganization": None}
                             )
-                            continue
+                            affiliations.append(affiliation)
+
+                    # Combine all organizations and suborganizations into single text values separated by |
+                    organizations = "|".join({aff["organizations"] for aff in affiliations if aff["organizations"]})
+                    suborganizations = "|".join({aff["suborganization"] for aff in affiliations if aff["suborganization"]})
+
+                    # Build author info
+                    author_info = {
+                        "seq_no": seq_no,
+                        "author": author_name,
+                        "internal_author_id": self._get_internal_author_id(
+                            author.get("data-item-ids", {}).get("data-item-id", None)
+                        ),
+                        "orcid_id": author.get("orcid_id"),
+                        "organizations": organizations if organizations else None,
+                        "suborganization": (
+                            suborganizations if suborganizations else None
+                        ),
+                        "role": author.get("role"),
+                    }
+
+                    authors.append(author_info)
 
                 except KeyError as e:
-                    # Handle missing keys for the address entry and continue
-                    self.logger.error(f"Skipping address entry due to missing key: {e}")
+                    self.logger.error(f"Missing key for author: {e}")
                     continue
 
+            # Sort authors by seq_no
+            authors = sorted(authors, key=lambda x: x["seq_no"])
+
         except Exception as e:
-            # Handle any unexpected errors
-            error_message = traceback.format_exc()  # Get the formatted traceback
-            self.logger.error(f"{x.get('UID', 'Unknown UID')} : An error occurred during processing: {error_message}")
+            error_message = traceback.format_exc()
+            self.logger.error(f"Error processing record: {error_message}")
 
         return authors
+
+    def _map_affiliations(self, address_entries):
+        addr_to_affiliation = {}
+        for address_entry in address_entries:
+            addr_no = address_entry.get("address_spec", {}).get("addr_no")
+            organizations = (
+                address_entry.get("address_spec", {})
+                .get("organizations", {})
+                .get("organization", [])
+            )
+            suborganization = (
+                address_entry.get("address_spec", {})
+                .get("suborganizations", {})
+                .get("suborganization")
+            )
+
+            if isinstance(organizations, dict):
+                organizations = [organizations]
+
+            preferred_organizations = [
+                org.get("content", "") for org in organizations if org.get("pref") == "Y"
+            ]
+
+            if preferred_organizations:
+                organizations_to_keep = preferred_organizations
+            else:
+                organizations_to_keep = [org.get("content", "") for org in organizations]
+
+            organizations_str = "|".join(organizations_to_keep)
+
+            if isinstance(suborganization, list):
+                suborganization = "|".join(suborganization)
+
+            addr_to_affiliation[addr_no] = {
+                "organizations": organizations_str or None,
+                "suborganization": suborganization or None,
+            }
+        return addr_to_affiliation
 
     def _get_internal_author_id(self, data_item_id):
         """
@@ -595,6 +1253,42 @@ class Client(APIClient):
             return datetime.strptime(str(date_str), "%Y%m%d").strftime("%Y-%m-%d")
         except ValueError:
             return "None"
+
+    def _extract_corporate_authors(self, x):
+        """
+        Extracts corporate authors (role == 'corp') and concatenates their display names.
+
+        Parameters:
+            record (dict): The JSON record containing corporate author data.
+
+        Returns:
+            str: A concatenated string of corporate author display names, separated by '||'.
+        """
+        try:
+            # Extract names from static_data > summary > names
+            names = (
+                x.get("static_data", {})
+                .get("summary", {})
+                .get("names", {})
+                .get("name", [])
+            )
+            if isinstance(names, dict):
+                names = [names]
+
+            # Filter for corporate authors and concatenate display_name values
+            corp_display_names = [
+                author.get("display_name", "")
+                for author in names
+                if author.get("role") == "corp"
+            ]
+
+            # Concatenate names with '||'
+            return "||".join(filter(None, corp_display_names))
+
+        except Exception as e:
+            error_message = traceback.format_exc()
+            self.logger.error(f"Error extracting corporate authors: {error_message}")
+            return ""
 
 
 WosClient = Client(

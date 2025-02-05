@@ -46,9 +46,30 @@ def clean_value(value):
     value = value.encode("ascii", "ignore").decode("utf-8")
     return value
 
+
 def remove_accents(input_str):
+    replacements = {
+        "ø": "o",
+        "ä": "ae",
+        "ö": "oe",
+        "ü": "ue",
+        "ß": "ss",
+        "å": "aa",
+        "é": "e",
+        "è": "e",
+        "ê": "e",
+        "æ": "ae",
+        "œ": "oe",
+    }
+
+    for original, replacement in replacements.items():
+        input_str = input_str.replace(original, replacement)
+
     nfkd_form = unicodedata.normalize("NFKD", input_str)
-    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    cleaned_str = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+
+    return cleaned_str
+
 
 def normalize_title(title):
     lowercase_words = {

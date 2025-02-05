@@ -2,10 +2,12 @@ import abc
 import os
 
 import pandas as pd
+from data_pipeline.enricher import AuthorProcessor
 from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
 from clients.zenodo_client import ZenodoClient
 from clients.openalex_client import OpenAlexClient
+
 from utils import manage_logger
 from config import logs_dir
 
@@ -53,7 +55,7 @@ class Harvester(abc.ABC):
         self.logger.info(f"Harvesting publications from {self.source_name}...")
         publications = self.fetch_and_parse_publications()
         self.logger.info(
-            f"- Nombre de publications {self.source_name} avec un doctype compatible Infoscience {len(publications)}"
+            f"- Nombre de publications {self.source_name} compatibles Infoscience {len(publications)}"
         )
         return publications
 
@@ -127,7 +129,15 @@ class WosHarvester(Harvester):
             .reset_index(drop=True)
         )
 
-        return df
+        author_processor = AuthorProcessor(df)
+
+        df = df[
+            df["affiliation_controlled"].isna() |  
+            df["affiliation_controlled"].astype(str).str.strip().eq("") | 
+            df["affiliation_controlled"].astype(str).apply(lambda x: author_processor.process_scopus(x, check_all=True))
+        ]
+
+        return df 
 
 
 class ScopusHarvester(Harvester):
