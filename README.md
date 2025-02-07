@@ -80,10 +80,10 @@ Each source of metadata is harvested and parsed by a specific client, before the
 2. **scopus_client_v2.py**: contains the ScopusClient class with all methods to parse the results of the Scopus search API
 3. **api_epfl_client.py** : contains the ApiEpflClient class for local EPFL informations retrieval (author sciper Id, accreds and units)
 4. **unpaywall_client.py** : contains the UnpaywallClient class with methods to request the Unpaywall API
-5. **dsapce_client_wrapper.py**: contains the DSpaceClientWrapper with methods to search and update objects in Dspace using the Dspace Rest Client
+5. **dspace_client_wrapper.py**: contains the DSpaceClientWrapper with methods to search and update objects in Dspace using the Dspace Rest Client
 6. **zenodo_client.py** : contains the ZenodoClient class with all methods to parse the results of the Zenodo search API
 
-Others : some tests with Orcid API and Istex API for managing authors names.
+Others : some tests with Orcid API for managing authors names.
 
 ### Mappings
 
