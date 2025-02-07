@@ -68,18 +68,18 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::research article",
         },
-        # "Book": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph",
-        # },
-        # "Book Chapter": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph::book part or chapter",
-        # },
-        # "Conference Paper": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings::conference paper",
-        # },
+        "Book": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph",
+        },
+        "Book Chapter": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph::book part or chapter",
+        },
+        "Conference Paper": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
         # "Conference Review": {
         #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
         #     "dc.type": "text::conference output::conference proceedings::conference paper",
