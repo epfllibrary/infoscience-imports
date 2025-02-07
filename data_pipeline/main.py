@@ -4,7 +4,7 @@ from .enricher import AuthorProcessor, PublicationProcessor
 from .loader import Loader
 from config import default_queries
 
-def main(start_date="2024-01-01", end_date="2025-01-01", queries=None):
+def main(start_date="2024-01-01", end_date="2025-01-01", queries=None, authors_ids=None):
 
     # Merge provided queries with default queries
     if queries:
@@ -33,7 +33,7 @@ def main(start_date="2024-01-01", end_date="2025-01-01", queries=None):
     # Generate EPFL authors enriched dataframe
     author_processor = AuthorProcessor(df_authors)
     df_epfl_authors = (
-        author_processor.process()
+        author_processor.process(author_ids_to_check=authors_ids)
         .filter_epfl_authors()
         .clean_authors()
         .nameparse_authors()
