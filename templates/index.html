@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infoscience Import Pipeline</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+    <div class="container mt-5">
+        <h2 class="text-center">Infoscience Import Pipeline</h2>
+        <form id="pipeline-form" class="mt-4">
+            <div class="mb-3">
+                <label for="start_date" class="form-label">Start Date</label>
+                <input type="date" class="form-control" id="start_date" name="start_date" required>
+            </div>
+            <div class="mb-3">
+                <label for="end_date" class="form-label">End Date</label>
+                <input type="date" class="form-control" id="end_date" name="end_date" required>
+            </div>
+            
+            <h5>Custom Queries (Optional)</h5>
+            <div class="mb-3">
+                <label for="custom_wos_query" class="form-label">Custom WoS Query</label>
+                <input type="text" class="form-control" id="custom_wos_query" name="custom_wos_query">
+            </div>
+            <div class="mb-3">
+                <label for="custom_scopus_query" class="form-label">Custom Scopus Query</label>
+                <input type="text" class="form-control" id="custom_scopus_query" name="custom_scopus_query">
+            </div>
+            
+            <h5>Author IDs (Optional)</h5>
+            <div class="mb-3">
+                <label for="author_ids" class="form-label">Author IDs (comma-separated)</label>
+                <textarea class="form-control" id="author_ids" name="author_ids" rows="3"></textarea>
+            </div>
+            <button type="submit" id="start-pipeline" class="btn btn-primary w-100">Start Pipeline</button>
+            <button type="button" id="stop-pipeline" class="btn btn-danger w-100 mt-2" disabled>Stop Pipeline</button>
+        </form>
+
+        <div id="status-message" class="mt-4"></div>
+
+        <div class="mt-5">
+            <h4>Real-Time Logs</h4>
+            <div id="log-container" class="bg-dark text-light p-3 border rounded"
+                style="height: 300px; overflow-y: auto;"></div>
+        </div>
+
+        <div id="report-section" class="mt-4"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+
+</html>
