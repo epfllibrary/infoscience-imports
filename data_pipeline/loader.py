@@ -860,7 +860,7 @@ class Loader:
 
             valid_pdf = row.get("upw_valid_pdf", "")
             file_path = (
-                f"./pdfs/{valid_pdf}"
+                f"../data/pdfs/{valid_pdf}"
                 if pd.notna(valid_pdf) and valid_pdf != ""
                 else None
             )

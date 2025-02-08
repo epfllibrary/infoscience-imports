@@ -16,3 +16,5 @@ nbqa
 Unidecode
 tenacity
 pycountry
+openpyxl
+xlsxwriter

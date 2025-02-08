@@ -141,7 +141,7 @@ class Client(APIClient):
     def _validate_and_download_pdf(
         self, urls: List[str], doi: str
     ) -> Tuple[Optional[str], Optional[str]]:
-        pdf_folder = "./pdfs"
+        pdf_folder = "../data/pdfs"
         os.makedirs(pdf_folder, exist_ok=True)
 
         headers = {

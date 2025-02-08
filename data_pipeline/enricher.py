@@ -14,7 +14,6 @@ from utils import manage_logger, remove_accents, clean_value
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-from clients.services_istex_client import ServicesIstexClient
 from clients.orcid_client import OrcidClient
 from config import scopus_epfl_afids, unit_types #, excluded_unit_types
 from config import logs_dir
@@ -33,11 +32,11 @@ class AuthorProcessor:
 
     Methods:
         process(): Processes the DataFrame and enriches it with EPFL affiliation information.
-          process_scopus(text): Processes the organization text for Scopus publications to check for EPFL affiliations.
-          process_wos(text): Processes the organization text for WOS publications to check for EPFL affiliations.
+        process_scopus(text): Processes the organization text for Scopus publications to check for EPFL affiliations.
+        process_wos(text): Processes the organization text for WOS publications to check for EPFL affiliations.
     Usage
     processor = Processor(your_dataframe)
-    processor.process().nameparse_authors().services_istex_orcid_reconciliation().orcid_data_reconciliation()
+    processor.process().nameparse_authors().orcid_data_reconciliation()
     """
     def __init__(self, df):
         self.df = df
@@ -45,22 +44,60 @@ class AuthorProcessor:
         log_file_path = os.path.join(logs_dir, "enriching_authors.log")
         self.logger = manage_logger(log_file_path)
 
-    def process(self, return_df=False):
 
-        self.df = self.df.copy()
-        for index, row in self.df.iterrows():
-            if row['source'] == 'scopus':
-                self.df.at[index, 'epfl_affiliation'] = self.process_scopus(row['organizations'], check_all=True)
-            elif row['source'] == 'wos':
-                self.df.at[index, 'epfl_affiliation'] = self.process_wos(row['organizations'])
-            elif row['source'] == 'openalex':
-                self.df.at[index, 'epfl_affiliation'] = self.process_openalex(row['organizations'])    
-            elif row['source'] == 'zenodo':
-                self.df.at[index, 'epfl_affiliation'] = self.process_zenodo(row['organizations'])
-            else:
-                # Default to False for unknown sources
-                self.logger.error(f"Unknown source: {row['source']}")
-                self.df.at[index, 'epfl_affiliation'] = False
+    def process(self, return_df=False, author_ids_to_check=None):
+        """
+        Process the DataFrame to detect EPFL-affiliated authors.
+        Additionally, checks if any given researcher ID is present in internal_author_id
+        and marks epfl_affiliation=True.
+
+        Args:
+            return_df (bool): If True, returns the processed DataFrame.
+            author_ids_to_check (list, optional): List of researcher IDs to check. If any of these
+                                                IDs appear in internal_author_id, epfl_affiliation=True.
+
+        Returns:
+            DataFrame or self: Processed DataFrame if return_df is True, otherwise self.
+        """
+
+        self.df = self.df.copy()  # Avoid modifying the original DataFrame
+
+        # Step 1: Detect EPFL-affiliated authors based on organization names
+        self.df["epfl_affiliation"] = self.df.apply(
+            lambda row: (
+                self.process_scopus(row["organizations"])
+                if row["source"] == "scopus"
+                else (
+                    self.process_wos(row["organizations"])
+                    if row["source"] == "wos"
+                    else (
+                        self.process_openalex(row["organizations"])
+                        if row["source"] == "openalex"
+                        else (
+                            self.process_zenodo(row["organizations"])
+                            if row["source"] == "zenodo"
+                            else False
+                        )
+                    )
+                )
+            ),
+            axis=1,
+        )
+
+        # Step 2: Override epfl_affiliation if internal_author_id matches a given author ID
+        if author_ids_to_check:
+            author_ids_to_check = set(
+                map(str, author_ids_to_check)
+            )  # Convert list to string set for fast lookup
+            self.df["epfl_affiliation"] = self.df.apply(
+                lambda row: (
+                    True
+                    if str(row["internal_author_id"]) in author_ids_to_check
+                    else row["epfl_affiliation"]
+                ),
+                axis=1,
+            )
+
         return self.df if return_df else self
 
     def process_scopus(self, text, check_all=False):
@@ -115,7 +152,6 @@ class AuthorProcessor:
 
         self.df = self.df[self.df['epfl_affiliation']]
         return self.df if return_df else self
-
 
     def clean_authors(self, return_df=False):
         self.df = self.df.copy()
@@ -317,7 +353,6 @@ class AuthorProcessor:
                         if unit_type in unit_types:
                             allowed_units.append((unit_id, unit_name, unit_type, unit_order))
 
-
                         if unit_order == 1 and not fallback_unit:
                             fallback_unit = (unit_id, unit_name)
 
@@ -456,23 +491,6 @@ class AuthorProcessor:
         return self.df if return_df else self
 
     ##### Inutilisé #####################
-    def services_istex_orcid_reconciliation(self, return_df=False):
-        def fetch_orcid(row):
-            # Request ORCID ID without condition
-            orcid_id = ServicesIstexClient.get_orcid_id(firstname=row['nameparse_firstname'],
-                                                        lastname=row['nameparse_lastname'])
-            time.sleep(5)
-
-            # Update 'orcid_id' if the returned value is not None and the original is empty
-            if orcid_id is not None and pd.isna(row['orcid_id']):
-                return orcid_id
-            return row['orcid_id']  # Return the existing value if it's not empty
-
-        # Fill the 'orcid_id' column with the fetched ORCID IDs where applicable
-        self.df['orcid_id'] = self.df.apply(fetch_orcid, axis=1)
-        return self.df if return_df else self
-
-    ##### Inutilisé #####################
     def orcid_data_reconciliation(self, return_df=False):
         self.df = self.df.copy()
 
@@ -497,7 +515,6 @@ class AuthorProcessor:
                         self.df.at[index, key] = None
 
         return self.df if return_df else self
-
 
 class PublicationProcessor:
 

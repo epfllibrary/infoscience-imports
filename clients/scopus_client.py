@@ -531,6 +531,37 @@ class Client(APIClient):
 
         return "||".join(normalized_issns)
 
+    def _extract_all_isbns(self, isbn_field):
+        """
+        Extract all ISBN values from the provided field, separated by '||'.
+
+        Parameters
+        ----------
+        isbn_field : str or list
+            The raw ISBN field from the Scopus API response, which may contain a single value or a list of dictionaries.
+
+        Returns
+        -------
+        str : All ISBN values found, separated by '||', or an empty string if none are valid.
+        """
+        if not isbn_field:
+            return ""
+
+        isbns = []
+
+        if isinstance(isbn_field, list):
+            for item in isbn_field:
+                if isinstance(item, dict) and "$" in item:
+                    isbns.append(item["$"])
+        elif isinstance(isbn_field, str):
+            isbns.append(isbn_field)
+
+        if isbns:
+            return "||".join(isbns)
+
+        self.logger.warning("No valid ISBN format encountered.")
+        return ""
+
     def _extract_first_doctype(self, x):
         subtype = x.get("coredata", {}).get("subtypeDescription")
         if isinstance(subtype, list):
