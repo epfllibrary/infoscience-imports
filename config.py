@@ -16,7 +16,7 @@ default_queries = {
 }
 
 # Define the order of the sources during the deduplication process
-source_order = ["wos", "scopus", "openalex", "zenodo"]
+source_order = ["scopus", "wos", "openalex", "zenodo"]
 
 # Define types of unit to retrieve from api.epfl.ch
 unit_types = [
@@ -50,6 +50,7 @@ scopus_epfl_afids = [
     "60210160",
     "60204331",
     "126395205",
+    "128154174",
 ]
 
 # License conditions for Unpaywall
