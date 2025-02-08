@@ -13,7 +13,7 @@ from utils import manage_logger
 class DataFrameProcessor:
     def __init__(self, *dfs):
         self.dataframes = dfs
-        log_file_path = os.path.join(logs_dir, "deduplicate.log")
+        log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
 
     def clean_title(self, title):

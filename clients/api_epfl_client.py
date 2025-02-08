@@ -44,7 +44,7 @@ class Endpoint:
 
 class Client(APIClient):
 
-    log_file_path = os.path.join(logs_dir, "api_epfl_client.log")
+    log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
     @retry_decorator
@@ -118,7 +118,7 @@ class Client(APIClient):
                 f"Received response for {query} from personsQuery: {result_query}"
             )
             results.append(result_query)
-            self.logger.info(f"Response for personsQuery : {result_query}.")
+            self.logger.debug(f"Response for personsQuery : {result_query}.")
             # Process results based on the count
             for result in results:
                 if result and result["count"] == 1:

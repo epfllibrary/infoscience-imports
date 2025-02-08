@@ -13,8 +13,8 @@ from utils import manage_logger
 class GenerateReports:
     def __init__(self, dataframe, df_unloaded, df_epfl_authors, df_loaded):
         """Initialize the GenerateReports with given DataFrames."""
-        log_file_path = os.path.join(logs_dir, "reporting.log")
-        logger = manage_logger(log_file_path)
+        log_file_path = os.path.join(logs_dir, "logging.log")
+        self.logger = manage_logger(log_file_path)
 
         self.df = dataframe.copy()
         self.df_unloaded = df_unloaded.copy()

@@ -54,7 +54,7 @@ class Endpoint:
 
 
 class Client(APIClient):
-    log_file_path = os.path.join(logs_dir, "scopus_client.log")
+    log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
     @retry_request

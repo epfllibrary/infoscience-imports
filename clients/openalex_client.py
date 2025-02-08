@@ -42,7 +42,7 @@ class OpenAlexEndpoint:
 
 
 class OpenAlexClient(APIClient):
-    log_file_path = os.path.join(logs_dir, "openalex_client.log")
+    log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
     @retry_request

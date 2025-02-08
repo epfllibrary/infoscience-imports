@@ -51,7 +51,7 @@ class Endpoint:
 
 class Client(APIClient):
 
-    log_file_path = os.path.join(logs_dir, "wos_client.log")
+    log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
     @retry_request
@@ -693,7 +693,6 @@ class Client(APIClient):
     def _extract_pubyear(self, x):
         pub_info = x["static_data"]["summary"].get("pub_info", {})
         return pub_info.get("pubyear") if not isinstance(pub_info.get("pubyear"), list) else None
-
 
     def _extract_publication_date(self, x):
         """

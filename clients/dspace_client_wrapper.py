@@ -13,7 +13,7 @@ ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 class DSpaceClientWrapper:
     """Wrapper for Dspace client"""
     def __init__(self):
-        log_file_path = os.path.join(logs_dir, "dspace_client.log")
+        log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
 
         self.client = DSpaceClient()

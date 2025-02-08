@@ -36,7 +36,7 @@ class Harvester(abc.ABC):
         self.query = query
         self.format = format
         # Create a logger
-        log_file_path = os.path.join(logs_dir, "harvesting.log")
+        log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
 
     @abc.abstractmethod
@@ -57,7 +57,7 @@ class Harvester(abc.ABC):
         self.logger.info(f"Harvesting publications from {self.source_name}...")
         publications = self.fetch_and_parse_publications()
         self.logger.info(
-            f"- Nombre de publications {self.source_name} compatibles Infoscience {len(publications)}"
+            f"- Found {len(publications)} {self.source_name}'s publications to be processed for Infoscience "
         )
         return publications
 

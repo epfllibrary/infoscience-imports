@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from config import logs_dir
 from utils import manage_logger
 
-log_file_path = os.path.join(logs_dir, "orcid_client.log")
+log_file_path = os.path.join(logs_dir, "logging.log")
 logger = manage_logger(log_file_path)
 
 orcid_prod_public_base_url = "https://pub.orcid.org/v3.0"
