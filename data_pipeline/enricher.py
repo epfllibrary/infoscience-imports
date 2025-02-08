@@ -1,7 +1,6 @@
 """Metadata enrichment: processors for authors and publications"""
 
 import string
-import time
 import re
 import os
 

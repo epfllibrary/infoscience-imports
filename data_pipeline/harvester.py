@@ -1,3 +1,5 @@
+"""Harvester processor for external sources."""
+
 import abc
 import os
 

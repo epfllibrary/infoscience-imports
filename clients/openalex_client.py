@@ -1,20 +1,19 @@
+"""OpenAlex client for Infoscience imports"""
+
+import os
+from typing import List
+import tenacity
 from apiclient import (
     APIClient,
     endpoint,
     retry_request,
-    paginated,
     JsonResponseHandler,
-    exceptions,
 )
-import tenacity
 from apiclient.retrying import retry_if_api_request_error
-from typing import List, Dict
-import os
-import traceback
 from dotenv import load_dotenv
+from config import logs_dir
 from utils import manage_logger
 import mappings
-from config import logs_dir
 
 # Base URL for OpenAlex API
 openalex_api_base_url = "https://api.openalex.org"

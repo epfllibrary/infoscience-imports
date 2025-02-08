@@ -1,25 +1,23 @@
+"""Web of Science client for Infoscience imports"""
+
+import os
+import re
+from datetime import datetime
+from typing import List
+import traceback
+import tenacity
 from apiclient import (
     APIClient,
     endpoint,
     retry_request,
-    paginated,
     HeaderAuthentication,
     JsonResponseHandler,
-    exceptions,
 )
-import os
-import re
-import tenacity
-from datetime import datetime
 from apiclient.retrying import retry_if_api_request_error
-from typing import List, Dict
-from collections import defaultdict
-import ast
-import traceback
 from dotenv import load_dotenv
-from utils import manage_logger, normalize_title
-import mappings
 from config import logs_dir
+import mappings
+from utils import manage_logger, normalize_title
 from clients.scopus_client import ScopusClient
 
 wos_api_base_url = "https://api.clarivate.com/api/wos"

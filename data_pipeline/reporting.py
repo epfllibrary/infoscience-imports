@@ -1,21 +1,30 @@
-import pandas as pd
+"""
+This module contains the GenerateReports class that generates 
+a consolidated report with the required indicators and corresponding data rows.
+"""
 import os
 import smtplib
 import datetime
 from email.message import EmailMessage
-
+import pandas as pd
+from config import logs_dir
+from utils import manage_logger
 
 class GenerateReports:
     def __init__(self, dataframe, df_unloaded, df_epfl_authors, df_loaded):
         """Initialize the GenerateReports with given DataFrames."""
+        log_file_path = os.path.join(logs_dir, "reporting.log")
+        logger = manage_logger(log_file_path)
+
         self.df = dataframe.copy()
         self.df_unloaded = df_unloaded.copy()
         self.df_epfl_authors = df_epfl_authors.copy()
         self.df_loaded = df_loaded.copy()
         # Ensure 'upw_is_oa' column is boolean, replacing NaN with False
-        self.df["upw_is_oa"] = (
-            self.df["upw_is_oa"].fillna(False).infer_objects(copy=False).astype(bool)
-        )
+        if "upw_is_oa" in self.df.columns:
+            self.df["upw_is_oa"] = (
+                self.df["upw_is_oa"].fillna(False).infer_objects(copy=False).astype(bool)
+            )
 
     def total_publications_found(self):
         """Return the total number of unique publications found."""
@@ -164,7 +173,7 @@ class GenerateReports:
             server.send_message(msg)
             server.quit()
 
-        print(
+        self.logger.info(
             f"Email sent successfully to {recipient_email} with attachment {file_name}."
         )
 

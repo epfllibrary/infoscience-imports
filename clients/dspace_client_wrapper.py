@@ -1,14 +1,14 @@
+"""Wrapper for Dspace client"""
+
 import os
 import re
-from dspace.dspace_rest_client.client import DSpaceClient
 from dotenv import load_dotenv
-from utils import manage_logger
 from config import logs_dir
-
+from dspace.dspace_rest_client.client import DSpaceClient
+from utils import manage_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
-
 
 class DSpaceClientWrapper:
     """Wrapper for Dspace client"""

@@ -1,3 +1,5 @@
+"""Loader processor for ingesting items into DSpace."""
+
 import os
 import re
 import pandas as pd

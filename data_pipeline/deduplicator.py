@@ -1,13 +1,13 @@
+"""Deduplicator processors for harvested publications"""
+
 import re
 import string
 import os
-
 import pandas as pd
 from fuzzywuzzy import fuzz
-from config import source_order
+from config import logs_dir, source_order
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from utils import manage_logger
-from config import logs_dir
 
 
 class DataFrameProcessor:

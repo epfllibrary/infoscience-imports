@@ -1,3 +1,5 @@
+"""Main script to run the data pipeline."""
+
 import os
 from datetime import datetime
 import pandas as pd
@@ -145,20 +147,21 @@ def main(
     if any(
         not df.empty for df in [df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded]
     ):
-        report_generator = GenerateReports(
-            df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
-        )
-        report_path = report_generator.generate_excel_report(output_dir=export_dir)
+        if "row_id" in df_oa_metadata.columns:
+            report_generator = GenerateReports(
+                df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
+            )
+            report_path = report_generator.generate_excel_report(output_dir=export_dir)
 
-        # if report_path:
-        #     report_generator.send_report_by_email(
-        #         recipient_email="recipient_email",
-        #         sender_email="sender_email",
-        #         smtp_server="smtp_server",
-        #         import_start_date=start_date,
-        #         import_end_date=end_date,
-        #         file_path=report_path,
-        #     )
+            # if report_path:
+            #     report_generator.send_report_by_email(
+            #         recipient_email="recipient_email",
+            #         sender_email="sender_email",
+            #         smtp_server="smtp_server",
+            #         import_start_date=start_date,
+            #         import_end_date=end_date,
+            #         file_path=report_path,
+            #     )
 
     return {
         "df_metadata": df_oa_metadata,

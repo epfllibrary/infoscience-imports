@@ -1,20 +1,15 @@
+"""EPFL API client for Infoscience imports"""
+
+import os
+import tenacity
 from apiclient import (
     APIClient,
     endpoint,
-    retry_request,
-    paginated,
     BasicAuthentication,
     JsonResponseHandler,
-    exceptions,
 )
-import tenacity
 from apiclient.retrying import retry_if_api_request_error
-from apiclient.error_handlers import BaseErrorHandler, ErrorHandler
-from apiclient.response import Response
-from typing import List, Dict
-from collections import defaultdict
-import ast
-import os
+from apiclient.error_handlers import ErrorHandler
 from dotenv import load_dotenv
 from utils import manage_logger, clean_value
 from config import logs_dir
