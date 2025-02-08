@@ -1,20 +1,18 @@
+"""Scopus client for Infoscience imports"""
+
+import os
+import time
+import re
+from typing import List
+import tenacity
 from apiclient import (
     APIClient,
     endpoint,
     retry_request,
-    paginated,
     HeaderAuthentication,
     JsonResponseHandler,
-    exceptions,
 )
-import tenacity
 from apiclient.retrying import retry_if_api_request_error
-from typing import List, Dict
-from collections import defaultdict
-import ast
-import os
-import time
-import re
 import pycountry
 from dotenv import load_dotenv
 from utils import manage_logger
@@ -56,7 +54,7 @@ class Endpoint:
 
 
 class Client(APIClient):
-    log_file_path = os.path.join(logs_dir, "scopus_client.log")
+    log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
     @retry_request

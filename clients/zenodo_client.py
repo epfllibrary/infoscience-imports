@@ -1,27 +1,21 @@
 """Zenodo client for Infoscience imports"""
 
+import os
+from typing import List
+import tenacity
 from apiclient import (
     APIClient,
     endpoint,
     retry_request,
-    paginated,
     HeaderAuthentication,
     JsonResponseHandler,
-    exceptions,
 )
-
-import tenacity
 from apiclient.retrying import retry_if_api_request_error
-from typing import List, Dict
-from collections import defaultdict
-
-# import ast
-import os
 from dotenv import load_dotenv
-
+from config import logs_dir
 from utils import manage_logger
 import mappings
-from config import logs_dir
+
 
 zenodo_api_base_url = "https://zenodo.org/api/"
 # env var
@@ -49,7 +43,7 @@ class Endpoint:
 
 class Client(APIClient):
 
-    log_file_path = os.path.join(logs_dir, "zenodo_client.log")
+    log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
     @retry_request

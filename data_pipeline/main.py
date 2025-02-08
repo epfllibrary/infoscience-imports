@@ -1,8 +1,10 @@
+"""Main script to run the data pipeline."""
+
 import os
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
 from config import default_queries
-
 from data_pipeline.deduplicator import DataFrameProcessor
 from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
 from data_pipeline.loader import Loader
@@ -28,7 +30,7 @@ def main(
     end_date="2026-01-01",
     queries=None,
     authors_ids=None,
-    output_dir="../data",
+    output_dir=None,
 ):
     """
     Harvests, processes, deduplicates, enriches, and loads publication data from external sources.
@@ -57,7 +59,14 @@ def main(
         df_metadata = results["df_metadata"]
         print(df_metadata.head())
     """
-    os.makedirs(output_dir, exist_ok=True)
+
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent
+    if output_dir is None:
+        output_dir = project_root / "data"
+    output_dir = Path(output_dir).resolve()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
     export_dir = os.path.join(output_dir, execution_timestamp)
@@ -145,20 +154,21 @@ def main(
     if any(
         not df.empty for df in [df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded]
     ):
-        report_generator = GenerateReports(
-            df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
-        )
-        report_path = report_generator.generate_excel_report(output_dir=export_dir)
+        if "row_id" in df_loaded.columns:
+            report_generator = GenerateReports(
+                df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
+            )
+            report_path = report_generator.generate_excel_report(output_dir=export_dir)
 
-        # if report_path:
-        #     report_generator.send_report_by_email(
-        #         recipient_email="recipient_email",
-        #         sender_email="sender_email",
-        #         smtp_server="smtp_server",
-        #         import_start_date=start_date,
-        #         import_end_date=end_date,
-        #         file_path=report_path,
-        #     )
+            # if report_path:
+            #     report_generator.send_report_by_email(
+            #         recipient_email="recipient_email",
+            #         sender_email="sender_email",
+            #         smtp_server="smtp_server",
+            #         import_start_date=start_date,
+            #         import_end_date=end_date,
+            #         file_path=report_path,
+            #     )
 
     return {
         "df_metadata": df_oa_metadata,
@@ -169,6 +179,7 @@ def main(
         "df_rejected": df_rejected,
         "report_path": report_path,  # None if no report was generated
     }
+
 
 if __name__ == "__main__":
     main()

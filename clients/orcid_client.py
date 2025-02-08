@@ -1,26 +1,22 @@
+"""ORCID client for Infoscience imports"""
+
+import os
+import json
+import tenacity
 from apiclient import (
     APIClient,
     endpoint,
-    retry_request,
-    paginated,
     HeaderAuthentication,
     JsonResponseHandler,
-    exceptions
 )
-import tenacity
 from apiclient.retrying import retry_if_api_request_error
 from apiclient.request_formatters import BaseRequestFormatter
 from apiclient.utils.typing import OptionalJsonType, OptionalStr
-from typing import List, Dict
-from collections import defaultdict
-import os
-import json
-from typing import Optional
 from dotenv import load_dotenv
-from utils import manage_logger
 from config import logs_dir
+from utils import manage_logger
 
-log_file_path = os.path.join(logs_dir, "orcid_client.log")
+log_file_path = os.path.join(logs_dir, "logging.log")
 logger = manage_logger(log_file_path)
 
 orcid_prod_public_base_url = "https://pub.orcid.org/v3.0"

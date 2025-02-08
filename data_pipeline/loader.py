@@ -1,3 +1,5 @@
+"""Loader processor for ingesting items into DSpace."""
+
 import os
 import re
 import pandas as pd
@@ -6,7 +8,7 @@ from mappings import licenses_mapping, versions_mapping, collections_mapping
 from utils import manage_logger
 from config import logs_dir
 
-log_file_path = os.path.join(logs_dir, "loader.log")
+log_file_path = os.path.join(logs_dir, "logging.log")
 logger = manage_logger(log_file_path)
 
 dspace_wrapper = DSpaceClientWrapper()

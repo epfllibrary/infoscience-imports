@@ -1,20 +1,15 @@
+"""EPFL API client for Infoscience imports"""
+
+import os
+import tenacity
 from apiclient import (
     APIClient,
     endpoint,
-    retry_request,
-    paginated,
     BasicAuthentication,
     JsonResponseHandler,
-    exceptions,
 )
-import tenacity
 from apiclient.retrying import retry_if_api_request_error
-from apiclient.error_handlers import BaseErrorHandler, ErrorHandler
-from apiclient.response import Response
-from typing import List, Dict
-from collections import defaultdict
-import ast
-import os
+from apiclient.error_handlers import ErrorHandler
 from dotenv import load_dotenv
 from utils import manage_logger, clean_value
 from config import logs_dir
@@ -49,7 +44,7 @@ class Endpoint:
 
 class Client(APIClient):
 
-    log_file_path = os.path.join(logs_dir, "api_epfl_client.log")
+    log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
     @retry_decorator
@@ -123,7 +118,7 @@ class Client(APIClient):
                 f"Received response for {query} from personsQuery: {result_query}"
             )
             results.append(result_query)
-            self.logger.info(f"Response for personsQuery : {result_query}.")
+            self.logger.debug(f"Response for personsQuery : {result_query}.")
             # Process results based on the count
             for result in results:
                 if result and result["count"] == 1:

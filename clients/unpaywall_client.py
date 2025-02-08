@@ -1,31 +1,28 @@
+"""Unpaywall client for Infoscience imports"""
+
+import os
+from typing import List, Tuple, Optional
+from urllib.parse import urljoin
+import numpy as np
+import requests
+import tenacity
+
 from apiclient import (
     APIClient,
     endpoint,
     retry_request,
-    paginated,
-    HeaderAuthentication,
     JsonResponseHandler,
-    exceptions,
 )
-import tenacity
 from apiclient.retrying import retry_if_api_request_error
-from typing import List, Dict
-from collections import defaultdict
-import numpy as np
-import os
-import requests
-import json
-from typing import List, Tuple, Optional
-from urllib.parse import urlparse, urljoin, unquote
-from config import LICENSE_CONDITIONS
-from utils import manage_logger
 from dotenv import load_dotenv
 from config import logs_dir
+from config import LICENSE_CONDITIONS
+from utils import manage_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 email = os.environ.get("UPW_EMAIL")
 
-log_file_path = os.path.join(logs_dir, "unpaywall_client.log")
+log_file_path = os.path.join(logs_dir, "logging.log")
 logger = manage_logger(log_file_path)
 
 unpaywall_base_url = "https://api.unpaywall.org/v2"
@@ -39,14 +36,12 @@ retry_decorator = tenacity.retry(
     reraise=True,
 )
 
-
 @endpoint(base_url=unpaywall_base_url)
 class Endpoint:
     base = ""
     doi = "/{doi}"
 
 class Client(APIClient):
-
     @retry_request
     def fetch_by_doi(self, doi, format="best-oa-location", **param_kwargs):
         logger.info("Starting upw DOI retrieval process.")

@@ -1,0 +1,37 @@
+body {
+    background-color: #f8f9fa;
+}
+
+.container {
+    max-width: 600px;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+}
+
+#status-message {
+    text-align: center;
+    font-weight: bold;
+    margin-top: 15px;
+}
+
+#log-container {
+    height: 300px;
+    overflow-y: auto;
+    background-color: #222;
+    color: #fff;
+    padding: 10px;
+    border-radius: 5px;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+button {
+    font-size: 16px;
+}
+
+#report-section {
+    margin-top: 20px;
+    text-align: center;
+}

@@ -12,7 +12,7 @@ def manage_logger(logfile_name):
         # Create a file handler
         file_handler = logging.FileHandler(logfile_name)
         file_handler.setLevel(
-            logging.DEBUG
+            logging.INFO
         )  # Set the level for the file handler to DEBUG
 
         # Create a console handler
@@ -23,7 +23,7 @@ def manage_logger(logfile_name):
 
         # Create a formatter and set it for both handlers
         formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            "%(asctime)s - %(levelname)s - %(message)s"
         )
         file_handler.setFormatter(formatter)
         console_handler.setFormatter(formatter)

@@ -1,7 +1,6 @@
 """Metadata enrichment: processors for authors and publications"""
 
 import string
-import time
 import re
 import os
 
@@ -41,9 +40,8 @@ class AuthorProcessor:
     def __init__(self, df):
         self.df = df
 
-        log_file_path = os.path.join(logs_dir, "enriching_authors.log")
+        log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
-
 
     def process(self, return_df=False, author_ids_to_check=None):
         """
@@ -520,7 +518,7 @@ class PublicationProcessor:
 
     def __init__(self, df):
         self.df = df
-        log_file_path = os.path.join(logs_dir, "enriching_publications.log")
+        log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
 
     def process(self, return_df=True):
