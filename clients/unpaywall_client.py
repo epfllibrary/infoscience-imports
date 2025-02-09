@@ -3,6 +3,7 @@
 import os
 from typing import List, Tuple, Optional
 from urllib.parse import urljoin
+from pathlib import Path
 import numpy as np
 import requests
 import tenacity
@@ -36,7 +37,14 @@ retry_decorator = tenacity.retry(
     reraise=True,
 )
 
-PDF_FOLDER = "../data/pdfs"
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent
+output_dir = project_root / "data" / "pdfs"
+output_dir = Path(output_dir).resolve()
+
+output_dir.mkdir(parents=True, exist_ok=True)
+
+PDF_FOLDER = output_dir
 
 
 def ensure_pdf_folder():
