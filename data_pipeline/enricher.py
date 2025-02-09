@@ -9,6 +9,7 @@ from fuzzywuzzy import fuzz, process
 import nameparser
 from nameparser import HumanName
 from utils import manage_logger, remove_accents, clean_value
+from concurrent.futures import ThreadPoolExecutor
 
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
@@ -521,19 +522,25 @@ class PublicationProcessor:
         log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
 
+    def fetch_unpaywall_data(self, doi):
+        return UnpaywallClient.fetch_by_doi(doi, format="best-oa-location")
+
     def process(self, return_df=True):
         self.df = self.df.copy()
+        self.df["upw_is_oa"] = False
 
-        for index, row in self.df.iterrows():
-            if pd.notna(row['doi']):
-                unpaywall_data = UnpaywallClient.fetch_by_doi(row['doi'], format="best-oa-location")
-                if unpaywall_data is not None:
-                    self.df.at[index, 'upw_is_oa'] = unpaywall_data.get('is_oa')
-                    self.df.at[index, 'upw_oa_status'] = unpaywall_data.get('oa_status')
-                    self.df.at[index, "upw_license"] = unpaywall_data.get("license")
-                    self.df.at[index, "upw_version"] = unpaywall_data.get("version")
-                    self.df.at[index, 'upw_pdf_urls'] = unpaywall_data.get('pdf_urls')
-                    self.df.at[index, "upw_valid_pdf"] = unpaywall_data.get("valid_pdf")
-                else:
-                    self.logger.warning(f"No unpaywall data returned for DOI {row['doi']}.")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            results = list(executor.map(self.fetch_unpaywall_data, self.df['doi'].dropna()))
+
+        for index, result in zip(self.df.index, results):
+            if result is not None:
+                self.df.at[index, "upw_is_oa"] = bool(result.get("is_oa"))
+                self.df.at[index, 'upw_oa_status'] = result.get('oa_status')
+                self.df.at[index, "upw_license"] = result.get("license")
+                self.df.at[index, "upw_version"] = result.get("version")
+                self.df.at[index, 'upw_pdf_urls'] = result.get('pdf_urls')
+                self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
+            else:
+                self.logger.warning(f"No unpaywall data returned for DOI {row['doi']}.")
+
         return self.df if return_df else self
