@@ -1,6 +1,6 @@
 # Ignore virtual env folder#
 ###################
-venv_ifs3_imports
+**/**venv**/**
 
 # Ignore submodules#
 ###################
@@ -8,7 +8,7 @@ dspace-rest-python
 
 # Ignore data folder#
 ###################
-harvested-data/**
+data/**
 logs/**
 
 # Ignore archived version of notebooks and python stuffs #

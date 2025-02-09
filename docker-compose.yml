@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # 🚀 PostgreSQL Database for Airflow
+  postgres:
+    image: postgres:13
+    container_name: airflow-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 🌐 Airflow Service
+  airflow:
+    image: airflow-infoscience
+    container_name: airflow-container
+    build: .
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      # Airflow Database
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${AIRFLOW_SQL_ALCHEMY_CONN}
+      - PYTHONPATH=/opt/airflow
+
+
+      # Airflow Authentication
+      - AIRFLOW_USERNAME=${AIRFLOW_USERNAME}
+      - AIRFLOW_PASSWORD=${AIRFLOW_PASSWORD}
+      - AIRFLOW_EMAIL=${AIRFLOW_EMAIL}
+      - AIRFLOW_ROLE=${AIRFLOW_ROLE}
+
+      # API Secrets
+      - WOS_TOKEN=${WOS_TOKEN}
+      - SCOPUS_API_KEY=${SCOPUS_API_KEY}
+      - SCOPUS_INST_TOKEN=${SCOPUS_INST_TOKEN}
+      - API_EPFL_USER=${API_EPFL_USER}
+      - API_EPFL_PWD=${API_EPFL_PWD}
+      - ELS_API_KEY=${ELS_API_KEY}
+      - ZENODO_API_KEY=${ZENODO_API_KEY}
+      - ORCID_API_TOKEN=${ORCID_API_TOKEN}
+      - UPW_EMAIL=${UPW_EMAIL}
+      - DS_API_TOKEN=${DS_API_TOKEN}
+      - DS_API_ENDPOINT=${DS_API_ENDPOINT}
+      - DS_ACCESS_TOKEN=${DS_ACCESS_TOKEN}
+
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data_pipeline:/opt/airflow/data_pipeline
+      - ./clients:/opt/airflow/clients
+      - ./dspace:/opt/airflow/dspace
+      - ./config.py:/opt/airflow/config.py
+      - ./mappings.py:/opt/airflow/mappings.py
+      - ./utils.py:/opt/airflow/utils.py
+      - ./logs:/opt/airflow/logs
+      - ./data:/opt/airflow/data
+      - ./.env:/opt/airflow/.env
+
+    ports:
+      - "8080:8080"
+    entrypoint: >
+      /bin/bash -c "
+      airflow db init &&
+      airflow db upgrade &&
+      airflow webserver & airflow scheduler"
+
+volumes:
+  postgres_data:
