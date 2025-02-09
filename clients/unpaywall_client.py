@@ -3,6 +3,7 @@
 import os
 from typing import List, Tuple, Optional
 from urllib.parse import urljoin
+from pathlib import Path
 import numpy as np
 import requests
 import tenacity
@@ -35,6 +36,30 @@ retry_decorator = tenacity.retry(
     stop=tenacity.stop_after_attempt(5),
     reraise=True,
 )
+
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent
+output_dir = project_root / "data" / "pdfs"
+output_dir = Path(output_dir).resolve()
+
+output_dir.mkdir(parents=True, exist_ok=True)
+
+PDF_FOLDER = output_dir
+
+
+def ensure_pdf_folder():
+    try:
+        os.makedirs(PDF_FOLDER, exist_ok=True)
+        if not os.access(PDF_FOLDER, os.W_OK):
+            logger.warning(
+                f"Permission issue detected for {PDF_FOLDER}, try to fix it."
+            )
+            os.chmod(
+                PDF_FOLDER, stat.S_IRWXU | stat.S_IRGRP | stat.S_IROTH
+            )
+    except Exception as e:
+        logger.error(f"Error during PDF directory check : {str(e)}")
+
 
 @endpoint(base_url=unpaywall_base_url)
 class Endpoint:
@@ -136,8 +161,7 @@ class Client(APIClient):
     def _validate_and_download_pdf(
         self, urls: List[str], doi: str
     ) -> Tuple[Optional[str], Optional[str]]:
-        pdf_folder = "../data/pdfs"
-        os.makedirs(pdf_folder, exist_ok=True)
+        ensure_pdf_folder()
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -153,13 +177,13 @@ class Client(APIClient):
             try:
                 # Vérification de l'URL et téléchargement du PDF si valide
                 pdf_url, filename = self._check_and_download_pdf(
-                    url, doi, pdf_folder, headers
+                    url, doi, PDF_FOLDER, headers
                 )
 
                 if pdf_url and filename:
                     # Vérification du fichier téléchargé (est-ce bien un PDF ?)
                     if filename.lower().endswith(".pdf") and os.path.isfile(
-                        os.path.join(pdf_folder, filename)
+                        os.path.join(PDF_FOLDER, filename)
                     ):
                         logger.info(f"PDF file successfully downloaded from {url}")
                         return pdf_url, filename
@@ -182,7 +206,7 @@ class Client(APIClient):
                 logger.info(
                     f"Elsevier PDF detected : {attempt_url}. Download attempt via dedicated API."
                 )
-                return self._get_elsevier_pdf(doi, els_api_key, pdf_folder)
+                return self._get_elsevier_pdf(doi, els_api_key, PDF_FOLDER)
 
             # Processus normal pour les autres URLs
             try:
@@ -193,7 +217,7 @@ class Client(APIClient):
                 content_type = response.headers.get("Content-Type", "").lower()
 
                 if "application/pdf" in content_type:
-                    return self._download_pdf(response, attempt_url, doi, pdf_folder)
+                    return self._download_pdf(response, attempt_url, doi, PDF_FOLDER)
                 else:
                     logger.info(
                         f"The URL {attempt_url} does not point to a PDF file. Content-Type: {content_type}"
@@ -250,9 +274,7 @@ class Client(APIClient):
 
         headers = {"Accept": "application/pdf", "X-ELS-APIKey": api_key}
 
-        # Créer le dossier s'il n'existe pas
-        if not os.path.exists(pdf_folder):
-            os.makedirs(pdf_folder)
+        ensure_pdf_folder()
 
         response = requests.get(url, headers=headers, stream=True, timeout=30)
 

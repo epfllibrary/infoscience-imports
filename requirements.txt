@@ -18,3 +18,5 @@ tenacity
 pycountry
 openpyxl
 xlsxwriter
+flask
+apache-airflow
