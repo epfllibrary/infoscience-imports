@@ -541,6 +541,6 @@ class PublicationProcessor:
                 self.df.at[index, 'upw_pdf_urls'] = result.get('pdf_urls')
                 self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
             else:
-                self.logger.warning(f"No unpaywall data returned for DOI {row['doi']}.")
+                self.logger.warning(f"No unpaywall data returned for DOI {self.df.at[index, 'doi']}.")
 
         return self.df if return_df else self
