@@ -877,8 +877,8 @@ class Loader:
                 if pd.notna(valid_pdf) and valid_pdf.strip()
                 else None
             )
-            logger.info(
-                f"Chemin du fichier PDF détecté : {file_path} - Existence: {file_path.exists() if file_path else 'None'}"
+            logger.debug(
+                f"Path to PDF file : {file_path} - Exists: {file_path.exists() if file_path else 'None'}"
             )
 
             if workspace_response and "id" in workspace_response:
