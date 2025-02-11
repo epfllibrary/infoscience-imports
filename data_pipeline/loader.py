@@ -2,6 +2,7 @@
 
 import os
 import re
+from pathlib import Path
 import pandas as pd
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from mappings import licenses_mapping, versions_mapping, collections_mapping
@@ -11,6 +12,11 @@ from config import logs_dir
 log_file_path = os.path.join(logs_dir, "logging.log")
 logger = manage_logger(log_file_path)
 
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent
+pdf_dir = project_root / "data" / "pdfs"
+
+
 dspace_wrapper = DSpaceClientWrapper()
 class Loader:
     """Load items into DSpace using workflow."""
@@ -19,6 +25,10 @@ class Loader:
         self.df_metadata = df_metadata
         self.df_epfl_authors = df_epfl_authors
         self.df_authors = df_authors
+
+        script_dir = Path(__file__).resolve().parent
+        project_root = script_dir.parent
+        self.pdf_dir = (project_root / "data" / "pdfs").resolve()
 
     def _is_valid_uuid(self, value):
         """Check if the value is a valid UUID using regex."""
@@ -861,10 +871,14 @@ class Loader:
             )
 
             valid_pdf = row.get("upw_valid_pdf", "")
+            # Si valid_pdf est déjà un chemin absolu, on ne modifie pas
             file_path = (
-                f"../data/pdfs/{valid_pdf}"
-                if pd.notna(valid_pdf) and valid_pdf != ""
+                pdf_dir / valid_pdf
+                if pd.notna(valid_pdf) and valid_pdf.strip()
                 else None
+            )
+            logger.info(
+                f"Chemin du fichier PDF détecté : {file_path} - Existence: {file_path.exists() if file_path else 'None'}"
             )
 
             if workspace_response and "id" in workspace_response:
