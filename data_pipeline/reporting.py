@@ -180,18 +180,18 @@ class GenerateReports:
     def generate_report(self):
         """Generate a consolidated report with the required indicators and corresponding data rows."""
         return {
-            "Publications harvested": self.total_publications_found(),
-            "Publications by Source": self.publications_by_source(),
-            "Publications by Type": self.publications_by_collection(),
+            "Filtered Publications": self.total_publications_found(),
             "Rejected Duplicated": self.duplicated_publications_count(),
             "Rejected Not Reconciliated": self.excluded_publications_count(),
+            "Publications by Source": self.publications_by_source(),
+            "Publications by Type": self.publications_by_collection(),
+            "OA Publications": self.open_access_publications(),
+            "OA with PDF": self.open_access_with_pdf(),
             "Imported in Workspace": self.imported_publications_workspace(),
             "Imported in Workflow": self.imported_publications_workflow(),
             "Imported by Journal": self.imported_publications_by_journal(),
-            "Open Access Publications": self.open_access_publications(),
-            "Open Access with PDF": self.open_access_with_pdf(),
-            "EPFL Affiliated Authors": self.epfl_affiliated_publications(),
-            "EPFL Reconciled Authors": self.epfl_reconciled_authors(),
+            "Detected EPFL Authors": self.epfl_affiliated_publications(),
+            "Matched EPFL Authors": self.epfl_reconciled_authors(),
             "EPFL Authors with Unit": self.epfl_reconciled_authors_with_unit(),
             "Failed Imports": self.failed_imports(),
         }

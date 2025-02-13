@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 🚀 PostgreSQL Database for Airflow
   postgres:
@@ -25,17 +23,19 @@ services:
       - postgres
     environment:
       # Airflow Database
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
       - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${AIRFLOW_SQL_ALCHEMY_CONN}
       - PYTHONPATH=/opt/airflow
 
 
       # Airflow Authentication
-      - AIRFLOW_USERNAME=${AIRFLOW_USERNAME}
-      - AIRFLOW_PASSWORD=${AIRFLOW_PASSWORD}
-      - AIRFLOW_EMAIL=${AIRFLOW_EMAIL}
-      - AIRFLOW_ROLE=${AIRFLOW_ROLE}
+      # - AIRFLOW_USERNAME=${AIRFLOW_USERNAME}
+      # - AIRFLOW_PASSWORD=${AIRFLOW_PASSWORD}
+      # - AIRFLOW_EMAIL=${AIRFLOW_EMAIL}
+      # - AIRFLOW_ROLE=${AIRFLOW_ROLE}
 
       # API Secrets
       - WOS_TOKEN=${WOS_TOKEN}
@@ -50,6 +50,9 @@ services:
       - DS_API_TOKEN=${DS_API_TOKEN}
       - DS_API_ENDPOINT=${DS_API_ENDPOINT}
       - DS_ACCESS_TOKEN=${DS_ACCESS_TOKEN}
+      - RECIPIENT_EMAIL=${RECIPIENT_EMAIL}
+      - SENDER_EMAIL=${SENDER_EMAIL}
+      - SMTP_SERVER=${SMTP_SERVER}
 
     volumes:
       - ./dags:/opt/airflow/dags
