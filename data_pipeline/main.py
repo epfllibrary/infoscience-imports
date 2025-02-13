@@ -1,9 +1,10 @@
 """Main script to run the data pipeline."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
+from dotenv import load_dotenv
 from config import default_queries
 from data_pipeline.deduplicator import DataFrameProcessor
 from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
@@ -16,6 +17,12 @@ from data_pipeline.harvester import (
     # OpenAlexHarvester (if needed)
 )
 
+load_dotenv()
+
+recipient_email = os.getenv("RECIPIENT_EMAIL")
+sender_email = os.getenv("SENDER_EMAIL")
+smtp_server = os.getenv("SMTP_SERVER")
+
 
 def save_csv(df, filename, export_dir):
     """Saves a DataFrame to CSV if it's not empty and ensures the directory exists."""
@@ -26,8 +33,8 @@ def save_csv(df, filename, export_dir):
 
 
 def main(
-    start_date="2025-01-01",
-    end_date="2026-01-01",
+    start_date=None,
+    end_date=None,
     queries=None,
     authors_ids=None,
     output_dir=None,
@@ -59,6 +66,11 @@ def main(
         df_metadata = results["df_metadata"]
         print(df_metadata.head())
     """
+    today = datetime.now().date()
+    if start_date is None:
+        start_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+    if end_date is None:
+        end_date = today.strftime("%Y-%m-%d")
 
     script_dir = Path(__file__).resolve().parent
     project_root = script_dir.parent
@@ -160,15 +172,15 @@ def main(
             )
             report_path = report_generator.generate_excel_report(output_dir=export_dir)
 
-            # if report_path:
-            #     report_generator.send_report_by_email(
-            #         recipient_email="recipient_email",
-            #         sender_email="sender_email",
-            #         smtp_server="smtp_server",
-            #         import_start_date=start_date,
-            #         import_end_date=end_date,
-            #         file_path=report_path,
-            #     )
+            if report_path:
+                report_generator.send_report_by_email(
+                    recipient_email=recipient_email,
+                    sender_email=sender_email,
+                    smtp_server=smtp_server,
+                    import_start_date=start_date,
+                    import_end_date=end_date,
+                    file_path=report_path,
+                )
 
     return {
         "df_metadata": df_oa_metadata,
