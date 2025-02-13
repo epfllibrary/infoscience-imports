@@ -1,12 +1,16 @@
+"""A DAG to orchestrate the infoscience import data pipeline"""
+
+import os
+import pickle
+import base64
+from dotenv import load_dotenv
+from pathlib import Path
 from datetime import datetime, timedelta
+import pandas as pd
+
 from airflow import DAG
 from airflow.decorators import task
 from airflow.operators.python import get_current_context
-import os
-import pandas as pd
-from pathlib import Path
-import pickle
-import base64
 
 
 # Import project-specific modules
@@ -16,6 +20,13 @@ from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
 from data_pipeline.loader import Loader
 from data_pipeline.reporting import GenerateReports
 from data_pipeline.harvester import WosHarvester, ScopusHarvester
+
+
+load_dotenv()
+
+recipient_email = os.getenv("RECIPIENT_EMAIL")
+sender_email = os.getenv("SENDER_EMAIL")
+smtp_server = os.getenv("SMTP_SERVER")
 
 
 def serialize_dataframe(df):
@@ -30,11 +41,20 @@ def deserialize_dataframe(data):
 default_args = {
     "owner": "airflow",
     "depends_on_past": False,
-    "start_date": datetime(2024, 2, 9),
+    "start_date": datetime(2024, 2, 13),
     "retries": 1,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(minutes=30),
 }
 
+
+def get_date_range():
+    """Calculate date range for harvesting"""
+    today = datetime.now().date()
+    start = (today - timedelta(days=2)).strftime("%Y-%m-%d")
+    end = today.strftime("%Y-%m-%d")
+    return start, end
+
+start, end = get_date_range()
 
 def get_execution_path():
     """Generate execution directory based on run timestamp."""
@@ -45,9 +65,8 @@ def get_execution_path():
     execution_dir.mkdir(parents=True, exist_ok=True)
     return execution_dir
 
-
 with DAG(
-    "publication_data_pipeline",
+    "infoscience_import_pipeline",
     default_args=default_args,
     description="A DAG to orchestrate the infoscience import data pipeline",
     schedule_interval="@daily",
@@ -55,74 +74,56 @@ with DAG(
 ) as dag:
 
     @task()
-    def harvest_wos(start: str, end: str, queries: dict):
-        """Harvest publications from WoS and save as CSV."""
-        harvester = WosHarvester(start, end, queries["wos"])
-        df_wos = harvester.harvest()
-        file_path = get_execution_path() / "Raw_WosPublications.csv"
-        if not df_wos.empty:
-            df_wos.to_csv(file_path, index=False)
-        return serialize_dataframe(df_wos)
-
-    @task()
-    def harvest_scopus(start: str, end: str, queries: dict):
-        """Harvest publications from Scopus and save as CSV."""
-        harvester = ScopusHarvester(start, end, queries["scopus"])
-        df_scopus = harvester.harvest()
-        file_path = get_execution_path() / "Raw_ScopusPublications.csv"
-        if not df_scopus.empty:
-            df_scopus.to_csv(file_path, index=False)
-        return serialize_dataframe(df_scopus)
+    def harvest_data(source, start, end, queries):
+        """harvest data from external source"""
+        harvester_cls = WosHarvester if source == "wos" else ScopusHarvester
+        harvester = harvester_cls(start, end, queries[source])
+        df = harvester.harvest()
+        file_path = get_execution_path() / f"Raw_{source.capitalize()}Publications.csv"
+        if not df.empty:
+            df.to_csv(file_path, index=False)
+        return serialize_dataframe(df)
 
     @task()
     def deduplicate(wos_data, scopus_data):
-        """Deduplicate publications from harvested data files."""
-        df_wos = deserialize_dataframe(wos_data)
-        df_scopus = deserialize_dataframe(scopus_data)
-
-        dfs = [df for df in [df_wos, df_scopus] if not df.empty]
-        df_deduplicated = (
-            DataFrameProcessor(*dfs).deduplicate_dataframes() if dfs else pd.DataFrame()
-        )
-        file_path = get_execution_path() / "DeduplicatedPublications.csv"
-        if not df_deduplicated.empty:
-            df_deduplicated.to_csv(file_path, index=False)
-        return serialize_dataframe(df_deduplicated)
+        """Deduplicate items between sources"""
+        df_wos, df_scopus = deserialize_dataframe(wos_data), deserialize_dataframe(scopus_data)
+        df_combined = [df for df in [df_wos, df_scopus] if not df.empty]
+        df_dedup = DataFrameProcessor(*df_combined).deduplicate_dataframes() if df_combined else pd.DataFrame()
+        file_path = get_execution_path() / "SourcesDedupPublications.csv"
+        if not df_dedup.empty:
+            df_dedup.to_csv(file_path, index=False)
+        return serialize_dataframe(df_dedup)
 
     @task()
-    def deduplicate_infoscience_final(deduplicated_data):
-        df_deduplicated = deserialize_dataframe(deduplicated_data)
-        deduplicator = DataFrameProcessor(df_deduplicated)
-        df_final, df_unloaded = deduplicator.deduplicate_infoscience(df_deduplicated)
+    def process_deduplicated_data(deduplicated_data):
+        """Check existing items in the institutional repositoy."""
+        df = deserialize_dataframe(deduplicated_data)
+        deduplicator = DataFrameProcessor(df)
+        df_final, df_unloaded = deduplicator.deduplicate_infoscience(df)
 
-        final_path = get_execution_path() / "FinalDeduplicatedPublications.csv"
-        if not df_final.empty:
-            df_final.to_csv(final_path, index=False)
-
-        unloaded_path = get_execution_path() / "UnloadedPublications.csv"
-        if not df_unloaded.empty:
-            df_unloaded.to_csv(unloaded_path, index=False)
+        for name, df_data in {"InfoscienceDedupPublications": df_final, "UnloadedDuplicatesPublications": df_unloaded}.items():
+            path = get_execution_path() / f"{name}.csv"
+            if not df_data.empty:
+                df_data.to_csv(path, index=False)
 
         return serialize_dataframe({"final": df_final, "unloaded": df_unloaded})
 
     @task()
-    def process_metadata_authors(final_unloaded_data):
-        """Generate metadata file from final deduplicated publications and return the DataFrame."""
-        result = deserialize_dataframe(final_unloaded_data)
+    def process_metadata(filtered_data):
+        """Split dataframe in two : metadata and authors."""
+        result = deserialize_dataframe(filtered_data)
         df_final = result["final"]
 
-        if df_final is None or df_final.empty:
+        if df_final is None or (isinstance(df_final, pd.DataFrame) and df_final.empty):
             return serialize_dataframe({"metadata": None, "authors": None})
 
         deduplicator = DataFrameProcessor(df_final)
         df_metadata, df_authors = deduplicator.generate_main_dataframes(df_final)
 
-        # Définir le chemin du fichier de sortie
-        metadata_path = get_execution_path() / "Publications.csv"
-        df_metadata.to_csv(metadata_path, index=False)
-
-        authors_path = get_execution_path() / "AuthorsAndAffiliations.csv"
-        df_authors.to_csv(authors_path, index=False)
+        for name, df_data in {"Publications": df_metadata, "AuthorsAndAffiliations": df_authors}.items():
+            path = get_execution_path() / f"{name}.csv"
+            df_data.to_csv(path, index=False)
 
         return serialize_dataframe({"metadata": df_metadata, "authors": df_authors})
 
@@ -131,7 +132,8 @@ with DAG(
         """Process authors and filter EPFL-related authors."""
         result = deserialize_dataframe(metadata_authors_data)
         df_authors = result["authors"]
-        if df_authors is None or df_authors.empty:
+
+        if df_authors is None or (isinstance(df_authors, pd.DataFrame) and df_authors.empty):
             return None
 
         df_epfl_authors = (
@@ -154,7 +156,7 @@ with DAG(
         result = deserialize_dataframe(metadata_authors_data)
         df_metadata = result["metadata"]
 
-        if df_metadata is None or df_metadata.empty:
+        if df_metadata is None or (isinstance(df_metadata, pd.DataFrame) and df_metadata.empty):
             return None
 
         df_oa_metadata = PublicationProcessor(df_metadata).process(return_df=True)
@@ -170,8 +172,7 @@ with DAG(
         """Load enriched publication data into the system."""
         df_oa_metadata = deserialize_dataframe(oa_metadata_data)
         df_epfl_authors = deserialize_dataframe(epfl_authors_data)
-        result = deserialize_dataframe(metadata_authors_data)
-        df_authors = result["authors"]
+        df_authors = deserialize_dataframe(metadata_authors_data)["authors"]
 
         df_loaded = Loader(
             df_oa_metadata, df_epfl_authors, df_authors
@@ -203,49 +204,56 @@ with DAG(
 
     @task()
     def generate_report(
-        oa_metadata_data, unloaded_data, epfl_authors_data, loaded_data
+        oa_metadata_data, filtered_data, epfl_authors_data, loaded_data
     ):
         """Generate and store a report summarizing the pipeline results."""
         df_oa_metadata = deserialize_dataframe(oa_metadata_data)
-        df_unloaded = deserialize_dataframe(unloaded_data)
+        result = deserialize_dataframe(filtered_data)
+        df_unloaded = result["unloaded"]
+
         df_epfl_authors = deserialize_dataframe(epfl_authors_data)
         df_loaded = deserialize_dataframe(loaded_data)
 
-        report_path = GenerateReports(
+        report_generator = GenerateReports(
             df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
-        ).generate_excel_report(output_dir=get_execution_path())
+        )
+        report_path = report_generator.generate_excel_report(
+            output_dir=get_execution_path()
+        )
+
+        if report_path:
+            report_generator.send_report_by_email(
+                recipient_email=recipient_email,
+                sender_email=sender_email,
+                smtp_server=smtp_server,
+                import_start_date=start,
+                import_end_date=end,
+                file_path=report_path,
+            )
 
         return str(report_path)
 
-    wos_data = harvest_wos("2025-02-10", "2025-02-11", default_queries)
-    scopus_data = harvest_scopus("2025-02-10", "2025-02-11", default_queries)
-
+    wos_data = harvest_data("wos", start, end, default_queries)
+    scopus_data = harvest_data("scopus", start, end, default_queries)
     deduplicated_data = deduplicate(wos_data, scopus_data)
-    final_unloaded_data = deduplicate_infoscience_final(deduplicated_data)
-
-    metadata_authors_data = process_metadata_authors(final_unloaded_data)
-
+    filtered_data = process_deduplicated_data(deduplicated_data)
+    metadata_authors_data = process_metadata(filtered_data)
     epfl_authors_data = extract_epfl_authors(metadata_authors_data)
     oa_metadata_data = enrich_metadata(metadata_authors_data)
-
     loaded_data = load_data(oa_metadata_data, epfl_authors_data, metadata_authors_data)
-
     rejected_data = generate_rejected_publications(oa_metadata_data, loaded_data)
-
-    report_file = generate_report(
-        oa_metadata_data, final_unloaded_data, epfl_authors_data, loaded_data
-    )
+    report_file = generate_report(oa_metadata_data, filtered_data, epfl_authors_data, loaded_data)
 
     # Définition des dépendances
     [wos_data, scopus_data] >> deduplicated_data
-    deduplicated_data >> final_unloaded_data
-    final_unloaded_data >> metadata_authors_data
+    deduplicated_data >> filtered_data
+    filtered_data >> metadata_authors_data
     metadata_authors_data >> [oa_metadata_data, epfl_authors_data]
     [oa_metadata_data, epfl_authors_data, metadata_authors_data] >> loaded_data
     loaded_data >> rejected_data
     [
         oa_metadata_data,
-        final_unloaded_data,
+        filtered_data,
         epfl_authors_data,
         loaded_data,
     ] >> report_file
