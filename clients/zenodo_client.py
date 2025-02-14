@@ -85,7 +85,7 @@ class Client(APIClient):
         Returns
         Number of records found by the query
         """
-        param_kwargs.setdefault("size", 1)
+        param_kwargs.setdefault("size", 100)
         param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
@@ -119,7 +119,7 @@ class Client(APIClient):
         A list of Zenodo ids
         """
 
-        param_kwargs.setdefault("size", 10)
+        param_kwargs.setdefault("size", 100)
         param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
@@ -158,7 +158,7 @@ class Client(APIClient):
             zenodo_id, title, DOI, doctype, pubyear, authors,
             ifs3_collection, ifs3_collection_id
         """
-        param_kwargs.setdefault("size", 10)
+        param_kwargs.setdefault("size", 2)
         param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
