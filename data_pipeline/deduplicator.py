@@ -83,7 +83,7 @@ class DataFrameProcessor:
         source_order = [
             "wos",
             "scopus",
-            "zenodo",
+            "datacite",
         ]  # Define the source order if not already done
         combined_df["source"] = pd.Categorical(
             combined_df["source"], categories=source_order, ordered=True

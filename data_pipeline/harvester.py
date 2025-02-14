@@ -218,8 +218,6 @@ class ZenodoHarvester(Harvester):
             return pd.DataFrame()
         size = 50
         recs = []
-        print(total)
-        print(range(0, 1 + int(total) // size))
         for i in range(0, 1 + int(total) // size):
             self.logger.info(
                 f"Harvest objects {i*size*(int(total)//size)+1} to {i*size*(int(total)//size)} out of a total of {total} objects"

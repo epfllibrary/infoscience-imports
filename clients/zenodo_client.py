@@ -14,6 +14,7 @@ import tenacity
 from apiclient.retrying import retry_if_api_request_error
 from typing import List, Dict
 from collections import defaultdict
+
 # import ast
 import os
 from dotenv import load_dotenv
@@ -28,10 +29,8 @@ zenodo_api_key = os.environ.get("ZENODO_API_KEY")
 
 accepted_doctypes = mappings.doctypes_mapping_dict["source_zenodo"].keys()
 
-zenodo_authentication_method = HeaderAuthentication(
-    token=zenodo_api_key,
-    scheme=None
-)
+# Probably not strictly necessary, we only perform read operations
+zenodo_authentication_method = HeaderAuthentication(token=zenodo_api_key, scheme=None)
 
 retry_decorator = tenacity.retry(
     retry=retry_if_api_request_error(status_codes=[429]),
@@ -49,7 +48,6 @@ class Endpoint:
 
 
 class Client(APIClient):
-
     logger = manage_logger("./logs/zenodo_client.log")
 
     @retry_request
@@ -60,7 +58,7 @@ class Client(APIClient):
         =>
         https://zenodo.org/api/records?q=parent.communities.entries.id:"3c1383da-d7ab-4167-8f12-4d8aa0cc637f"
 
-        Default args (can be orverwritten)
+        Default args (can be overwritten)
         none
 
         Usage
@@ -92,8 +90,8 @@ class Client(APIClient):
         Returns
         Number of records found by the query
         """
-        param_kwargs.setdefault('size', 1)
-        param_kwargs.setdefault('page', 1)
+        param_kwargs.setdefault("size", 1)
+        param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
         return self.search_query(**self.params)["hits"]["total"]
@@ -126,8 +124,8 @@ class Client(APIClient):
         A list of Zenodo ids
         """
 
-        param_kwargs.setdefault('size', 10)
-        param_kwargs.setdefault('page', 1)
+        param_kwargs.setdefault("size", 10)
+        param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
         results = self.search_query(**self.params)["hits"]["hits"]
@@ -165,8 +163,8 @@ class Client(APIClient):
             zenodo_id, title, DOI, doctype, pubyear, authors,
             ifs3_doctype, ifs3_collection_id
         """
-        param_kwargs.setdefault('size', 10)
-        param_kwargs.setdefault('page', 1)
+        param_kwargs.setdefault("size", 10)
+        param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
         result = self.search_query(**self.params)
@@ -190,7 +188,7 @@ class Client(APIClient):
         """
 
         result = self.get(Endpoint.uniqueId.format(zenodoId=zenodo_id))
-        if 'created' in result:
+        if "created" in result:
             return self._process_record(result, format)
         return None
 
@@ -223,8 +221,8 @@ class Client(APIClient):
             zenodo_id, title, DOI, doctype, pubyear
         """
         record = {
-            "source": "zenodo",
-            "internal_id": f"ZENODO:{x["id"]}",
+            "source": "datacite",
+            "internal_id": x["doi"].lower(),
             "doi": x["doi"].lower(),
             "title": x["metadata"]["title"],
             "doctype": x["metadata"]["resource_type"]["title"],
@@ -259,7 +257,7 @@ class Client(APIClient):
     def _extract_first_doctype(self, x):
         print(x["metadata"]["resource_type"])
         doctype = x["metadata"]["resource_type"]["type"]
-        if 'subtype' in x["metadata"]["resource_type"]:
+        if "subtype" in x["metadata"]["resource_type"]:
             doctype += f'/{x["metadata"]["resource_type"]["subtype"]}'
         print(doctype)
         return doctype
@@ -312,15 +310,17 @@ class Client(APIClient):
                     # Extract author details
                     author_name = author.get("name", None)
                     orcid_id = author.get("orcid", None)
-                    affiliation = author.get('affiliation', None)
+                    affiliation = author.get("affiliation", None)
 
                     # Add to result list
-                    result.append({
-                        "author": author_name,
-                        "internal_author_id": None,
-                        "orcid_id": orcid_id,
-                        "organizations": affiliation
-                    })
+                    result.append(
+                        {
+                            "author": author_name,
+                            "internal_author_id": None,
+                            "orcid_id": orcid_id,
+                            "organizations": affiliation,
+                        }
+                    )
 
                 except KeyError as e:
                     print(f"Skipping author due to missing key: {e}")

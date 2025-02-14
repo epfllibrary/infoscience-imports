@@ -52,10 +52,10 @@ class DSpaceClientWrapper:
             item_id = str(x["internal_id"]).replace("WOS:", "").strip()
         elif identifier_type == "scopus":
             item_id = str(x["internal_id"]).replace("SCOPUS_ID:", "").strip()
-        elif identifier_type == "zenodo":
+        elif identifier_type == "datacite":
             item_id = x["doi"].strip()
         else:
-            raise ValueError("identifier_type must be 'wos', 'scopus' or 'zenodo'")
+            raise ValueError("identifier_type must be 'wos', 'scopus' or 'datacite'")
 
         query = f'(itemidentifier:"*{item_id}*")'
         title_query = f"(title:({cleaned_title}) AND (dateIssued:{pubyear} OR dateIssued:{previous_year} OR dateIssued:{next_year}))"

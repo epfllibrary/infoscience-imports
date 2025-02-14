@@ -16,6 +16,7 @@ from clients.orcid_client import OrcidClient
 from config import scopus_epfl_afids, unit_types
 from utils import manage_logger
 
+
 class AuthorProcessor:
     """
     This class is designed to process a DataFrame containing research publications and enrich it with information about EPFL affiliations.
@@ -33,25 +34,31 @@ class AuthorProcessor:
     processor = Processor(your_dataframe)
     processor.process().nameparse_authors().services_istex_orcid_reconciliation().orcid_data_reconciliation()
     """
+
     def __init__(self, df):
         self.df = df
         self.logger = manage_logger("./logs/enriching_authors.log")
 
     def process(self, return_df=False):
-
         self.df = self.df.copy()
 
         for index, row in self.df.iterrows():
-            if row['source'] == 'scopus':
-                self.df.at[index, 'epfl_affiliation'] = self._process_scopus(row['organizations'])
-            elif row['source'] == 'wos':
-                self.df.at[index, 'epfl_affiliation'] = self._process_wos(row['organizations'])
-            elif row['source'] == 'zenodo':
-                self.df.at[index, 'epfl_affiliation'] = self._process_zenodo(row['organizations'])
+            if row["source"] == "scopus":
+                self.df.at[index, "epfl_affiliation"] = self._process_scopus(
+                    row["organizations"]
+                )
+            elif row["source"] == "wos":
+                self.df.at[index, "epfl_affiliation"] = self._process_wos(
+                    row["organizations"]
+                )
+            elif row["source"] == "datacite":
+                self.df.at[index, "epfl_affiliation"] = self._process_zenodo(
+                    row["organizations"]
+                )
             else:
                 # Default to False for unknown sources
                 print(f"Unknown source: {row['source']}")
-                self.df.at[index, 'epfl_affiliation'] = False
+                self.df.at[index, "epfl_affiliation"] = False
         return self.df if return_df else self
 
     def _process_scopus(self, text):
@@ -66,14 +73,15 @@ class AuthorProcessor:
 
     def _process_wos(self, text):
         keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
-        return any(process.extractOne(keyword,
-                                     [text],
-                                     scorer=fuzz.partial_ratio)[1] >= 80 for keyword in keywords)
+        return any(
+            process.extractOne(keyword, [text], scorer=fuzz.partial_ratio)[1] >= 80
+            for keyword in keywords
+        )
 
     def filter_epfl_authors(self, return_df=False):
         self.df = self.df.copy()
 
-        self.df = self.df[self.df['epfl_affiliation']]
+        self.df = self.df[self.df["epfl_affiliation"]]
         return self.df if return_df else self
 
     def clean_authors(self, return_df=False):
@@ -82,23 +90,29 @@ class AuthorProcessor:
         # Function to clean author names
         def clean_author(author):
             author = author.lower()  # Convert to lowercase
-            author = author.translate(str.maketrans('', '', string.punctuation))  # Remove punctuation
-            author = author.encode('ascii', 'ignore').decode('utf-8')  # Remove accents
+            author = author.translate(
+                str.maketrans("", "", string.punctuation)
+            )  # Remove punctuation
+            author = author.encode("ascii", "ignore").decode("utf-8")  # Remove accents
             return author
 
         # Apply the cleaning function to the 'authors' column
-        self.df['author_cleaned'] = self.df['author'].apply(clean_author)
+        self.df["author_cleaned"] = self.df["author"].apply(clean_author)
 
         return self.df if return_df else self
 
     def nameparse_authors(self, return_df=False):
         parser = nameparser.HumanName
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
-        self.df.loc[:, 'nameparse_firstname'] = self.df.apply(
-            lambda row: parser(row['author']).first if row['epfl_affiliation'] else None, axis=1
+        self.df.loc[:, "nameparse_firstname"] = self.df.apply(
+            lambda row: parser(row["author"]).first
+            if row["epfl_affiliation"]
+            else None,
+            axis=1,
         )
-        self.df.loc[:, 'nameparse_lastname'] = self.df.apply(
-            lambda row: parser(row['author']).last if row['epfl_affiliation'] else None, axis=1
+        self.df.loc[:, "nameparse_lastname"] = self.df.apply(
+            lambda row: parser(row["author"]).last if row["epfl_affiliation"] else None,
+            axis=1,
         )
         return self.df if return_df else self
 
@@ -133,34 +147,42 @@ class AuthorProcessor:
         # Function to fetch accreditation info and store in new columns
         def fetch_accred_info(sciper_id):
             if pd.notna(sciper_id):
-                records = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="digest")
+                records = ApiEpflClient.fetch_accred_by_unique_id(
+                    sciper_id, format="digest"
+                )
                 if isinstance(records, list):
                     for record in records:
-                        if record.get('unit_type') in unit_types:
-                            return record['unit_id'], record['unit_name']
+                        if record.get("unit_type") in unit_types:
+                            return record["unit_id"], record["unit_name"]
 
                     # Si aucun type d'unité autorisé n'est trouvé, retourner le premier enregistrement
-                    self.logger.warning("No authorized unit type found. Returning the first record.")
+                    self.logger.warning(
+                        "No authorized unit type found. Returning the first record."
+                    )
                     first_record = records[0]  # Obtenir le premier enregistrement
-                    return first_record['unit_id'], first_record['unit_name']
+                    return first_record["unit_id"], first_record["unit_name"]
 
             return None, None
 
         # Request ApiEpflClient.fetch_accred_by_unique_id for each row with a non-null sciper_id
-        self.df[['epfl_api_mainunit_id', 'epfl_api_mainunit_name']] = self.df['sciper_id'].apply(
-            lambda sciper_id: fetch_accred_info(sciper_id)
-        ).apply(pd.Series)
+        self.df[["epfl_api_mainunit_id", "epfl_api_mainunit_name"]] = (
+            self.df["sciper_id"]
+            .apply(lambda sciper_id: fetch_accred_info(sciper_id))
+            .apply(pd.Series)
+        )
 
         return self.df if return_df else self
 
     def generate_dspace_uuid(self, return_df=False):
         self.df = self.df.copy()
         dspace_wrapper = DSpaceClientWrapper()
-        self.df['dspace_uuid'] = self.df.apply(
+        self.df["dspace_uuid"] = self.df.apply(
             lambda row: dspace_wrapper.find_person(
-                query=f"(epfl.sciperId:{row['sciper_id']})" if pd.notna(row['sciper_id']) else f"(title:{row['author_cleaned']})"
+                query=f"(epfl.sciperId:{row['sciper_id']})"
+                if pd.notna(row["sciper_id"])
+                else f"(title:{row['author_cleaned']})"
             ),
-            axis=1
+            axis=1,
         )
         return self.df if return_df else self
 
@@ -168,17 +190,18 @@ class AuthorProcessor:
     def services_istex_orcid_reconciliation(self, return_df=False):
         def fetch_orcid(row):
             # Request ORCID ID without condition
-            orcid_id = ServicesIstexClient.get_orcid_id(firstname=row['nameparse_firstname'],
-                                                        lastname=row['nameparse_lastname'])
+            orcid_id = ServicesIstexClient.get_orcid_id(
+                firstname=row["nameparse_firstname"], lastname=row["nameparse_lastname"]
+            )
             time.sleep(5)
 
             # Update 'orcid_id' if the returned value is not None and the original is empty
-            if orcid_id is not None and pd.isna(row['orcid_id']):
+            if orcid_id is not None and pd.isna(row["orcid_id"]):
                 return orcid_id
-            return row['orcid_id']  # Return the existing value if it's not empty
+            return row["orcid_id"]  # Return the existing value if it's not empty
 
         # Fill the 'orcid_id' column with the fetched ORCID IDs where applicable
-        self.df['orcid_id'] = self.df.apply(fetch_orcid, axis=1)
+        self.df["orcid_id"] = self.df.apply(fetch_orcid, axis=1)
         return self.df if return_df else self
 
     ##### Inutilisé #####################
@@ -186,7 +209,7 @@ class AuthorProcessor:
         self.df = self.df.copy()
 
         for index, row in self.df.iterrows():
-            orcid_id = row['orcid_id']
+            orcid_id = row["orcid_id"]
             if pd.notna(orcid_id) and "|" not in orcid_id:
                 print(row)
                 response = OrcidClient.fetch_record_by_unique_id(orcid_id)
@@ -194,22 +217,21 @@ class AuthorProcessor:
                 if isinstance(response, dict):
                     for key, value in response.items():
                         if key != "orcid_id":  # Skip the orcid_id key
-                            self.df.at[index, f'orcid_{key}'] = value
+                            self.df.at[index, f"orcid_{key}"] = value
                 else:
                     # If response is not a dict, fill with None
                     for key in response.keys() if isinstance(response, dict) else []:
-                        self.df.at[index, f'orcid_{key}'] = None
+                        self.df.at[index, f"orcid_{key}"] = None
             else:
                 # If orcid_id is None, fill the new columns with None
                 for key in self.df.columns:
-                    if key.startswith('orcid_'):
+                    if key.startswith("orcid_"):
                         self.df.at[index, key] = None
 
         return self.df if return_df else self
 
 
 class PublicationProcessor:
-
     def __init__(self, df):
         self.df = df
         self.logger = manage_logger("./logs/enriching_publications.log")
@@ -218,15 +240,19 @@ class PublicationProcessor:
         self.df = self.df.copy()
 
         for index, row in self.df.iterrows():
-            if pd.notna(row['doi']):
-                unpaywall_data = UnpaywallClient.fetch_by_doi(row['doi'], format="best-oa-location")
+            if pd.notna(row["doi"]):
+                unpaywall_data = UnpaywallClient.fetch_by_doi(
+                    row["doi"], format="best-oa-location"
+                )
                 if unpaywall_data is not None:
-                    self.df.at[index, 'upw_is_oa'] = unpaywall_data.get('is_oa')
-                    self.df.at[index, 'upw_oa_status'] = unpaywall_data.get('oa_status')
+                    self.df.at[index, "upw_is_oa"] = unpaywall_data.get("is_oa")
+                    self.df.at[index, "upw_oa_status"] = unpaywall_data.get("oa_status")
                     self.df.at[index, "upw_license"] = unpaywall_data.get("license")
                     self.df.at[index, "upw_version"] = unpaywall_data.get("version")
-                    self.df.at[index, 'upw_pdf_urls'] = unpaywall_data.get('pdf_urls')
+                    self.df.at[index, "upw_pdf_urls"] = unpaywall_data.get("pdf_urls")
                     self.df.at[index, "upw_valid_pdf"] = unpaywall_data.get("valid_pdf")
                 else:
-                    self.logger.warning(f"No unpaywall data returned for DOI {row['doi']}.")
+                    self.logger.warning(
+                        f"No unpaywall data returned for DOI {row['doi']}."
+                    )
         return self.df if return_df else self
