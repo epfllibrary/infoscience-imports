@@ -530,9 +530,11 @@ class Loader:
             return operations
 
         # Determine correct form_section and related sections
-        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_'] else 'type'}"
-
+        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_'] else 'type'}"
         dc_type = row.get("dc.type")
+
+        refereed = "REVIEWED" if form_section != "dataset_" else None
+
         if dc_type in [
             "text::book/monograph::book part or chapter",
             "text::book/monograph",
@@ -719,15 +721,23 @@ class Loader:
             ),
             (
                 f"/sections/{form_section}details/epfl.peerreviewed",
-                [build_value("REVIEWED")],
+                [build_value(refereed)],
                 False,
             ),
             (
                 "/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
-                [build_value(row.get("license"))],
+                [
+                    build_value(
+                        licenses_mapping.get(row.get("license"), {}).get("value")
+                        or row.get(
+                            "license"
+                        )
+                    )
+                ],
                 False,
             ),
         ]
+        logger.debug(f"Constructed initial metadata fields: {fields}")
 
         for path, value, is_repeatable in fields:
             if value and not all(
@@ -740,10 +750,12 @@ class Loader:
                     path = f"{path}/0"
                 metadata_definitions.append({"op": op, "path": path, "value": value})
 
-        metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
-        metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
-        # Process editors
-        metadata_definitions.extend(parse_editors(row.get("editors")))
+        if form_section not in ["dataset_"]:
+            metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
+            metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
+            # Process editors
+            metadata_definitions.extend(parse_editors(row.get("editors")))
+
         # Add specific patch for license/granted
         metadata_definitions.append(
             {"op": "add", "path": "/sections/license/granted", "value": "true"}
