@@ -593,6 +593,10 @@ licenses_mapping = {
         "value": "N/A",
         "display": "N/A (Copyrighted)",
     },
+    "mit-license": {
+        "value": "MIT",
+        "display": "MIT",
+    },
 }
 
 # Mappings pour les versions
