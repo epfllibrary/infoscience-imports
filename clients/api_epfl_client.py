@@ -7,6 +7,7 @@ from apiclient import (
     endpoint,
     BasicAuthentication,
     JsonResponseHandler,
+    exceptions,
 )
 from apiclient.retrying import retry_if_api_request_error
 from apiclient.error_handlers import ErrorHandler
@@ -101,12 +102,20 @@ class Client(APIClient):
                 self.logger.info(
                     f"Attempting personsFirstnameLastname for {lastname} {firstname}."
                 )
-                results.append(attempt_query(lastname, firstname))
-
+                try:
+                    results.append(attempt_query(lastname, firstname))
+                except exceptions.ServerError:
+                    self.logger.error(f"{lastname} {firstname} caused an EPFL API error")
+                    pass
+                
                 self.logger.info(
                     f"Attempting personsFirstnameLastname for {firstname} {lastname}."
                 )
-                results.append(attempt_query(firstname, lastname))
+                try:
+                    results.append(attempt_query(firstname, lastname))
+                except exceptions.ServerError:
+                    self.logger.error(f"{firstname} {lastname} caused an EPFL API error")
+                    pass
             else:
                 self.logger.warning("Firstname or lastname is missing; skipping query.")
 
