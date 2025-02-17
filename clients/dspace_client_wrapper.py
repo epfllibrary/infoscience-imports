@@ -95,6 +95,9 @@ class DSpaceClientWrapper:
 
         # Combine all query parts using OR
         final_query = " OR ".join(query_parts)
+        final_query = (
+            f"({final_query}) AND (entityType:(Publication) OR entityType:(Product))"
+        )
 
         # Search for duplicates using the combined query
         self.logger.debug(
@@ -104,7 +107,6 @@ class DSpaceClientWrapper:
         # Check the researchoutput configuration
         dsos_researchoutputs = self._search_objects(
             query=final_query,
-            filters={'f.entityType': 'Publication,equals'},
             page=0,
             size=1,
             dso_type="item",
