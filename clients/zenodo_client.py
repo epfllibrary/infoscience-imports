@@ -42,7 +42,6 @@ class Endpoint:
 
 
 class Client(APIClient):
-
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
@@ -249,19 +248,18 @@ class Client(APIClient):
         Returns
         A list of records dict containing the fields :
             zenodo_id, title, DOI, doctype, pubyear, authors
-            ifs3_collection, ifs3_collection_id, license
+            ifs3_collection, ifs3_collection_id, license, first_creation
         """
         rec = self._extract_ifs3_digest_record_info(record)
         authors = self._extract_ifs3_authors(record)
         rec["authors"] = authors
         rec["license"] = self._extract_ifs3_license(record)
+        rec["first_creation"] = self._extract_first_version_creation(record)
         return rec
 
     def _extract_first_doctype(self, x):
         if "metadata" in x and "resource_type" in x["metadata"]:
-            doctype = x["metadata"]["resource_type"].get(
-                "type", "unknown"
-            ) 
+            doctype = x["metadata"]["resource_type"].get("type", "unknown")
             if "subtype" in x["metadata"]["resource_type"]:
                 doctype += f'/{x["metadata"]["resource_type"]["subtype"]}'
             return doctype
@@ -388,6 +386,19 @@ class Client(APIClient):
             self.logger.error(f"An error occurred during processing: {e}")
 
         return result
+
+    def _extract_first_version_creation(self, x):
+        """
+        Extracts the recordID and creation date of the first version of the object
+        """
+        version_url = x["links"]["versions"]
+
+        versions = self.get(version_url)["hits"]["hits"]
+
+        version_ids = sorted([rec["id"] for rec in versions])[0]
+        version_creation_time = sorted([rec["created"] for rec in versions])[0]
+
+        return version_creation_time
 
 
 ZenodoClient = Client(
