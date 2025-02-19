@@ -21,6 +21,7 @@ from config import logs_dir
 
 dspace_wrapper = DSpaceClientWrapper()
 
+
 class AuthorProcessor:
     """
     This class is designed to process a DataFrame containing research publications and enrich it with information about EPFL affiliations.
@@ -38,6 +39,7 @@ class AuthorProcessor:
     processor = Processor(your_dataframe)
     processor.process().nameparse_authors().orcid_data_reconciliation()
     """
+
     def __init__(self, df):
         self.df = df
 
@@ -245,7 +247,7 @@ class AuthorProcessor:
                 f"Error querying DSpace for author {query} - {e}"
             )
 
-        return None    
+        return None
 
     def api_epfl_reconciliation(self, return_df=False):
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
@@ -515,6 +517,7 @@ class AuthorProcessor:
 
         return self.df if return_df else self
 
+
 class PublicationProcessor:
 
     def __init__(self, df):
@@ -541,6 +544,12 @@ class PublicationProcessor:
                 self.df.at[index, 'upw_pdf_urls'] = result.get('pdf_urls')
                 self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
             else:
+                self.df.at[index, "upw_is_oa"] = None
+                self.df.at[index, 'upw_oa_status'] = None
+                self.df.at[index, "upw_license"] = None
+                self.df.at[index, "upw_version"] = None
+                self.df.at[index, 'upw_pdf_urls'] = None
+                self.df.at[index, "upw_valid_pdf"] = None
                 self.logger.warning(f"No unpaywall data returned for DOI {self.df.at[index, 'doi']}.")
 
         return self.df if return_df else self

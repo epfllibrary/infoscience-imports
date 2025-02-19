@@ -18,6 +18,8 @@ pdf_dir = project_root / "data" / "pdfs"
 
 
 dspace_wrapper = DSpaceClientWrapper()
+
+
 class Loader:
     """Load items into DSpace using workflow."""
 
@@ -908,6 +910,7 @@ class Loader:
                     and author["epfl_api_mainunit_name"] != ""
                 ]
                 unique_units = {unit["acro"]: unit for unit in units}.values()
+                logger.info(f"Found units: {unique_units}")
 
                 if unique_units:
                     self._patch_additional_metadata(
@@ -946,6 +949,9 @@ class Loader:
                             f"Successfully created workflow item with ID: {workflow_id}"
                         )
                         df_items_imported.at[index, "workflow_id"] = workflow_id
+                    else:
+                        logger.error(f"Unable to create workflow item for workspace item {workspace_id}")
+                        df_items_imported.at[index, "workflow_id"] = None
                 else:
                     logger.warning(
                         f"No matching units found for row ID: {row['row_id']}."
