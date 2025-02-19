@@ -265,14 +265,14 @@ class ZenodoHarvester(Harvester):
 
         total = ZenodoClient.count_results(q=updated_query)
         self.logger.info(f"- Nombre d'objets trouvées dans Zenodo: {total}")
-        if total == "0":  # Zenodo API returns 0 as string
+        if total == 0:
             self.logger.warning("No object found. Returning an empty DataFrame.")
             return pd.DataFrame()
         size = 50
         recs = []
         for i in range(0, 1 + int(total) // size):
             self.logger.info(
-                f"Harvest objects {i*size+1} to {min((i+1)*size, total)} out of a total of {total} objects"
+                f"Harvest objects {i*size+1} to {min((i+1)*size, total)} out of {total}"
             )
             h_recs = ZenodoClient.fetch_records(
                 format=self.format, q=updated_query, size=size, page=i + 1
@@ -288,8 +288,6 @@ class ZenodoHarvester(Harvester):
             .query(f'first_creation > "{self.policy_threshold}"')
             .reset_index(drop=True)
         )
-
-        # TODO check the oldest version of each record, filter out if older than policy_threshold
 
         return df
 

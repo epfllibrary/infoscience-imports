@@ -223,6 +223,8 @@ class Client(APIClient):
             "title": x["metadata"]["title"],
             "doctype": x["metadata"]["resource_type"]["title"],
             "pubyear": x["metadata"]["publication_date"][0:4],
+            # Neutral information to keep reporting happy
+            "journalTitle": None,
         }
         return record
 
