@@ -99,7 +99,7 @@ class WosHarvester(Harvester):
             return pd.DataFrame()
 
         total = int(total)  # Assurez-vous que `total` est un entier
-        count = 50
+        count = 20
         recs = []
 
         # Cas spécial : un seul résultat
