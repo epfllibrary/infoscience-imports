@@ -2,6 +2,7 @@
 
 import abc
 import os
+import time
 
 import pandas as pd
 from data_pipeline.enricher import AuthorProcessor
@@ -134,12 +135,14 @@ class WosHarvester(Harvester):
         author_processor = AuthorProcessor(df)
 
         df = df[
-            df["affiliation_controlled"].isna() |  
-            df["affiliation_controlled"].astype(str).str.strip().eq("") | 
-            df["affiliation_controlled"].astype(str).apply(lambda x: author_processor.process_scopus(x, check_all=True))
+            df["affiliation_controlled"].isna()
+            | df["affiliation_controlled"].astype(str).str.strip().eq("")
+            | df["affiliation_controlled"]
+            .astype(str)
+            .apply(lambda x: author_processor.process_scopus(x, check_all=True))
         ]
 
-        return df 
+        return df
 
 
 class ScopusHarvester(Harvester):
@@ -171,7 +174,7 @@ class ScopusHarvester(Harvester):
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(query=updated_query)
         self.logger.info(f"- Nombre de publications trouvées dans Scopus: {total}")
-        
+
         if total == "0":  # scopus API returns 0 as string
             self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
@@ -179,7 +182,7 @@ class ScopusHarvester(Harvester):
         total = int(total)  # Convert total to integer for calculations
         count = 50
         recs = []
-        
+
         # Special case: Handle single result
         if total == 1:
             self.logger.info("Only one publication found. Fetching the single record.")
@@ -211,6 +214,9 @@ class ZenodoHarvester(Harvester):
     Zenodo Harvester.
     """
 
+    policy_threshold = pd.to_datetime("2023-03-01")
+    # older_recid = "7712815"
+
     def __init__(
         self, start_date: str, end_date: str, query: str, format: str = "ifs3"
     ):
@@ -218,10 +224,10 @@ class ZenodoHarvester(Harvester):
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
         """
-        Returns a pandas DataFrame containing objeczs harvested from Zenodo.
+        Returns a pandas DataFrame containing objects harvested from Zenodo.
 
         Using the "ifs3" default format, the DataFrame includes the following:
-        - `source`: source database of the objecz's metadata (value "zenodo")
+        - `source`: source database of the object's metadata (value "zenodo")
         - `internal_id`: internal ID of the object in the source DB (xxxxx).
         - `title`: The title of the object.
         - `doi`: Digital Object Identifier of the object.
@@ -247,6 +253,7 @@ class ZenodoHarvester(Harvester):
             "ifs3_collection",
             "ifs3_collection_id",
             "authors",
+            "first_creation",
         )
         empty_data = {}
         for c in columns:
@@ -258,27 +265,27 @@ class ZenodoHarvester(Harvester):
 
         total = ZenodoClient.count_results(q=updated_query)
         self.logger.info(f"- Nombre d'objets trouvées dans Zenodo: {total}")
-        if total == 0:  # Zenodo API returns 0 as string
+        if total == 0:
             self.logger.warning("No object found. Returning an empty DataFrame.")
             return pd.DataFrame()
         size = 50
         recs = []
-        # print(total)
-        # print(range(0, 1 + int(total) // size))
         for i in range(0, 1 + int(total) // size):
             self.logger.info(
-                f"Harvest objects {i*size*(int(total)//size)+1} to {i*size*(int(total)//size)} out of a total of {total} objects"
+                f"Harvest objects {i*size+1} to {min((i+1)*size, total)} out of {total}"
             )
             h_recs = ZenodoClient.fetch_records(
                 format=self.format, q=updated_query, size=size, page=i + 1
             )
             if h_recs is not None:
                 recs.extend(h_recs)
+            time.sleep(30)
         # Keep only valid ifs3 doctypes, filter out unknown_doctype
         # print(recs)
         df = (
             pd.DataFrame(recs)
             .query('ifs3_collection != "unknown"')
+            .query(f'first_creation > "{self.policy_threshold}"')
             .reset_index(drop=True)
         )
 
@@ -330,7 +337,9 @@ class OpenAlexHarvester(Harvester):
         recs = []
 
         # Fetch records in pages of `count` items each
-        for page in range(1, (total // count) + 2):  # Adjusted to +2 to handle last page
+        for page in range(
+            1, (total // count) + 2
+        ):  # Adjusted to +2 to handle last page
             self.logger.info(f"Harvesting page {page} out of {total // count + 1}")
 
             try:

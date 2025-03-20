@@ -188,7 +188,7 @@ class GenerateReports:
             "OA Publications": self.open_access_publications(),
             "OA with PDF": self.open_access_with_pdf(),
             "Imported in Workspace": self.imported_publications_workspace(),
-            "Imported in Workflow": self.imported_publications_workflow(),
+            #"Imported in Workflow": self.imported_publications_workflow(),
             "Imported by Journal": self.imported_publications_by_journal(),
             "Detected EPFL Authors": self.epfl_affiliated_publications(),
             "Matched EPFL Authors": self.epfl_reconciled_authors(),
