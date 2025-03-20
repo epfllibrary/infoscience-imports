@@ -550,10 +550,12 @@ class Loader:
                 if dc_type == "text::book/monograph"
                 else "dc.relation.isbn"
             )
+            alter_id_section = "book_details"
         else:
             pagination_section = "journalcontainer_details"
             isbn_section = "bookcontainer_details"
             isbn_metadata = "dc.relation.isbn"
+            alter_id_section = "alternative_identifiers"
 
         metadata_definitions = []
 
@@ -580,7 +582,7 @@ class Loader:
                 False,
             ),
             (
-                "/sections/alternative_identifiers/dc.identifier.pmid",
+                f"/sections/{alter_id_section}/dc.identifier.pmid",
                 [build_value(row.get("pmid"))],
                 False,
             ),
@@ -729,9 +731,7 @@ class Loader:
                 [
                     build_value(
                         licenses_mapping.get(row.get("license"), {}).get("value")
-                        or row.get(
-                            "license"
-                        )
+                        or row.get("license")
                     )
                 ],
                 False,
