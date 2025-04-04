@@ -140,7 +140,11 @@ class AuthorProcessor:
         return bool(re.search(pattern, text, re.IGNORECASE))
 
     def process_wos(self, text):
-        keywords = ["EPFL", "Ecole Polytechnique Federale de Lausanne"]
+        keywords = [
+            "EPFL",
+            "Ecole Polytechnique Federale de Lausanne",
+            "Ecole Polytech Federale Lausanne",
+        ]
         if not isinstance(text, str):  # Vérifie que text est bien une chaîne
             return False
         return any(
