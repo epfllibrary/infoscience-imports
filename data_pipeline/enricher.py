@@ -8,14 +8,15 @@ import pandas as pd
 from fuzzywuzzy import fuzz, process
 import nameparser
 from nameparser import HumanName
-from utils import manage_logger, remove_accents, clean_value
 from concurrent.futures import ThreadPoolExecutor
+from utils import manage_logger, remove_accents, clean_value
+
 
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from clients.orcid_client import OrcidClient
-from config import scopus_epfl_afids, unit_types #, excluded_unit_types
+from config import scopus_epfl_afids, unit_types, excluded_unit_types
 from config import logs_dir
 
 
@@ -94,6 +95,7 @@ class AuthorProcessor:
                 lambda row: (
                     True
                     if str(row["internal_author_id"]) in author_ids_to_check
+                    or str(row["orcid_id"]) in author_ids_to_check
                     else row["epfl_affiliation"]
                 ),
                 axis=1,
@@ -349,8 +351,8 @@ class AuthorProcessor:
                         unit_id = record.get('unit_id')
                         unit_name = record.get('unit_name')
 
-                        # if excluded_unit_types is not None and unit_type in excluded_unit_types:
-                        #     continue  # Skip if unit_type is in the excluded list
+                        if excluded_unit_types is not None and unit_type in excluded_unit_types:
+                            continue  # Skip if unit_type is in the excluded list
 
                         if unit_order == 1 and unit_type in unit_types and not prioritized_unit:
                             prioritized_unit = (unit_id, unit_name)
