@@ -10,10 +10,10 @@ doctypes_mapping_dict = {
             "collection": "Conferences, Workshops, Symposiums, and Seminars",
             "dc.type": "text::conference output::conference proceedings::conference paper",
         },
-        # "Meeting Abstract": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings::conference paper",
-        # },
+        "Meeting Abstract": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
         "Review": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",
@@ -42,10 +42,10 @@ doctypes_mapping_dict = {
         #     "collection": "Journal articles",
         #     "dc.type": "text",
         # },
-        # "Correction": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
+        "Correction": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article",
+        },
         # "Note": {
         #     "collection": "Journal articles",
         #     "dc.type": "text",
@@ -80,10 +80,10 @@ doctypes_mapping_dict = {
             "collection": "Conferences, Workshops, Symposiums, and Seminars",
             "dc.type": "text::conference output::conference proceedings::conference paper",
         },
-        # "Conference Review": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings::conference paper",
-        # },
+        "Conference Review": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
         "Data Paper": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::data paper",
@@ -100,14 +100,14 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",
         },
-        # "Erratum": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
-        # "Business Article": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
+        "Erratum": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article",
+        },
+        "Business Article": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article",
+        },
         # "Note": {
         #     "collection": "",
         #     "dc.type": "text",
