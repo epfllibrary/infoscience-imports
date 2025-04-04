@@ -64,9 +64,11 @@ class DSpaceClientWrapper:
         if isinstance(pubyear, str) and pubyear.isdigit():
             pubyear = int(pubyear)
         elif not isinstance(pubyear, int):
-            raise ValueError("pubyear must be an integer")
-        previous_year = pubyear - 1
-        next_year = pubyear + 1
+            pubyear = None
+
+        # Define previous and next years if pubyear is valid
+        previous_year = pubyear - 1 if pubyear is not None else None
+        next_year = pubyear + 1 if pubyear is not None else None
 
         # Construct the item ID based on identifier type
         if identifier_type == "wos":
@@ -77,8 +79,12 @@ class DSpaceClientWrapper:
             item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
         elif identifier_type == "zenodo":
             item_id = x["internal_id"].strip()
+        elif identifier_type == "orcidWorks":
+            item_id = None
         else:
-            raise ValueError("identifier_type must be 'wos', 'scopus' or 'zenodo'")
+            raise ValueError(
+                "identifier_type must be 'wos', 'scopus', 'zenodo' or 'orcidWorks'"
+            )
 
         # Combine all criteria into a single query
         query_parts = []
@@ -86,9 +92,13 @@ class DSpaceClientWrapper:
         if item_id:
             query_parts.append(f'(itemidentifier_keyword:"{item_id}")')
 
-        query_parts.append(
-            f"(title:({cleaned_title}) AND (dateIssued.year:{pubyear} OR dateIssued.year:{previous_year} OR dateIssued.year:{next_year}))"
-        )
+        if pubyear is not None:
+            query_parts.append(
+                    f"(title:({cleaned_title}) AND (dateIssued.year:{pubyear} "
+                    f"OR dateIssued.year:{previous_year} OR dateIssued.year:{next_year}))"
+                )
+        else:
+            query_parts.append(f"(title:({cleaned_title}))")
 
         if "doi" in x and x["doi"] not in ["", None]:
             query_parts.append(f"(itemidentifier_keyword:\"{str(x['doi']).strip()}\")")
@@ -111,6 +121,7 @@ class DSpaceClientWrapper:
             size=1,
             dso_type="item",
             configuration="administrativeView",
+            max_pages=1,
         )
         num_items_researchoutputs = len(dsos_researchoutputs)
 
@@ -122,6 +133,7 @@ class DSpaceClientWrapper:
             page=0,
             size=1,
             configuration="supervision",
+            max_pages=1,
         )
         num_items_supervision = len(dsos_supervision)
 
