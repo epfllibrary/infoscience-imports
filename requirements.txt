@@ -19,4 +19,4 @@ pycountry
 openpyxl
 xlsxwriter
 flask
-apache-airflow
+marimo
