@@ -12,11 +12,12 @@ default_queries = {
     "wos": "OG=(Ecole Polytechnique Federale de Lausanne)",
     "scopus": "AF-ID(60028186) OR AF-ID(60210159) OR AF-ID(60070536) OR AF-ID(60204330) OR AF-ID(60070531) OR AF-ID(60070534) OR AF-ID(60070538) OR AF-ID(60014951) OR AF-ID(60070529) OR AF-ID(60070532) OR AF-ID(60070535) OR AF-ID(60122563) OR AF-ID(60210160) OR AF-ID(60204331) OR AF-ID(126395205) OR AF-ID(128154174) OR AF-ID(121763255) OR AF-ID(126033832) OR AF-ID(127851587) OR AF-ID(126100075) OR AF-ID(126035869) OR AF-ID(126394243)",
     "openalex": "authorships.institutions.lineage:i5124864",
-    "zenodo": "parent.communities.entries.id:\"3c1383da-d7ab-4167-8f12-4d8aa0cc637f\"",
+    "zenodo": 'parent.communities.entries.id:"3c1383da-d7ab-4167-8f12-4d8aa0cc637f"',
+    "crossref": "EPFL",
 }
 
 # Define the order of the sources during the deduplication process
-source_order = ["scopus", "wos", "openalex", "zenodo"]
+source_order = ["scopus", "wos", "crossref", "openalex", "zenodo"]
 
 # Define types of unit to retrieve from api.epfl.ch
 unit_types = [

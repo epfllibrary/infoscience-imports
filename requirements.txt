@@ -20,3 +20,4 @@ openpyxl
 xlsxwriter
 flask
 marimo
+lxml

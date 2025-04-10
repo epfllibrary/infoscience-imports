@@ -75,6 +75,8 @@ class DSpaceClientWrapper:
             item_id = str(x["internal_id"]).replace("WOS:", "").strip()
         elif identifier_type == "scopus":
             item_id = str(x["internal_id"]).replace("SCOPUS_ID:", "").strip()
+        elif identifier_type == "crossref":
+            item_id = str(x["internal_id"]).strip()
         elif identifier_type == "openalex":
             item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
         elif identifier_type == "zenodo":
@@ -83,7 +85,7 @@ class DSpaceClientWrapper:
             item_id = None
         else:
             raise ValueError(
-                "identifier_type must be 'wos', 'scopus', 'zenodo' or 'orcidWorks'"
+                f"{identifier_type} : identifier_type must be 'wos', 'scopus', 'openalex', 'crossref', 'zenodo' or 'orcidWorks'"
             )
 
         # Combine all criteria into a single query

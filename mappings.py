@@ -212,18 +212,18 @@ doctypes_mapping_dict = {
             "collection": "Books and Book parts",
             "dc.type": "text::book/monograph::book part or chapter",
         },
-        "book-series": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "book-set": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        "book-track": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
+        # "book-series": {
+        #     "collection": "Books and Book parts",
+        #     "dc.type": "text::book/monograph::book part or chapter",
+        # },
+        # "book-set": {
+        #     "collection": "Books and Book parts",
+        #     "dc.type": "text::book/monograph",
+        # },
+        # "book-track": {
+        #     "collection": "Books and Book parts",
+        #     "dc.type": "text::book/monograph",
+        # },
         # "component": {
         #     "collection": "Other",
         #     "dc.type": "text",

@@ -10,6 +10,7 @@ from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
 from clients.zenodo_client import ZenodoClient
 from clients.openalex_client import OpenAlexClient
+from clients.crossref_client import CrossrefClient
 
 from utils import manage_logger
 from config import logs_dir
@@ -358,6 +359,103 @@ class OpenAlexHarvester(Harvester):
             df = (
                 pd.DataFrame(recs)
                 .query('ifs3_collection != "unknown"')  # Filter out unknown_doctype
+                .reset_index(drop=True)
+            )
+        else:
+            self.logger.debug("No valid records fetched. Returning an empty DataFrame.")
+            return pd.DataFrame()
+
+        return df
+
+
+class CrossrefHarvester(Harvester):
+    """
+    Crossref Harvester.
+    """
+
+    def __init__(
+        self,
+        start_date: str,
+        end_date: str,
+        query: str,
+        format: str = "ifs3",
+        field_queries: dict = None,
+    ):
+        """
+        Initialize the Crossref harvester.
+
+        :param start_date: Start date for the publication date range (YYYY-MM-DD)
+        :param end_date: End date for the publication date range (YYYY-MM-DD)
+        :param query: A generic query string to search across all fields
+        :param format: Output format for metadata (default "ifs3")
+        :param field_queries: Optional dictionary with additional targeted query parameters.
+                              Example:
+                              {
+                                  "query.author": "Smith",
+                                  "query.title": "machine learning",
+                                  "query.affiliation": "Harvard"
+                              }
+        """
+        super().__init__("Crossref", start_date, end_date, query, format)
+        self.field_queries = field_queries or {}
+
+    def fetch_and_parse_publications(self) -> pd.DataFrame:
+        """
+        Returns a pandas DataFrame containing the harvested publications from Crossref.
+
+        The DataFrame includes columns based on the specified format, such as:
+        - `source`: The source of the publication's metadata (value "crossref")
+        - `internal_id`: The internal ID of the publication in the source KB (DOI)
+        - `title`: The title of the publication.
+        - `doi`: The Digital Object Identifier of the publication.
+        - `doctype`: The type of the publication (e.g., Article, Book Chapter, etc.).
+        - `pubyear`: The year of publication.
+        - `ifs3_collection`: The IFS3 collection of the publication.
+        - `ifs3_collection_id`: The IFS3 collection ID of the publication.
+        - `authors`: A list of authors as dictionaries.
+        """
+        # Build the parameter dictionary for targeted queries.
+        params = {}
+        if self.query:
+            params["query"] = self.query
+        params.update(self.field_queries)
+        params["filter"] = (
+            f"from-created-date:{self.start_date},until-created-date:{self.end_date}"
+        )
+
+        total = CrossrefClient.count_results(**params)
+        self.logger.info(f"- Number of publications found in Crossref: {total}")
+
+        if total == 0:
+            self.logger.debug("No publications found. Returning an empty DataFrame.")
+            return pd.DataFrame()
+
+        total = int(total)
+        count = 50
+        recs = []
+
+        for offset in range(0, total, count):
+            self.logger.info(
+                f"Harvesting records {offset + 1} to {min(offset + count, total)} of {total}"
+            )
+            try:
+                h_recs = CrossrefClient.fetch_records(
+                    format=self.format,
+                    rows=count,
+                    offset=offset,
+                    **params,
+                )
+                if h_recs:
+                    recs.extend(h_recs)
+                else:
+                    self.logger.warning(f"No records found at offset {offset}.")
+            except Exception as e:
+                self.logger.error(f"Error fetching records at offset {offset}: {e}")
+
+        if recs:
+            df = (
+                pd.DataFrame(recs)
+                .query('ifs3_collection != "unknown"')
                 .reset_index(drop=True)
             )
         else:

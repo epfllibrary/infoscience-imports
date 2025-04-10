@@ -76,9 +76,13 @@ class AuthorProcessor:
                         self.process_openalex(row["organizations"])
                         if row["source"] == "openalex"
                         else (
-                            self.process_zenodo(row["organizations"])
-                            if row["source"] == "zenodo"
-                            else False
+                            self.process_crossref(row["organizations"])
+                            if row["source"] == "crossref"
+                            else (
+                                self.process_zenodo(row["organizations"])
+                                if row["source"] == "zenodo"
+                                else False
+                            )
                         )
                     )
                 )
@@ -130,6 +134,12 @@ class AuthorProcessor:
             return any(value in values[0] for value in scopus_epfl_afids)
 
     def process_zenodo(self, text):
+        if not isinstance(text, str):
+            return False
+        pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
+        return bool(re.search(pattern, text))
+
+    def process_crossref(self, text):
         if not isinstance(text, str):
             return False
         pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
