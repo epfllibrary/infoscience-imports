@@ -422,59 +422,60 @@ class AuthorProcessor:
         def get_dspace_data(row):
             """
             Queries the DSpace database based on available information in the row
-            and returns the UUID and associated sciper_id if found.
+            and returns the UUID, sciper_id, and main_affiliation if found.
 
             Parameters:
             - row (pd.Series): A row from the DataFrame containing the necessary fields.
 
             Returns:
-            - tuple: A tuple containing the UUID and sciper_id, or (None, None) if no result is found.
+            - tuple: A tuple containing (uuid, sciper_id, main_affiliation), or (None, None, None) if not found.
             """
 
             queries = []  # List to store queries for the DSpace database
 
-            # Only generate query if the column exists in the row and the value is not NaN
-            if "sciper_id" in row and pd.notna(row.get("sciper_id")):
-                queries.append(f"epfl.sciperId:({row['sciper_id']})")
+            def is_valid(value):
+                return pd.notna(value) and str(value).strip() != ""
 
-            if "orcid_id" in row and pd.notna(row.get("orcid_id")):
-                queries.append(f"person.identifier.orcid:({row['orcid_id']})")
+            try:
+                if "sciper_id" in row and is_valid(row.get("sciper_id")):
+                    queries.append(f"epfl.sciperId:({row['sciper_id']})")
 
-            if "author" in row and pd.notna(row.get("author")):
-                queries.append(f"itemauthoritylookup:\"{row['author'].replace(',', '')}\"")
+                if "orcid_id" in row and is_valid(row.get("orcid_id")):
+                    queries.append(f"person.identifier.orcid:({row['orcid_id']})")
 
-            # Add the condition for 'source' == 'scopus' and 'internal_author_id' exists and is not null
-            if (
-                "source" in row
-                and row["source"] == "scopus"
-                and "internal_author_id" in row
-                and pd.notna(row.get("internal_author_id"))
-            ):
-                queries.append(
-                    f"person.identifier.scopus-author-id:({row['internal_author_id']})"
-                )
+                if "author" in row and is_valid(row.get("author")):
+                    clean_author = str(row["author"]).replace(",", "").strip()
+                    queries.append(f'itemauthoritylookup:"{clean_author}"')
 
-                # Add the condition for 'source' == 'scopus' and 'internal_author_id' exists and is not null
-            if (
-                "source" in row
-                and row["source"] == "wos"
-                and "internal_author_id" in row
-                and pd.notna(row.get("internal_author_id"))
-            ):
-                queries.append(
-                    f"person.identifier.rid:({row['internal_author_id']})"
-                )
+                if (
+                    "source" in row and row["source"] == "scopus" and
+                    "internal_author_id" in row and is_valid(row.get("internal_author_id"))
+                ):
+                    queries.append(f"person.identifier.scopus-author-id:({row['internal_author_id']})")
 
-            # Iterate through each query and execute if valid
-            for query in queries:
-                if query:  # Ensure the query is not None
-                    result = dspace_wrapper.find_person(
-                        query=query
-                    )  # Call the dspace_wrapper to search
-                    if result:  # If a result is found, return the UUID and sciper_id
-                        return result["uuid"], result["sciper_id"], result["main_affiliation"]
+                if (
+                    "source" in row and row["source"] == "wos" and
+                    "internal_author_id" in row and is_valid(row.get("internal_author_id"))
+                ):
+                    queries.append(f"person.identifier.rid:({row['internal_author_id']})")
 
-            return None, None, None  # Return None if no result is found for any of the queries
+                # Iterate through each query
+                for query in queries:
+                    self.logger.info("Find person in DSpace with query: %s", query)
+                    try:
+                        if query:
+                            result = dspace_wrapper.find_person(query=query)
+                            if isinstance(result, dict) and all(k in result for k in ["uuid", "sciper_id"]):
+                                return result["uuid"], result["sciper_id"]
+                            else:
+                                self.logger.warning("Unexpected result format for query '%s': %s", query, result)
+                    except Exception as e:
+                        self.logger.error("Exception while querying DSpace for query '%s': %s", query, str(e))
+
+            except Exception as outer_e:
+                self.logger.error("Unexpected error while building or executing DSpace queries: %s", str(outer_e))
+
+            return None, None  # Return default if no valid result
 
         def update_row(row):
             """
@@ -488,14 +489,12 @@ class AuthorProcessor:
             """
 
             # Get the DSpace UUID and associated sciper_id for the row
-            uuid, found_sciper_id, main_affiliation = get_dspace_data(row)
+            uuid, found_sciper_id = get_dspace_data(row)
 
             # If the sciper_id is empty and a sciper_id is found, update the column
             if pd.isna(row.get("sciper_id")) and found_sciper_id:
                 row["sciper_id"] = found_sciper_id
 
-            if pd.isna(row.get("epfl_api_mainunit_name")) and main_affiliation:
-                row["epfl_api_mainunit_name"] = main_affiliation
 
             # Update the row with the DSpace UUID
             row["dspace_uuid"] = uuid

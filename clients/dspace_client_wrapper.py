@@ -171,18 +171,18 @@ class DSpaceClientWrapper:
             sciper_id = (
                 sciper_metadata[0]["value"] if sciper_metadata and len(sciper_metadata) > 0 else ""
             )
-            affiliation_metadata = dsos_persons[0].metadata.get("person.affiliation.name", "")
+            # affiliation_metadata = dsos_persons[0].metadata.get("person.affiliation.name", "")
 
-            self.logger.debug("affiliation_metadata: %s", affiliation_metadata)
+            # self.logger.debug("affiliation_metadata: %s", affiliation_metadata)
 
-            main_affiliation = (
-                affiliation_metadata[0]["value"]
-                if affiliation_metadata else ""
-            )
+            # main_affiliation = (
+            #     affiliation_metadata[0]["value"]
+            #     if affiliation_metadata else ""
+            # )
             return {
                 "uuid": dsos_persons[0].uuid,
                 "sciper_id": sciper_id,
-                "main_affiliation": main_affiliation,
+                # "main_affiliation": main_affiliation,
             }
         elif num_items_persons == 0:
             self.logger.warning(

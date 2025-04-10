@@ -26,7 +26,7 @@ unit_types = [
     "Groupe",
     "Chaire",
     "Plateforme",
-    "Centre",
+    # "Centre",
 ]
 
 excluded_unit_types = [
@@ -36,7 +36,8 @@ excluded_unit_types = [
     "Formation continue",
     "Fondation",
     "Entités hôtes de l'EPFL",
-    "Entité technique"
+    "Entité technique",
+    "Decanat / Etat major",
 ]
 
 
