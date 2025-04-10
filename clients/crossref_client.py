@@ -122,7 +122,7 @@ class CrossrefClient(APIClient):
         offset = param_kwargs.pop("offset", 0)
         param_kwargs["rows"] = rows
         param_kwargs["offset"] = offset
-    
+
         self.params = param_kwargs
         results = self.search_query(**self.params)
         items = results["message"]["items"]
@@ -248,6 +248,7 @@ class CrossrefClient(APIClient):
         series_volume = ""
         book_part = ""
         book_doi = ""
+        publisher = ""
 
         # Extraction de l'ISSN pour les journaux (la clé "ISSN" est généralement une liste)
         issn_field = x.get("ISSN", "")
@@ -266,6 +267,7 @@ class CrossrefClient(APIClient):
             "proceedings-article",
             "edited-book",
         ]:
+            publisher = x.get("publisher", "")
             # On teste le nombre d’éléments dans container_title
             if len(container_title) >= 2:
                 # Si au moins deux valeurs sont présentes, on affecte :
@@ -319,7 +321,7 @@ class CrossrefClient(APIClient):
             "edited-book",
         ]:
             # Le ou les DOIs alternatifs seront ajoutés dans "bookDOI"
-            book_doi = book_doi = "||".join(alt_doi_list)
+            book_doi = "||".join(alt_doi_list)
 
         return {
             "source": "crossref",
@@ -329,7 +331,7 @@ class CrossrefClient(APIClient):
             "title": x.get("title", [""])[0] if x.get("title") else "",
             "doctype": self._extract_first_doctype(x),
             "pubyear": self._extract_pubyear(x),
-            "publisher": x.get("publisher", ""),
+            "publisher": publisher,
             "publisherPlace": x.get("publisher-location", ""),
             "journalTitle": journal_title,
             "seriesTitle": series_title,
@@ -460,18 +462,105 @@ class CrossrefClient(APIClient):
                 start_date = self._convert_date(event.get("start", {}))
                 end_date = self._convert_date(event.get("end", {}))
                 return f"{conference_title}::{location}::{start_date}::{end_date}"
+            elif "assertion" in x:
+                assertions = x.get("assertion", [])
+                conf_assertions = {}
+                # Extraire les assertions appartenant au groupe ConferenceInfo
+                for item in assertions:
+                    group = item.get("group", {})
+                    if group.get("name", "").lower() == "conferenceinfo":
+                        key = item.get("name", "").lower()
+                        value = item.get("value", "").strip()
+                        conf_assertions[key] = value
+
+                if conf_assertions:
+                    conference_name = conf_assertions.get("conference_name", "")
+                    conference_number = conf_assertions.get("conference_number", "")
+                    if conference_number:
+                        ordinal_suffix = self._get_ordinal_suffix(conference_number)
+                        conference_title = f"{conference_number}{ordinal_suffix} {conference_name}"
+                    else:
+                        conference_title = conference_name
+                    conference_city = conf_assertions.get("conference_city", "")
+                    conference_country = conf_assertions.get("conference_country", "")
+                    if conference_city and conference_country:
+                        location = f"{conference_city}, {conference_country}"
+                    elif conference_city:
+                        location = conference_city
+                    elif conference_country:
+                        location = conference_country
+                    else:
+                        location = ""
+
+                    # Convert the assertion dates using the separate conversion function
+                    raw_start_date = conf_assertions.get("conference_start_date", "")
+                    raw_end_date = conf_assertions.get("conference_end_date", "")
+                    start_date = self._convert_assertion_date(raw_start_date)
+                    end_date = self._convert_assertion_date(raw_end_date)
+
+                    return f"{conference_title}::{location}::{start_date}::{end_date}"
+                else:
+                    return ""
             else:
-                # container_title = x.get("container-title", [])
-                # conference_title = container_title[0] if container_title else ""
-                # location = x.get("publisher", "")
-                # start_date = self._extract_publication_date(x)
-                # end_date = start_date  # Fallback: same as start_date
-                # if conference_title:
-                #     return f"{conference_title}::{location}::{start_date}::{end_date}"
                 return ""
         except Exception as e:
             self.logger.error(f"Error extracting conference info: {e}")
             return ""
+        
+
+    def _convert_assertion_date(self, raw_date: str) -> str:
+        """
+        Converts a raw assertion date string into the format YYYY-MM-DD.
+        Expected input format: '%d %B %Y' (e.g., '26 September 2016').
+
+        Args:
+            raw_date (str): The raw date string from an assertion.
+
+        Returns:
+            str: The formatted date string in YYYY-MM-DD format, or the original string
+                if conversion fails.
+        """
+        from datetime import datetime
+        if not raw_date:
+            return ""
+        try:
+            dt = datetime.strptime(raw_date, "%d %B %Y")
+            return dt.strftime("%Y-%m-%d")
+        except Exception as e:
+            self.logger.error(f"Error converting assertion date '{raw_date}': {e}")
+            return raw_date
+
+
+    def _get_ordinal_suffix(self, number):
+        """
+        Determine the correct ordinal suffix for a given number.
+
+        Args:
+            number (int): The number for which to determine the suffix.
+
+        Returns:
+            str: The ordinal suffix ("-st", "-nd", "-rd", "-th").
+        """
+        # Convert to integer if the number is provided as a string
+        try:
+            number = int(number)
+        except ValueError:
+            return ""  # Return empty string if conversion fails
+
+        # Special cases for numbers ending in 11, 12, or 13
+        if 11 <= number % 100 <= 13:
+            return "th"
+
+        # Determine suffix based on the last digit
+        last_digit = number % 10
+        if last_digit == 1:
+            return "st"
+        elif last_digit == 2:
+            return "nd"
+        elif last_digit == 3:
+            return "rd"
+        else:
+            return "th"
 
     def _convert_date(self, date_obj):
         """
@@ -546,15 +635,37 @@ class CrossrefClient(APIClient):
 
     def _extract_first_doctype(self, x):
         """
-        Extract the document type from a Crossref record.
-
+        Extracts the document type from a Crossref record.
+        
+        If the record's 'assertion' object contains a 'conference_name' value
+        (i.e., conference-related information is available), the document type is overridden:
+            - 'book' becomes 'proceedings'
+            - 'book-chapter' becomes 'proceedings-article'
+        
         Args:
             x (dict): A Crossref record.
-
+        
         Returns:
-            str: The document type (from the "type" field).
+            str: The original or overridden document type based on the presence of conference information.
         """
-        return x.get("type", "")
+        doctype = x.get("type", "")
+        
+        # Check if the record contains conference-related assertions
+        if "assertion" in x:
+            assertions = x.get("assertion", [])
+            for item in assertions:
+                group = item.get("group", {})
+                # Identify assertions belonging to the ConferenceInfo group
+                if group.get("name", "").lower() == "conferenceinfo":
+                    # Check if the assertion relates to conference_name and has a non-empty value
+                    if item.get("name", "").lower() == "conference_name" and item.get("value", "").strip():
+                        if doctype.lower() == "book":
+                            return "proceedings"
+                        elif doctype.lower() == "book-chapter":
+                            return "proceedings-article"
+                        # Stop after overriding if applicable
+                        break
+        return doctype
 
     def _extract_publication_date(self, x):
         """
