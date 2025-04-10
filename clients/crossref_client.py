@@ -779,9 +779,12 @@ class CrossrefClient(APIClient):
         Returns:
             str: The ORCID without the prefix, or an empty string.
         """
+        ORCID_PREFIX = "https://orcid.org/"
         orcid = author.get("ORCID", "")
-        if isinstance(orcid, str) and orcid.startswith("https://orcid.org/"):
-            return orcid[len("https://orcid.org/") :]
+        if isinstance(orcid, str) and orcid.startswith(ORCID_PREFIX):
+            # Remove the prefix from the ORCID URL and return the remaining part
+            return orcid[len(ORCID_PREFIX):]
+        # Return the ORCID if it's a string, or an empty string otherwise
         return orcid if isinstance(orcid, str) else ""
 
     def _extract_ifs3_authors(self, x):
