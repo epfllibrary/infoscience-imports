@@ -67,7 +67,7 @@ class AuthorProcessor:
         # Step 1: Detect EPFL-affiliated authors based on organization names
         self.df["epfl_affiliation"] = self.df.apply(
             lambda row: (
-                self.process_scopus(row["organizations"])
+                self.process_scopus(row["organizations"], check_all=True)
                 if row["source"] == "scopus"
                 else (
                     self.process_wos(row["organizations"])
