@@ -4,9 +4,9 @@ This client provides methods to interact with the Crossref API
 """
 
 import os
+import re
 from typing import List
 import tenacity
-import re
 from apiclient import (
     APIClient,
     endpoint,
@@ -45,6 +45,7 @@ retry_decorator = tenacity.retry(
 class CrossrefEndpoint:
     works = "works"
     work_doi = "works/{doi}"  # Endpoint to retrieve a record by DOI
+    prefix = "prefixes/{prefix}"  # Endpoint to retrieve prefix information
 
 
 class CrossrefClient(APIClient):
@@ -323,6 +324,12 @@ class CrossrefClient(APIClient):
             # Le ou les DOIs alternatifs seront ajoutés dans "bookDOI"
             book_doi = "||".join(alt_doi_list)
 
+        if aggregation_type in [
+            "posted-content",
+        ]:
+            prefix_doi = x.get("prefix", "")
+            publisher = self.fetch_prefix_name(prefix_doi)
+
         return {
             "source": "crossref",
             "internal_id": x.get("DOI", ""),
@@ -394,49 +401,91 @@ class CrossrefClient(APIClient):
         rec["fundings_info"] = self._extract_funding_info(x)
         return rec
 
+
     def _remove_jats_from_abstract(self, abstract_text: str) -> str | None:
-        """Cleans the abstract text of XML tags
+        """
+        Cleans the abstract text by removing JATS XML tags while preserving and processing
+        math expressions (e.g., LaTeX/MathJax). Extra whitespace is normalized and any
+        doubled dollar signs are collapsed to a single $ delimiter.
+
         Args:
-            abstract_text (str): Abstract text with XML tags
+            abstract_text (str): Abstract text containing XML tags.
 
         Returns:
-            str: cleaned abstract or None if no abstract text
+            str: Cleaned abstract text, or None if no abstract text is provided.
         """
-
         if not abstract_text:
             return None
 
         soup = BeautifulSoup(abstract_text, "lxml")
-        for title in soup.find_all("jats:title"):
-            title.clear()
 
-        cleaned_text = ""
-        for element in soup.find_all():
-            if element.name == "jats:p":
-                if cleaned_text:
-                    cleaned_text += " "  # Add a space before adding new paragraph
-                cleaned_text += element.get_text()
+        # Remove title tags (e.g., generic titles like "Abstract")
+        for title in soup.find_all("jats:title"):
+            title.decompose()
+
+        def normalize_text(text: str) -> str:
+            # Remove extra whitespace and newlines.
+            return " ".join(text.split())
+
+        # Process all inline formula tags first.
+        for inline_formula in soup.find_all("jats:inline-formula"):
+            alternatives = inline_formula.find("jats:alternatives")
+            if alternatives:
+                tex_math = alternatives.find("jats:tex-math")
+                if tex_math:
+                    # Use the LaTeX version if available.
+                    math_text = normalize_text(tex_math.get_text(separator=" ", strip=True))
+                else:
+                    math_text = normalize_text(
+                        inline_formula.get_text(separator=" ", strip=True)
+                    )
+            else:
+                math_text = normalize_text(
+                    inline_formula.get_text(separator=" ", strip=True)
+                )
+            # Replace the inline formula tag with its normalized text.
+            inline_formula.replace_with(math_text)
+
+        # Process any remaining standalone math tags (jats:tex-math or mml:math)
+        # that are not part of an alternatives element.
+        for math_tag in soup.find_all(["jats:tex-math", "mml:math"]):
+            if math_tag.find_parent("jats:alternatives"):
+                continue  # Already handled in inline formulas.
+            math_text = normalize_text(math_tag.get_text(separator=" ", strip=True))
+            math_tag.replace_with(math_text)
+
+        # Concatenate text from all paragraph tags.
+        paragraphs = []
+        for para in soup.find_all("jats:p"):
+            para_text = normalize_text(para.get_text(separator=" ", strip=True))
+            if para_text:
+                paragraphs.append(para_text)
+        cleaned_text = " ".join(paragraphs)
+
+        # Collapse multiple consecutive dollar signs into a single dollar sign.
+        cleaned_text = re.sub(r"\${2,}", "$", cleaned_text)
 
         return cleaned_text.strip()
+
 
     def _extract_abstract(self, x):
         """
         Extracts and cleans the abstract from a Crossref record.
-
-        If the abstract contains JATS XML tags, this function converts them into plain text
-        by processing all JATS tags.
+        If the abstract contains JATS XML tags, this function converts them into plain text,
+        processing math expressions (LaTeX/MathJax) accordingly while ensuring the dollar
+        delimiters are not doubled.
 
         Args:
             x (dict): The Crossref record.
 
         Returns:
-            str: The cleaned abstract text, or an empty string if not available.
+            str: The cleaned abstract text, or an empty string if the abstract is not available.
         """
         abstract_text = x.get("abstract", "")
         if abstract_text and isinstance(abstract_text, str):
             return self._remove_jats_from_abstract(abstract_text)
         return ""
-
+    
     def _extract_conference_info(self, x):
         """
         Extracts conference information from a Crossref record and formats it as:
@@ -506,7 +555,6 @@ class CrossrefClient(APIClient):
         except Exception as e:
             self.logger.error(f"Error extracting conference info: {e}")
             return ""
-        
 
     def _convert_assertion_date(self, raw_date: str) -> str:
         """
@@ -529,7 +577,6 @@ class CrossrefClient(APIClient):
         except Exception as e:
             self.logger.error(f"Error converting assertion date '{raw_date}': {e}")
             return raw_date
-
 
     def _get_ordinal_suffix(self, number):
         """
@@ -649,7 +696,7 @@ class CrossrefClient(APIClient):
             str: The original or overridden document type based on the presence of conference information.
         """
         doctype = x.get("type", "")
-        
+
         # Check if the record contains conference-related assertions
         if "assertion" in x:
             assertions = x.get("assertion", [])
@@ -781,11 +828,15 @@ class CrossrefClient(APIClient):
         """
         ORCID_PREFIX = "https://orcid.org/"
         orcid = author.get("ORCID", "")
-        if isinstance(orcid, str) and orcid.startswith(ORCID_PREFIX):
-            # Remove the prefix from the ORCID URL and return the remaining part
-            return orcid[len(ORCID_PREFIX):]
-        # Return the ORCID if it's a string, or an empty string otherwise
-        return orcid if isinstance(orcid, str) else ""
+
+        if isinstance(orcid, str):
+            orcid = orcid.strip()
+            if orcid.startswith(ORCID_PREFIX):
+                # Retourne l'ORCID sans le préfixe
+                return orcid[len(ORCID_PREFIX) :]
+            return orcid
+
+        return ""
 
     def _extract_ifs3_authors(self, x):
         """
@@ -899,6 +950,41 @@ class CrossrefClient(APIClient):
                     name = f"{family}, {given}" if family and given else f"{given}{family}"
                     editors.append(name.strip())
         return "||".join(editors)
+
+    @retry_decorator
+    def fetch_prefix_name(self, prefix: str) -> str:
+        """
+        Retrieve the issuer name for a given DOI prefix using the Crossref API.
+
+        Example usage:
+            issuer_name = CrossrefClient.fetch_prefix_name(prefix="10.26434")
+
+        The expected API response is similar to:
+            {
+                "status": "ok",
+                "message-type": "prefix",
+                "message-version": "1.0.0",
+                "message": {
+                "member": "https://id.crossref.org/member/316",
+                "name": "American Chemical Society (ACS)",
+                "prefix": "https://id.crossref.org/prefix/10.26434"
+                }
+            }
+
+        Returns:
+            str: The issuer name (e.g., "American Chemical Society (ACS)") 
+                    or an empty string if the request fails.
+        """
+        params = {}
+        if crossref_email:
+            params["mailto"] = crossref_email
+        response = self.get(CrossrefEndpoint.prefix.format(prefix=prefix), params=params)
+        if response and response.get("status") == "ok":
+            message = response.get("message", {})
+            return message.get("name", "")
+        else:
+            self.logger.error(f"Error retrieving prefix info for {prefix}")
+            return ""
 
 
 # Initialize the CrossrefClient with a JSON response handler
