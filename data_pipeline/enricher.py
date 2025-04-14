@@ -175,10 +175,10 @@ class AuthorProcessor:
 
         def clean_author(author):
             parsed_name = HumanName(author)
-
             formatted_name = (
                 f"{parsed_name.last} {parsed_name.first} {parsed_name.middle} ".strip()
             )
+            formatted_name = formatted_name.replace("-", " ")
 
             formatted_name = formatted_name.translate(
                 str.maketrans("", "", string.punctuation)
@@ -190,7 +190,6 @@ class AuthorProcessor:
 
             return formatted_name
 
-        # Appliquer la fonction de nettoyage à la colonne 'author'
         self.df["author_cleaned"] = self.df["author"].apply(clean_author)
 
         return self.df if return_df else self
@@ -494,7 +493,6 @@ class AuthorProcessor:
             # If the sciper_id is empty and a sciper_id is found, update the column
             if pd.isna(row.get("sciper_id")) and found_sciper_id:
                 row["sciper_id"] = found_sciper_id
-
 
             # Update the row with the DSpace UUID
             row["dspace_uuid"] = uuid
