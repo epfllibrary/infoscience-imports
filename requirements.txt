@@ -21,3 +21,4 @@ xlsxwriter
 flask
 marimo
 lxml
+bs4
