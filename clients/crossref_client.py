@@ -330,12 +330,15 @@ class CrossrefClient(APIClient):
             prefix_doi = x.get("prefix", "")
             publisher = self.fetch_prefix_name(prefix_doi)
 
+        title = x.get("title", [""])[0] if x.get("title") else ""
+        cleaned_title = re.sub(r"\${2,}", "$", title.strip())
+
         return {
             "source": "crossref",
             "internal_id": x.get("DOI", ""),
             "issueDate": issue_date,
             "doi": self._extract_doi(x),
-            "title": x.get("title", [""])[0] if x.get("title") else "",
+            "title": cleaned_title,
             "doctype": self._extract_first_doctype(x),
             "pubyear": self._extract_pubyear(x),
             "publisher": publisher,
@@ -400,7 +403,6 @@ class CrossrefClient(APIClient):
         rec["conference_info"] = self._extract_conference_info(x)
         rec["fundings_info"] = self._extract_funding_info(x)
         return rec
-
 
     def _remove_jats_from_abstract(self, abstract_text: str) -> str | None:
         """
@@ -467,7 +469,6 @@ class CrossrefClient(APIClient):
 
         return cleaned_text.strip()
 
-
     def _extract_abstract(self, x):
         """
         Extracts and cleans the abstract from a Crossref record.
@@ -485,17 +486,21 @@ class CrossrefClient(APIClient):
         if abstract_text and isinstance(abstract_text, str):
             return self._remove_jats_from_abstract(abstract_text)
         return ""
-    
+
     def _extract_conference_info(self, x):
         """
         Extracts conference information from a Crossref record and formats it as:
-            'conference_title::conference_location::conference_startdate::conference_enddate'.
+            'conference_title::conference_location::conference_startdate::conference_enddate::conference_acronym'.
 
         This method first looks for an "event" object in the record. If present, it extracts:
         - conference title from event["name"],
         - location from event["location"],
-        - start date from event["start"], and
-        - end date from event["end"] (using a helper function to format dates).
+        - start date from event["start"] (using a helper function to format dates),
+        - end date from event["end"] (using a helper function to format dates),
+        - and conference acronym from event["acronym"] if available.
+
+        If the "event" object is not present, the method tries to extract the same information from assertions
+        related to "ConferenceInfo". The acronym is then obtained from the assertion with key "conference_acronym".
 
         Args:
             x (dict): The Crossref record.
@@ -510,7 +515,10 @@ class CrossrefClient(APIClient):
                 location = event.get("location", "")
                 start_date = self._convert_date(event.get("start", {}))
                 end_date = self._convert_date(event.get("end", {}))
-                return f"{conference_title}::{location}::{start_date}::{end_date}"
+                acronym = event.get("acronym", "")
+                return (
+                    f"{conference_title}::{location}::{start_date}::{end_date}::{acronym}"
+                )
             elif "assertion" in x:
                 assertions = x.get("assertion", [])
                 conf_assertions = {}
@@ -527,9 +535,12 @@ class CrossrefClient(APIClient):
                     conference_number = conf_assertions.get("conference_number", "")
                     if conference_number:
                         ordinal_suffix = self._get_ordinal_suffix(conference_number)
-                        conference_title = f"{conference_number}{ordinal_suffix} {conference_name}"
+                        conference_title = (
+                            f"{conference_number}{ordinal_suffix} {conference_name}"
+                        )
                     else:
                         conference_title = conference_name
+
                     conference_city = conf_assertions.get("conference_city", "")
                     conference_country = conf_assertions.get("conference_country", "")
                     if conference_city and conference_country:
@@ -546,8 +557,8 @@ class CrossrefClient(APIClient):
                     raw_end_date = conf_assertions.get("conference_end_date", "")
                     start_date = self._convert_assertion_date(raw_start_date)
                     end_date = self._convert_assertion_date(raw_end_date)
-
-                    return f"{conference_title}::{location}::{start_date}::{end_date}"
+                    acronym = conf_assertions.get("conference_acronym", "")
+                    return f"{conference_title}::{location}::{start_date}::{end_date}::{acronym}"
                 else:
                     return ""
             else:
