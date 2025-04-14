@@ -341,6 +341,7 @@ class Loader:
             conference_names = []
             conference_places = []
             conference_dates = []
+            conference_acronyms = []
 
             for conf in conferences:
                 parts = conf.split("::")
@@ -354,13 +355,36 @@ class Loader:
                 end_date = (
                     parts[3].strip() if len(parts) > 3 and parts[3].strip() else None
                 )
+                acronym = parts[4].strip() if len(parts) > 4 and parts[4].strip() else None
 
                 if name:
                     conference_names.append(build_value(name))
+
                 if place:
                     conference_places.append(build_value(place))
+
                 if start_date and end_date:
                     conference_dates.append(build_value(f"{start_date} - {end_date}"))
+                else:
+                    conference_dates.append(
+                        build_value(
+                            "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            confidence=-1,
+                            language=None,
+                        )
+                    )
+
+                if acronym:
+                    conference_acronyms.append(build_value(acronym))
+                else:
+                    conference_acronyms.append(
+                        build_value(
+                            "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            confidence=-1,
+                            language=None,
+                        )
+                    )
+
                 conference_types.append(build_value("conference"))
 
             if conference_types:
@@ -395,20 +419,28 @@ class Loader:
                         "value": conference_dates,
                     }
                 )
-
-            operations.append(
-                {
-                    "op": "add",
-                    "path": "/sections/conference_event/oairecerif.acronym",
-                    "value": [
-                        build_value(
-                            "#PLACEHOLDER_PARENT_METADATA_VALUE#",
-                            confidence=-1,
-                            language=None,
-                        )
-                    ],
-                }
-            )
+            if conference_acronyms:
+                operations.append(
+                    {
+                        "op": "add",
+                        "path": "/sections/conference_event/oairecerif.acronym",
+                        "value": conference_acronyms,
+                    }
+                )
+            else:
+                operations.append(
+                    {
+                        "op": "add",
+                        "path": "/sections/conference_event/oairecerif.acronym",
+                        "value": [
+                            build_value(
+                                "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                                confidence=-1,
+                                language=None,
+                            )
+                        ],
+                    }
+                )
 
             return operations
 
@@ -535,7 +567,7 @@ class Loader:
         type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_'] else 'type'}"
         dc_type = row.get("dc.type")
 
-        refereed = "REVIEWED" if form_section != "dataset_" else None
+        refereed = None if form_section in ("preprint_", "dataset_") else "REVIEWED"
 
         if dc_type in [
             "text::book/monograph::book part or chapter",
@@ -558,6 +590,14 @@ class Loader:
             isbn_section = "bookcontainer_details"
             isbn_metadata = "dc.relation.isbn"
             alter_id_section = "alternative_identifiers"
+
+        if dc_type in [
+            "text::preprint",
+
+        ]:
+            publisher_container = "preprint_details"
+        else:
+            publisher_container = "bookcontainer_details"
 
         metadata_definitions = []
 
@@ -643,12 +683,12 @@ class Loader:
                 False,
             ),
             (
-                "/sections/bookcontainer_details/dc.publisher",
+                f"/sections/{publisher_container}/dc.publisher",
                 [build_value(row.get("publisher"))],
                 False,
             ),
             (
-                "/sections/bookcontainer_details/dc.publisher.place",
+                f"/sections/{publisher_container}/dc.publisher.place",
                 [build_value(row.get("publisherPlace"))],
                 False,
             ),
