@@ -152,12 +152,7 @@ class Loader:
             },
             {
                 "op": "add",
-                "path": f"/sections/{form_section}details/oairecerif.affiliation.orgunit",
-                "value": orgunit_metadata,
-            },
-            {
-                "op": "add",
-                "path": f"/sections/{form_section}details/person.identifier.orcid",
+                "path": f"/sections/{form_section}details/epfl.author.orcid",
                 "value": orcid_metadata,
             },
             {
@@ -547,16 +542,10 @@ class Loader:
                             affiliations,
                         )
                     )
-                    operations.append(
-                        self._create_op(
-                            "/sections/bookcontainer_details/oairecerif.affiliation.orgunit",
-                            affiliations,
-                        )
-                    )
                 if orcids:
                     operations.append(
                         self._create_op(
-                            "/sections/bookcontainer_details/person.identifier.orcid",
+                            "/sections/bookcontainer_details/epfl.scientificeditor.orcid",
                             orcids,
                         )
                     )
