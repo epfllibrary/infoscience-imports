@@ -78,7 +78,8 @@ class DSpaceClientWrapper:
         elif identifier_type == "crossref":
             item_id = str(x["internal_id"]).strip()
         elif identifier_type == "openalex":
-            item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
+            # item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
+            item_id = str(x["doi"]).strip()
         elif identifier_type == "zenodo":
             item_id = x["internal_id"].strip()
         elif identifier_type == "orcidWorks":

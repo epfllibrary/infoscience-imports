@@ -148,7 +148,7 @@ class AuthorProcessor:
     def process_openalex(self, text):
         if not isinstance(text, str):
             return False
-        pattern = r"(02s376052|EPFL|École Polytechnique Fédérale de Lausanne)"
+        pattern = r"(02s376052|EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
         return bool(re.search(pattern, text, re.IGNORECASE))
 
     def process_wos(self, text):
@@ -178,7 +178,10 @@ class AuthorProcessor:
             formatted_name = (
                 f"{parsed_name.last} {parsed_name.first} {parsed_name.middle} ".strip()
             )
-            formatted_name = formatted_name.replace("-", " ")
+
+            separators = r"[-‐‑‒–—―⁃﹘﹣－]"
+            formatted_name = re.sub(separators, " ", formatted_name)
+            formatted_name = re.sub(r"\s+", " ", formatted_name).strip()
 
             formatted_name = formatted_name.translate(
                 str.maketrans("", "", string.punctuation)

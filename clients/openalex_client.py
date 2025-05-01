@@ -61,7 +61,12 @@ class OpenAlexClient(APIClient):
         """
         param_kwargs.setdefault("email", openalex_email)
         self.params = {**param_kwargs}
-        return self.get(OpenAlexEndpoint.works, params=self.params)
+        response = self.get(OpenAlexEndpoint.works, params=self.params)
+
+        # 🟢 Stocke la dernière réponse ici
+        self.last_response = response
+
+        return response
 
     @retry_request
     def count_results(self, **param_kwargs) -> int:
@@ -106,21 +111,39 @@ class OpenAlexClient(APIClient):
     @retry_decorator
     def fetch_records(self, format="digest", **param_kwargs):
         """
-        Fetch records from OpenAlex API, processing them into the specified format.
+        Fetch all records from OpenAlex API using cursor-based pagination.
 
         Args:
-            format (str): Desired format for output records. Options are 'digest', 'digest-ifs3', 'ifs3', or 'openalex'.
-            **param_kwargs: Additional parameters for querying OpenAlex.
+            format (str): Desired format for output records. Options: 'digest', 'digest-ifs3', 'ifs3', or 'openalex'.
+            **param_kwargs: Parameters for querying OpenAlex (e.g., filter, per_page).
 
         Returns:
-            list or None: Processed records in the specified format, or None if no records are found.
+            list: Processed records in the specified format.
         """
         param_kwargs.setdefault("email", openalex_email)
-        self.params = param_kwargs
-        result = self.search_query(**self.params)
-        if result["meta"]["count"] > 0:
-            return self._process_fetch_records(format, **self.params)
-        return None
+        param_kwargs.setdefault("per_page", 50)
+        cursor = param_kwargs.pop("cursor", "*")
+
+        all_records = []
+
+        while True:
+            self.params = {**param_kwargs, "cursor": cursor}
+            response = self.search_query(**self.params)
+
+            results = response.get("results", [])
+            if not results:
+                break
+
+            for record in results:
+                parsed = self._process_record(record, format)
+                if parsed:
+                    all_records.append(parsed)
+
+            cursor = response.get("meta", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return all_records
 
     @retry_decorator
     def fetch_record_by_unique_id(self, openalex_id):

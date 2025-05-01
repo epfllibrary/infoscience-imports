@@ -138,14 +138,14 @@ doctypes_mapping_dict = {
             "collection": "Books and Book parts",
             "dc.type": "text::book/monograph::book part or chapter",
         },
-        # "dataset": {
-        #     "collection": "Datasets and Code",
-        #     "dc.type": "dataset",
-        # },
-        # "dissertation": {
-        #     "collection": "EPFL thesis",
-        #     "dc.type": "text::thesis::doctoral thesis",
-        # },
+        "dataset": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
+        "dissertation": {
+            "collection": "EPFL thesis",
+            "dc.type": "text::thesis::doctoral thesis",
+        },
         "editorial": {
             "collection": "Journal articles",
             "dc.type": "text::journal::editorial",
@@ -158,42 +158,42 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",
         },
-        # "report": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::report",
-        # },
-        # "standard": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::technical documentation or standard",
-        # },
+        "report": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::report",
+        },
+        "standard": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::technical documentation or standard",
+        },
         "preprint": {
             "collection": "Preprints and Working Papers",
             "dc.type": "text::preprint",
         },
-        # "erratum": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
-        # "grant": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "other": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "paratext": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "peer-review": {
-        #     "collection": "",
-        #     "dc.type": "",
-        # },
-        # "reference-entry": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
+        "erratum": {
+            "collection": "Journal articles",
+            "dc.type": "text",
+        },
+        "grant": {
+            "collection": "",
+            "dc.type": "text",
+        },
+        "other": {
+            "collection": "",
+            "dc.type": "text",
+        },
+        "paratext": {
+            "collection": "",
+            "dc.type": "text",
+        },
+        "peer-review": {
+            "collection": "",
+            "dc.type": "",
+        },
+        "reference-entry": {
+            "collection": "",
+            "dc.type": "text",
+        },
     },
     "source_crossref": {
         "book": {
@@ -473,6 +473,77 @@ types_authority_mapping = {
     "student work": "student-coar-types:c_46ec",
 }
 
+
+## SANDBOX MAPPINGS
+
+# collections_mapping = {
+#     "Patents": {
+#         "id": "29a84f70-9fb7-49d3-bd73-65e8e680ac3c",
+#         "section": "patent",
+#     },
+#     "Teaching Materials": {
+#         "id": "20c6f943-35c6-4a18-96fc-3447b0f0df2b",
+#         "section": "teaching_",
+#     },
+#     "Images, Videos, Interactive resources, and Design": {
+#         "id": "3b9fb2fb-edc3-4c44-833a-1815a4d503b8",
+#         "section": "design_",
+#     },
+#     "Newspaper, Magazine, or Blog post": {
+#         "id": "792410d0-424c-4957-9faf-719852e88083",
+#         "section": "media_",
+#     },
+#     "Datasets and Code": {
+#         "id": "a8857a33-b849-4c17-9a14-d00e2caa3e20",
+#         "section": "dataset_",
+#     },
+#     "Student works": {
+#         "id": "2d77dd3f-64eb-42ba-9352-c5946a17cce5",
+#         "section": "thesis_",
+#     },
+#     "Units": {
+#         "id": "ddc8a019-0764-4f26-b29f-76c1b86c3747",
+#         "section": "orgunit",
+#     },
+#     "EPFL thesis": {
+#         "id": "cc9a689b-b5aa-4d9c-ae13-a313590a456f",
+#         "section": "thesis_",
+#     },
+#     "Reports, Documentation, and Standards": {
+#         "id": "d2af63ef-93e5-4822-9eba-a1a80bd9832b",
+#         "section": "report_",
+#     },
+#     "Preprints and Working Papers": {
+#         "id": "60b85c13-5884-4213-b1b9-58e9a024ae32",
+#         "section": "preprint_",
+#     },
+#     "Books and Book parts": {
+#         "id": "ca9a2328-2f85-4ce9-80b5-69212dcd6a91",
+#         "section": "book_",
+#     },
+#     "Persons": {
+#         "id": "c6d34926-0b98-4852-8398-9172fb83ab62",
+#         "section": "person",
+#     },
+#     "Events": {
+#         "id": "36b742e3-72e3-454a-91f8-2d782908647a",
+#         "section": "events_section",
+#     },
+#     "Conferences, Workshops, Symposiums, and Seminars": {
+#         "id": "d8d0d545-f4e1-4d5a-bcf8-66a487216910",
+#         "section": "conference_",
+#     },
+#     "Journals": {
+#         "id": "90fe759b4-9567-4457-bc6c-c9eac8c5d531",
+#         "section": "journal",
+#     },
+#     "Journal articles": {
+#         "id": "c977fcc1-dc4b-465e-9ac0-56d87b802ca3",
+#         "section": "article_",
+#     },
+# }
+
+
 collections_mapping = {
     "Patents": {
         "id": "ce5a1b89-cfb3-40eb-bdd2-dcb021e755b7",
@@ -559,6 +630,7 @@ collections_mapping = {
         "section": "article_",
     },
 }
+
 # Mappings pour les licenses
 licenses_mapping = {
     "cc-by": {

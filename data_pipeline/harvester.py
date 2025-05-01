@@ -326,7 +326,7 @@ class OpenAlexHarvester(Harvester):
             f"{self.query}"
         )
 
-        # Count total publications to manage pagination
+        # Count total publications to manage progress logging
         total = OpenAlexClient.count_results(filter=filters)
         self.logger.info(f"- Nombre de publications trouvées dans OpenAlex: {total}")
 
@@ -334,33 +334,47 @@ class OpenAlexHarvester(Harvester):
             self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
 
-        count = 50  # Set a per_page count for pagination
+        count = 50  # Number of items per request
         recs = []
+        cursor = "*"
+        page = 1
 
-        # Fetch records in pages of `count` items each
-        for page in range(
-            1, (total // count) + 2
-        ):  # Adjusted to +2 to handle last page
-            self.logger.info(f"Harvesting page {page} out of {total // count + 1}")
+        while True:
+            self.logger.info(f"Harvesting page {page} (cursor: {cursor})")
 
             try:
                 h_recs = OpenAlexClient.fetch_records(
-                    format=self.format, filter=filters, per_page=count, page=page
+                    format=self.format, filter=filters, per_page=count, cursor=cursor
                 )
+
                 if h_recs:
                     recs.extend(h_recs)
                 else:
                     self.logger.warning(f"No records found for page {page}.")
+                    break
+
+                # Get the next cursor from the last API response
+                last_response_meta = OpenAlexClient.last_response.get("meta", {})
+                cursor = last_response_meta.get("next_cursor", None)
+
+                if not cursor:
+                    self.logger.info("No next cursor found. Pagination complete.")
+                    break
+
+                page += 1
+
             except Exception as e:
                 self.logger.error(f"Error fetching records for page {page}: {e}")
+                break
 
-        # Check if valid records were fetched
+        # Build the DataFrame if records were collected
         if recs:
-            df = (
-                pd.DataFrame(recs)
-                .query('ifs3_collection != "unknown"')  # Filter out unknown_doctype
-                .reset_index(drop=True)
-            )
+            # df = (
+            #     pd.DataFrame(recs)
+            #     .query('ifs3_collection != "unknown"')  # Filter out unmapped types
+            #     .reset_index(drop=True)
+            # )
+            df = pd.DataFrame(recs).reset_index(drop=True)
         else:
             self.logger.debug("No valid records fetched. Returning an empty DataFrame.")
             return pd.DataFrame()
