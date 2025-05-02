@@ -112,6 +112,8 @@ class DSpaceClientWrapper:
             f"({final_query}) AND (entityType:(Publication) OR entityType:(Product))"
         )
 
+        final_query_workflow = f"({final_query}) AND (search.resourcetype:(XmlWorkflowItem))"
+
         # Search for duplicates using the combined query
         self.logger.debug(
             f"Searching Infoscience researchoutput with query: {final_query}..."
@@ -132,7 +134,7 @@ class DSpaceClientWrapper:
 
         # Check the supervision configuration
         dsos_supervision = self._search_objects(
-            query=final_query,
+            query=final_query_workflow,
             page=0,
             size=1,
             configuration="supervision",
