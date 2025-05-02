@@ -594,6 +594,10 @@ class Loader:
         issn_list = [issn.strip() for issn in journal_issn.split("||") if issn.strip()]
         authority_journal = f"will be generated::ISSN::{issn_list[0]}" if issn_list else None
 
+        acronyms = [unit.get("acro") for unit in units if unit.get("acro")]
+        if len(acronyms) > 1 and "EPFL" in acronyms:
+            acronyms = [acro for acro in acronyms if acro != "EPFL"]
+
         fields = [
             (
                 f"/sections/{type_section}/dc.type",
@@ -738,12 +742,11 @@ class Loader:
                 f"/sections/{form_section}details/dc.description.sponsorship",
                 [
                     build_value(
-                        unit.get("acro"),
-                        f"will be referenced::ACRONYM::{unit.get('acro')}",
+                        acro,
+                        f"will be referenced::ACRONYM::{acro}",
                         confidence=600,
                     )
-                    for unit in units
-                    if unit.get("acro")
+                    for acro in acronyms
                 ],
                 True,
             ),

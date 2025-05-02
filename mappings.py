@@ -92,10 +92,10 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::editorial",
         },
-        # "Letter": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
+        "Letter": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article",
+        },
         "Review": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",

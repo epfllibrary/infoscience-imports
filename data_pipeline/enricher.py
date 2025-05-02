@@ -269,102 +269,102 @@ class AuthorProcessor:
 
     def api_epfl_reconciliation(self, return_df=False):
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
+        cache = {}  # local cache to store results
+
+        def make_cache_key(row):
+            # Construit une clé unique pour le cache à partir des champs disponibles
+            if pd.notna(row.get("orcid_id")):
+                return f"orcid:{row['orcid_id']}"
+            elif pd.notna(row.get("internal_author_id")) and row.get("source") in [
+                "scopus",
+                "wos",
+            ]:
+                return f"{row['source']}:{row['internal_author_id']}"
+            elif pd.notna(row.get("author_cleaned")):
+                return f"name:{row['author_cleaned']}"
+            else:
+                firstname = clean_value(row.get("nameparse_firstname", ""))
+                lastname = clean_value(row.get("nameparse_lastname", ""))
+                return f"fullname:{firstname} {lastname}"
 
         def query_person(row):
-            # Attempt to retrieve author using ORICD first
+            key = make_cache_key(row)
+            if key in cache:
+                self.logger.debug(f"Returned cached sciperId {cache[key]} for key {key}")
+                return cache[key]
+
+            sciper_id = ""
             orcid_id = row.get("orcid_id")
             if orcid_id and pd.notna(orcid_id):
                 sciper_id = self._query_dspace_authority(orcid_id)
-                if sciper_id:
-                    return sciper_id
-            # Add the condition for 'source' == 'scopus' and 'internal_author_id' exists and is not null
-            if (
-                "source" in row
-                and row["source"] == "scopus"
-                and "internal_author_id" in row
-                and pd.notna(row.get("internal_author_id"))
-            ):
-                sciper_id = self._query_dspace_authority(f"person.identifier.scopus-author-id:({row['internal_author_id']})")
-                if sciper_id:
-                    return sciper_id
-            # Add the condition for 'source' == 'wos' and 'internal_author_id' exists and is not null
-            if (
-                "source" in row
-                and row["source"] == "wos"
-                and "internal_author_id" in row
-                and pd.notna(row.get("internal_author_id"))
-            ):
+
+            elif row.get("source") in ["scopus", "wos"] and pd.notna(row.get("internal_author_id")):
+                identifier_map = {
+                    "scopus": "person.identifier.scopus-author-id",
+                    "wos": "person.identifier.rid"
+                }
                 sciper_id = self._query_dspace_authority(
-                    f"person.identifier.rid:({row['internal_author_id']})"
+                    f"{identifier_map[row['source']]}:({row['internal_author_id']})"
                 )
-                if sciper_id:
-                    return sciper_id
 
-            # Attempt to retrieve author info from DSpace by name
-            # Construct the query from the 'author_cleaned' column
-            query = row.get("author_cleaned")
-            if query and pd.notna(query):
-                sciper_id = self._query_dspace_authority(query)
-                if sciper_id:
-                    return sciper_id
+            elif pd.notna(row.get("author_cleaned")):
+                sciper_id = self._query_dspace_authority(row["author_cleaned"])
 
-            firstname = row["nameparse_firstname"]
-            if firstname:
-                firstname = clean_value(firstname)
+            if not sciper_id:
+                firstname = clean_value(row.get("nameparse_firstname", ""))
+                lastname = clean_value(row.get("nameparse_lastname", ""))
+                sciper_id = ApiEpflClient.query_person(
+                    query=row.get("author_cleaned"),
+                    firstname=firstname,
+                    lastname=lastname,
+                    format="sciper",
+                    use_firstname_lastname=True,
+                )
 
-            lastname = row["nameparse_lastname"]
-            if lastname:
-                lastname = clean_value(lastname)
-
-            # Call the query_person method with the appropriate parameters
-            return ApiEpflClient.query_person(
-                query=query,
-                firstname=firstname,
-                lastname=lastname,
-                format="sciper",
-                use_firstname_lastname=True,
-            )
-
-        # Query the ApiEpflClient for each cleaned author and store the sciper_id
-        # Pass the entire row to the query_person function
+            cache[key] = sciper_id  # Mémoriser le résultat même si None
+            return sciper_id
 
         self.df["sciper_id"] = self.df.apply(query_person, axis=1)
 
-        # Optionally return the modified DataFrame if required
         if return_df:
             return self.df
 
         # Function to fetch accreditation info and store in new columns
+        accred_cache = {}  # Local cache for accreditation info
         def fetch_accred_info(sciper_id):
             """
             Fetch accreditation information for a person based on specific priority rules.
+            Uses a local cache to avoid redundant lookups and skips units with null/empty unit_type.
 
             Args:
                 sciper_id (str): The unique identifier of the person.
-                unit_types (list): List of allowed unit_types.
 
             Returns:
                 tuple: (unit_id, unit_name) or (None, None) if no result is found.
             """
+            if sciper_id in accred_cache:
+                return accred_cache[sciper_id]
+
             if pd.notna(sciper_id):
                 records = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="digest")
                 self.logger.debug(f"Person record: {records}")
 
                 if isinstance(records, list) and records:
-                    # Step 1: Initialize variables to track results for each condition
-                    prioritized_unit = None  # For unit_order == 1 and allowed unit_type
-                    allowed_units = []       # Collect allowed units for priority sorting
-                    fallback_unit = None     # For unit_order == 1 regardless of unit_type
+                    prioritized_unit = None
+                    allowed_units = []
+                    fallback_unit = None
 
-                    # Iterate through records and classify them
                     for record in records:
                         unit_order = record.get('unit_order')
                         unit_type = record.get('unit_type')
                         unit_id = record.get('unit_id')
                         unit_name = record.get('unit_name')
 
+                        # Skip units with null, empty, or excluded unit_type
+                        if not unit_type or unit_type in (None, '', 'null'):
+                            continue
                         if excluded_unit_types is not None and unit_type in excluded_unit_types:
-                            continue  # Skip if unit_type is in the excluded list
+                            continue
 
                         if unit_order == 1 and unit_type in unit_types and not prioritized_unit:
                             prioritized_unit = (unit_id, unit_name)
@@ -375,27 +375,28 @@ class AuthorProcessor:
                         if unit_order == 1 and not fallback_unit:
                             fallback_unit = (unit_id, unit_name)
 
-                    # Step 2: Return the highest priority result available
                     if prioritized_unit:
                         self.logger.debug(f"Main unit retrieved: {prioritized_unit}")
+                        accred_cache[sciper_id] = prioritized_unit
                         return prioritized_unit
 
                     if allowed_units:
-                        # Sort allowed units by unit_order (ascending)
                         allowed_units.sort(key=lambda x: x[3])
-                        self.logger.debug(f"Main unit retrieved: {allowed_units[0][:2]}")
-                        return allowed_units[0][:2]  # Return (unit_id, unit_name)
+                        result = allowed_units[0][:2]
+                        self.logger.debug(f"Main unit retrieved: {result}")
+                        accred_cache[sciper_id] = result
+                        return result
 
                     if fallback_unit:
                         self.logger.debug(f"Main unit retrieved: {fallback_unit}")
+                        accred_cache[sciper_id] = fallback_unit
                         return fallback_unit
 
-                    # Step 3: If no conditions above apply, return the first record in the list
-                    self.logger.warning("No authorized unit type found. Returning the first record.")
-                    first_record = records[0]
-                    return first_record['unit_id'], first_record['unit_name']
+                result = ('10000', "EPFL")
+                self.logger.warning("No authorized unit type found. Returning EPFL Unit.")
+                accred_cache[sciper_id] = result
+                return result
 
-            return None, None
 
         # Request ApiEpflClient.fetch_accred_by_unique_id for each row with a non-null sciper_id
         self.df[['epfl_api_mainunit_id', 'epfl_api_mainunit_name']] = self.df['sciper_id'].apply(
@@ -507,7 +508,7 @@ class AuthorProcessor:
         # Return either the modified DataFrame or the instance based on the return_df flag
         return self.df if return_df else self
 
-    ##### Inutilisé #####################
+    ##### Unused #####################
     def orcid_data_reconciliation(self, return_df=False):
         self.df = self.df.copy()
 
