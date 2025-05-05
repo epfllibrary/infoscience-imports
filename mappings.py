@@ -138,14 +138,14 @@ doctypes_mapping_dict = {
             "collection": "Books and Book parts",
             "dc.type": "text::book/monograph::book part or chapter",
         },
-        "dataset": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
-        "dissertation": {
-            "collection": "EPFL thesis",
-            "dc.type": "text::thesis::doctoral thesis",
-        },
+        # "dataset": {
+        #     "collection": "Datasets and Code",
+        #     "dc.type": "dataset",
+        # },
+        # "dissertation": {
+        #     "collection": "EPFL thesis",
+        #     "dc.type": "text::thesis::doctoral thesis",
+        # },
         "editorial": {
             "collection": "Journal articles",
             "dc.type": "text::journal::editorial",
@@ -158,42 +158,42 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",
         },
-        "report": {
-            "collection": "Reports, Documentation, and Standards",
-            "dc.type": "text::report",
-        },
-        "standard": {
-            "collection": "Reports, Documentation, and Standards",
-            "dc.type": "text::technical documentation or standard",
-        },
+        # "report": {
+        #     "collection": "Reports, Documentation, and Standards",
+        #     "dc.type": "text::report",
+        # },
+        # "standard": {
+        #     "collection": "Reports, Documentation, and Standards",
+        #     "dc.type": "text::technical documentation or standard",
+        # },
         "preprint": {
             "collection": "Preprints and Working Papers",
             "dc.type": "text::preprint",
         },
-        "erratum": {
-            "collection": "Journal articles",
-            "dc.type": "text",
-        },
-        "grant": {
-            "collection": "",
-            "dc.type": "text",
-        },
-        "other": {
-            "collection": "",
-            "dc.type": "text",
-        },
-        "paratext": {
-            "collection": "",
-            "dc.type": "text",
-        },
-        "peer-review": {
-            "collection": "",
-            "dc.type": "",
-        },
-        "reference-entry": {
-            "collection": "",
-            "dc.type": "text",
-        },
+        # "erratum": {
+        #     "collection": "Journal articles",
+        #     "dc.type": "text",
+        # },
+        # "grant": {
+        #     "collection": "",
+        #     "dc.type": "text",
+        # },
+        # "other": {
+        #     "collection": "",
+        #     "dc.type": "text",
+        # },
+        # "paratext": {
+        #     "collection": "",
+        #     "dc.type": "text",
+        # },
+        # "peer-review": {
+        #     "collection": "",
+        #     "dc.type": "",
+        # },
+        # "reference-entry": {
+        #     "collection": "",
+        #     "dc.type": "text",
+        # },
     },
     "source_crossref": {
         "book": {
@@ -212,10 +212,10 @@ doctypes_mapping_dict = {
             "collection": "Books and Book parts",
             "dc.type": "text::book/monograph::book part or chapter",
         },
-        # "book-series": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph::book part or chapter",
-        # },
+        "book-series": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph::book part or chapter",
+        },
         # "book-set": {
         #     "collection": "Books and Book parts",
         #     "dc.type": "text::book/monograph",
