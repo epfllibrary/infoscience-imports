@@ -477,3 +477,75 @@ class CrossrefHarvester(Harvester):
             return pd.DataFrame()
 
         return df
+
+
+class OpenAlexCrossrefHarvester(Harvester):
+    """
+    Harvests DOIs via OpenAlex, and fetches rich metadata from Crossref.
+    """
+
+    def __init__(
+        self, start_date: str, end_date: str, query: str, format: str = "ifs3"
+    ):
+        super().__init__("OpenAlex+Crossref", start_date, end_date, query, format)
+
+    def fetch_and_parse_publications(self) -> pd.DataFrame:
+        """
+        1. Fetch full OpenAlex records (with authors + affiliations).
+        2. Enrich each DOI with Crossref metadata (title, type, etc.).
+        3. Merge and return a normalized DataFrame.
+        """
+        self.logger.info("Fetching records from OpenAlex...")
+
+        filters = (
+            f"from_publication_date:{self.start_date},"
+            f"to_publication_date:{self.end_date},"
+            f"{self.query}"
+        )
+
+        try:
+            openalex_records = OpenAlexClient.fetch_records(
+                format="openalex", filter=filters
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to fetch records from OpenAlex: {e}")
+            return pd.DataFrame()
+
+        if not openalex_records:
+            self.logger.warning("No records found in OpenAlex. Returning empty DataFrame.")
+            return pd.DataFrame()
+
+        self.logger.info(f"- {len(openalex_records)} records retrieved from OpenAlex.")
+
+        results = []
+
+        for idx, oa_rec in enumerate(openalex_records, 1):
+            doi = OpenAlexClient.openalex_extract_doi(oa_rec)
+            if not doi:
+                continue
+
+            self.logger.info(
+                f"[{idx}/{len(openalex_records)}] Fetching Crossref metadata for DOI: {doi}"
+            )
+            try:
+                record = CrossrefClient.fetch_record_by_unique_id(
+                    doi=doi, format=self.format
+                )
+                if record:
+                    record["authors"] = OpenAlexClient._extract_ifs3_authors(oa_rec)
+                    results.append(record)
+            except Exception as e:
+                self.logger.warning(f"Failed to enrich DOI {doi}: {e}")
+                continue
+
+        if not results:
+            self.logger.warning(
+                "No valid enriched records returned. Returning empty DataFrame."
+            )
+            return pd.DataFrame()
+
+        return (
+            pd.DataFrame(results)
+            .query('ifs3_collection != "unknown"')
+            .reset_index(drop=True)
+        )
