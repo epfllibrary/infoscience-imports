@@ -1,8 +1,10 @@
 """OpenAlex client for Infoscience imports"""
 
 import os
+import re
 from typing import List
 import tenacity
+from nameparser import HumanName
 from apiclient import (
     APIClient,
     endpoint,
@@ -41,7 +43,7 @@ class OpenAlexEndpoint:
     work_id = "works/{openalexId}"
 
 
-class OpenAlexClient(APIClient):
+class Client(APIClient):
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
@@ -103,10 +105,35 @@ class OpenAlexClient(APIClient):
         A list of IDs from OpenAlex.
         """
         param_kwargs.setdefault("email", openalex_email)
-        param_kwargs.setdefault("per_page", 10)
-        param_kwargs.setdefault("page", 1)
-        self.params = {**param_kwargs}
-        return [x["id"] for x in self.search_query(**self.params)["results"]]
+        param_kwargs.setdefault("per_page", 50)
+        # Curseur initial
+        cursor = param_kwargs.pop("cursor", "*")
+
+        all_ids: List[str] = []
+
+        while True:
+            # On inclut le curseur à chaque requête
+            self.params = {**param_kwargs, "cursor": cursor}
+            response = self.search_query(**self.params)
+
+            results = response.get("results", [])
+            if not results:
+                break
+
+            for record in results:
+                raw_doi = record.get("doi")
+                if raw_doi:
+                    doi_id = re.sub(r'^https?://(?:dx\.)?doi\.org/', '', raw_doi, flags=re.IGNORECASE)
+                    all_ids.append(doi_id)
+                else:
+                    all_ids.append(record["id"])
+
+            # Passage au curseur suivant
+            cursor = response.get("meta", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return all_ids
 
     @retry_decorator
     def fetch_records(self, format="digest", **param_kwargs):
@@ -217,7 +244,7 @@ class OpenAlexClient(APIClient):
         return {
             "source": "openalex",
             "internal_id": x["id"],
-            "doi": self._extract_doi(x), 
+            "doi": self.openalex_extract_doi(x),
             "title": x.get("display_name"),
             "doctype": self._extract_first_doctype(x),
             "pubyear": x.get("publication_year"),
@@ -257,7 +284,7 @@ class OpenAlexClient(APIClient):
         ifs3_info["authors"] = self._extract_ifs3_authors(x)
         return ifs3_info
 
-    def _extract_doi(self, x):
+    def openalex_extract_doi(self, x):
         """
         Extract DOI from an OpenAlex record, removing the prefix 'https://doi.org/'.
 
@@ -376,9 +403,12 @@ class OpenAlexClient(APIClient):
                         for inst in author.get("institutions", [])
                     ]
                 )
+                raw_name = author["author"]["display_name"]
+                formatted_name = self._format_authorname(raw_name)
+
                 authors.append(
                     {
-                        "author": author["author"]["display_name"],
+                        "author": formatted_name,
                         "internal_author_id": author["author"]["id"],
                         "orcid_id": self._extract_author_orcid(author["author"]),
                         "organizations": institutions,
@@ -390,8 +420,22 @@ class OpenAlexClient(APIClient):
             )
         return authors
 
+    @staticmethod
+    def _format_authorname(raw: str) -> str:
+        """
+        Formate un nom complet en "Nom, Prénom(s) Initiales" en conservant tous les middle names et initiales.
+        """
+        nm = HumanName(raw)
+        given_parts = []
+        if nm.first:
+            given_parts.append(nm.first)
+        if nm.middle:
+            # splitte les middle names/initiales (ex: "D. P.")
+            given_parts += nm.middle.split()
+        given_str = " ".join(given_parts)
+        return f"{nm.last}, {given_str}"
 
 # Initialize the OpenAlexClient with a JSON response handler
-OpenAlexClient = OpenAlexClient(
+OpenAlexClient = Client(
     response_handler=JsonResponseHandler,
 )
