@@ -46,6 +46,7 @@ class AuthorProcessor:
 
         log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
+        self._accred_cache = {}        
 
     def process(self, return_df=False, author_ids_to_check=None):
         """
@@ -247,6 +248,85 @@ class AuthorProcessor:
 
         return self.df if return_df else self
 
+    def _fetch_accred_info(self, sciper_id):
+        """
+        Fetch accreditation information for a person based on specific priority rules.
+        Uses a local cache to avoid redundant lookups and skips units with null/empty unit_type.
+
+        Args:
+            sciper_id (str): The unique identifier of the person.
+
+        Returns:
+            tuple: (unit_id, unit_name) or (None, None) if no result is found.
+        """
+        if sciper_id in self._accred_cache:
+            return self._accred_cache[sciper_id]
+
+        if pd.notna(sciper_id):
+            records = ApiEpflClient.fetch_accred_by_unique_id(
+                sciper_id, format="digest"
+            )
+            self.logger.debug(f"Person record: {records}")
+
+            if isinstance(records, list) and records:
+                prioritized_unit = None
+                allowed_units = []
+                fallback_unit = None
+
+                for record in records:
+                    unit_order = record.get("unit_order")
+                    unit_type = record.get("unit_type")
+                    unit_id = record.get("unit_id")
+                    unit_name = record.get("unit_name")
+
+                    # Skip units with null, empty, or excluded unit_type
+                    if not unit_type or unit_type in (None, "", "null"):
+                        continue
+                    if (
+                        excluded_unit_types is not None
+                        and unit_type in excluded_unit_types
+                    ):
+                        continue
+
+                    if (
+                        unit_order == 1
+                        and unit_type in unit_types
+                        and not prioritized_unit
+                    ):
+                        prioritized_unit = (unit_id, unit_name)
+
+                    if unit_type in unit_types:
+                        allowed_units.append(
+                            (unit_id, unit_name, unit_type, unit_order)
+                        )
+
+                    if unit_order == 1 and not fallback_unit:
+                        fallback_unit = (unit_id, unit_name)
+
+                if prioritized_unit:
+                    self.logger.debug(f"Main unit retrieved: {prioritized_unit}")
+                    self._accred_cache[sciper_id] = prioritized_unit
+                    return prioritized_unit
+
+                if allowed_units:
+                    allowed_units.sort(key=lambda x: x[3])
+                    result = allowed_units[0][:2]
+                    self.logger.debug(f"Main unit retrieved: {result}")
+                    self._accred_cache[sciper_id] = result
+                    return result
+
+                if fallback_unit:
+                    self.logger.debug(f"Main unit retrieved: {fallback_unit}")
+                    self._accred_cache[sciper_id] = fallback_unit
+                    return fallback_unit
+
+            default = ("10000", "EPFL")
+            self.logger.warning(
+                "No authorized unit type found. Returning EPFL Unit."
+            )
+            self._accred_cache[sciper_id] = default
+            return default
+
     def _query_dspace_authority(self, query):
         """
         Attempts to retrieve author information from DSpace authority service.
@@ -329,79 +409,13 @@ class AuthorProcessor:
         if return_df:
             return self.df
 
-        # Function to fetch accreditation info and store in new columns
-        accred_cache = {}  # Local cache for accreditation info
-        def fetch_accred_info(sciper_id):
-            """
-            Fetch accreditation information for a person based on specific priority rules.
-            Uses a local cache to avoid redundant lookups and skips units with null/empty unit_type.
-
-            Args:
-                sciper_id (str): The unique identifier of the person.
-
-            Returns:
-                tuple: (unit_id, unit_name) or (None, None) if no result is found.
-            """
-            if sciper_id in accred_cache:
-                return accred_cache[sciper_id]
-
-            if pd.notna(sciper_id):
-                records = ApiEpflClient.fetch_accred_by_unique_id(sciper_id, format="digest")
-                self.logger.debug(f"Person record: {records}")
-
-                if isinstance(records, list) and records:
-                    prioritized_unit = None
-                    allowed_units = []
-                    fallback_unit = None
-
-                    for record in records:
-                        unit_order = record.get('unit_order')
-                        unit_type = record.get('unit_type')
-                        unit_id = record.get('unit_id')
-                        unit_name = record.get('unit_name')
-
-                        # Skip units with null, empty, or excluded unit_type
-                        if not unit_type or unit_type in (None, '', 'null'):
-                            continue
-                        if excluded_unit_types is not None and unit_type in excluded_unit_types:
-                            continue
-
-                        if unit_order == 1 and unit_type in unit_types and not prioritized_unit:
-                            prioritized_unit = (unit_id, unit_name)
-
-                        if unit_type in unit_types:
-                            allowed_units.append((unit_id, unit_name, unit_type, unit_order))
-
-                        if unit_order == 1 and not fallback_unit:
-                            fallback_unit = (unit_id, unit_name)
-
-                    if prioritized_unit:
-                        self.logger.debug(f"Main unit retrieved: {prioritized_unit}")
-                        accred_cache[sciper_id] = prioritized_unit
-                        return prioritized_unit
-
-                    if allowed_units:
-                        allowed_units.sort(key=lambda x: x[3])
-                        result = allowed_units[0][:2]
-                        self.logger.debug(f"Main unit retrieved: {result}")
-                        accred_cache[sciper_id] = result
-                        return result
-
-                    if fallback_unit:
-                        self.logger.debug(f"Main unit retrieved: {fallback_unit}")
-                        accred_cache[sciper_id] = fallback_unit
-                        return fallback_unit
-
-                result = ('10000', "EPFL")
-                self.logger.warning("No authorized unit type found. Returning EPFL Unit.")
-                accred_cache[sciper_id] = result
-                return result
-
-
         # Request ApiEpflClient.fetch_accred_by_unique_id for each row with a non-null sciper_id
-        self.df[['epfl_api_mainunit_id', 'epfl_api_mainunit_name']] = self.df['sciper_id'].apply(
-            lambda sciper_id: fetch_accred_info(sciper_id)
-        ).apply(pd.Series)
+        # Apply unified accreditation fetch
+        self.df[["epfl_api_mainunit_id", "epfl_api_mainunit_name"]] = (
+            self.df["sciper_id"]
+            .apply(lambda s: self._fetch_accred_info(s))
+            .apply(pd.Series)
+        )
 
         return self.df if return_df else self
 
@@ -469,6 +483,8 @@ class AuthorProcessor:
                         if query:
                             result = dspace_wrapper.find_person(query=query)
                             if isinstance(result, dict) and all(k in result for k in ["uuid", "sciper_id"]):
+                                self.logger.info("Found DSpace UUID: %s", result["uuid"])
+                                self.logger.info("Found DSpace sciper_id: %s", result["sciper_id"])
                                 return result["uuid"], result["sciper_id"]
                             else:
                                 self.logger.warning("Unexpected result format for query '%s': %s", query, result)
@@ -481,24 +497,16 @@ class AuthorProcessor:
             return None, None  # Return default if no valid result
 
         def update_row(row):
-            """
-            Updates the row with the DSpace UUID and potentially the sciper_id.
-
-            Parameters:
-            - row (pd.Series): A row from the DataFrame to be updated.
-
-            Returns:
-            - pd.Series: The updated row with the DSpace UUID and sciper_id if found.
-            """
-
-            # Get the DSpace UUID and associated sciper_id for the row
-            uuid, found_sciper_id = get_dspace_data(row)
-
-            # If the sciper_id is empty and a sciper_id is found, update the column
-            if pd.isna(row.get("sciper_id")) and found_sciper_id:
-                row["sciper_id"] = found_sciper_id
-
-            # Update the row with the DSpace UUID
+            original_sciper = row.get("sciper_id")
+            uuid, found_sciper = get_dspace_data(row)
+            # Update sciper if missing
+            if pd.isna(original_sciper) and found_sciper:
+                row["sciper_id"] = found_sciper
+                # Only reconcile accreditation for newly found sciper
+                uid, uname = self._fetch_accred_info(found_sciper)
+                row["epfl_api_mainunit_id"] = uid
+                row["epfl_api_mainunit_name"] = uname
+            # Set DSpace UUID always
             row["dspace_uuid"] = uuid
             return row
 
