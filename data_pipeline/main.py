@@ -15,7 +15,7 @@ from data_pipeline.harvester import (
     WosHarvester,
     ScopusHarvester,
     CrossrefHarvester,
-    # OpenAlexHarvester (if needed)
+    OpenAlexCrossrefHarvester,
 )
 
 load_dotenv()
@@ -88,14 +88,10 @@ def main(
     # Merge provided queries with default queries
     merged_queries = {**default_queries, **(queries or {})}
 
-    field_queries = {
-        "query.affiliation": "EPFL",
-    }
-
     # Initialize harvesters dynamically
     harvesters = {
-        # "wos": WosHarvester(start_date, end_date, merged_queries["wos"]),
-        # "scopus": ScopusHarvester(start_date, end_date, merged_queries["scopus"]),
+        "wos": WosHarvester(start_date, end_date, merged_queries["wos"]),
+        "scopus": ScopusHarvester(start_date, end_date, merged_queries["scopus"]),
         "crossref": CrossrefHarvester(
             start_date,
             end_date,
@@ -104,7 +100,9 @@ def main(
                 "query.affiliation": merged_queries["crossref"],
             },
         ),
-        # "openalex": OpenAlexHarvester(start_date, end_date, merged_queries["openalex"])  # Uncomment if needed
+        "openalex": OpenAlexCrossrefHarvester(
+            start_date, end_date, merged_queries["openalex"]
+        ),  # Uncomment if needed
     }
 
     # Harvest publications
