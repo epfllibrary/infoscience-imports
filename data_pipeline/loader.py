@@ -82,9 +82,11 @@ class Loader:
             """
             if pd.notna(value) and value.strip():
                 first_part = value.split(delimiter, 1)[0].strip()
-                # Check if the prefix consists of digits followed by ':'
-                if re.match(r"^\d+:", first_part):
-                    return first_part.split(":", 1)[-1].strip()
+                # Regex pour détecter soit :
+                #  - un préfixe 100% numérique suivi de ':'
+                #  - un identifiant ROR (2 chiffres + 7 alphanumériques) suivi de ':'
+                if re.match(r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE):
+                    return first_part.split(":", 1)[1].strip()
                 return first_part
             else:
                 return default
