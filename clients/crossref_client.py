@@ -48,7 +48,7 @@ class CrossrefEndpoint:
     prefix = "prefixes/{prefix}"  # Endpoint to retrieve prefix information
 
 
-class CrossrefClient(APIClient):
+class Client(APIClient):
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
@@ -158,26 +158,28 @@ class CrossrefClient(APIClient):
         return None
 
     @retry_decorator
-    def fetch_record_by_unique_id(self, doi):
+    def fetch_record_by_unique_id(self, doi: str, format: str = "digest"):
         """
-        Retrieve a specific record by its DOI.
+        Retrieve a specific record by its DOI and process it in the specified format.
 
-        Example URL generated:
-            https://api.crossref.org/works/10.5555/12345678
-
-        Usage:
-            CrossrefClient.fetch_record_by_unique_id("10.5555/12345678")
+        Args:
+            doi (str): The DOI of the record to fetch.
+            format (str): The desired output format ("digest", "digest-ifs3", "ifs3", or "crossref").
 
         Returns:
-            A processed record (default output format is "digest").
+            dict: The processed metadata record.
         """
         if crossref_email:
             self.params = {"mailto": crossref_email}
         else:
             self.params = {}
+
         result = self.get(CrossrefEndpoint.work_doi.format(doi=doi), params=self.params)
+
         return (
-            self._process_record(result["message"], format="digest") if result else None
+            self._process_record(result["message"], format=format)
+            if result and "message" in result
+            else None
         )
 
     def _process_fetch_records(self, format, **param_kwargs):
@@ -359,7 +361,7 @@ class CrossrefClient(APIClient):
             "endingPage": ending_page,
             "pmid": "",
             "artno": x.get("article-number", ""),
-            "corporateAuthor": "",
+            "corporateAuthor": self._extract_corporate_authors(x),
             "keywords": keywords,
         }
 
@@ -861,6 +863,13 @@ class CrossrefClient(APIClient):
         """
         authors = []
         for author in x.get("author", []):
+            # Skip corporate authors (they will be handled separately)
+            if (
+                author.get("name")
+                and not author.get("family")
+                and not author.get("given")
+            ):
+                continue
             given = author.get("given", "")
             family = author.get("family", "")
             full_name = f"{family}, {given}".strip()
@@ -997,8 +1006,32 @@ class CrossrefClient(APIClient):
             self.logger.error(f"Error retrieving prefix info for {prefix}")
             return ""
 
+    def _extract_corporate_authors(self, x):
+        """
+        Extract corporate authors (groups) from a Crossref record.
+
+        Args:
+            x (dict): A Crossref record containing an 'author' list.
+
+        Returns:
+            str: Corporate author names concatenated by '||'.
+        """
+        try:
+            corporate_names = []
+            for author in x.get("author", []):
+                # Corporate authors have a 'name' field without 'family' and 'given'
+                if (
+                    author.get("name")
+                    and not author.get("family")
+                    and not author.get("given")
+                ):
+                    display = author.get("name").strip()
+                    if display:
+                        corporate_names.append(display)
+            return "||".join(corporate_names)
+        except Exception as e:
+            self.logger.error(f"Error extracting corporate authors: {e}")
+
 
 # Initialize the CrossrefClient with a JSON response handler
-CrossrefClient = CrossrefClient(
-    response_handler=JsonResponseHandler,
-)
+CrossrefClient = Client(response_handler=JsonResponseHandler)
