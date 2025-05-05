@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.11.20"
+__generated_with = "0.12.4"
 app = marimo.App(width="medium")
 
 
@@ -49,8 +49,8 @@ def _(datetime, os):
 @app.cell
 def _(CrossrefHarvester):
     # Define the date range and generic query
-    start_date = "2025-04-01"
-    end_date = "2025-04-02"
+    start_date = "2025-05-01"
+    end_date = "2025-05-05"
     generic_query = None
 
     # Define additional targeted field queries for Crossref

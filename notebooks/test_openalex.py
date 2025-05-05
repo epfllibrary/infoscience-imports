@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.12.6"
+__generated_with = "0.12.4"
 app = marimo.App(width="medium")
 
 
@@ -18,7 +18,7 @@ def _():
 
 @app.cell
 def _():
-    from data_pipeline.harvester import OpenAlexHarvester
+    from data_pipeline.harvester import OpenAlexCrossrefHarvester
     from data_pipeline.deduplicator import DataFrameProcessor
     from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
     from config import default_queries
@@ -26,7 +26,7 @@ def _():
     return (
         AuthorProcessor,
         DataFrameProcessor,
-        OpenAlexHarvester,
+        OpenAlexCrossrefHarvester,
         PublicationProcessor,
         datetime,
         default_queries,
@@ -47,15 +47,15 @@ def _(datetime, os):
 
 
 @app.cell
-def _(OpenAlexHarvester):
+def _(OpenAlexCrossrefHarvester):
     # Define the date range and generic query
-    start_date = "2000-01-01"
-    end_date = "2025-05-01"
-    generic_query = "authorships.institutions.lineage:i5124864,publication_year:2024"
+    start_date = "2025-05-03"
+    end_date = "2025-05-05"
+    generic_query = "authorships.institutions.lineage:i5124864"
 
 
     # Instantiate the OpenAlexHarvester with the desired parameters
-    harvester = OpenAlexHarvester(
+    harvester = OpenAlexCrossrefHarvester(
         start_date=start_date,
         end_date=end_date,
         query=generic_query,
@@ -108,6 +108,12 @@ def _(deduplicator, df_final):
 
 
 @app.cell
+def _(df_authors):
+    df_authors
+    return
+
+
+@app.cell
 def _(df_authors, df_metadata, os, path):
     df_metadata.to_csv(
         os.path.join(path, "df_metadata.csv"), index=False, encoding="utf-8"
@@ -142,9 +148,9 @@ def _(df_epfl_authors, os, path):
 
 
 @app.cell
-def _():
-    import altair as alt
-    return (alt,)
+def _(df_epfl_authors):
+    df_epfl_authors
+    return
 
 
 @app.cell
@@ -263,7 +269,7 @@ def _(CrossrefClient, filtered_publications):
             return CrossrefClient.fetch_prefix_name(prefix)
         except Exception:
             return None
-    
+
     filtered_publis = filtered_publications.copy()
     filtered_publis['doi_prefix'] = filtered_publis['doi'].apply(extract_doi_prefix)
 
@@ -312,7 +318,6 @@ def _(df_epfl_authors):
 def _(epfl_authors_not_reconciliated):
     publications_not_reconciliated_count = epfl_authors_not_reconciliated['row_id'].nunique()
     print(f"Nombre de publications non reconciliées : {publications_not_reconciliated_count}")
-
     return (publications_not_reconciliated_count,)
 
 
