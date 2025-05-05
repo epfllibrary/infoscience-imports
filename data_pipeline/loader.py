@@ -284,6 +284,7 @@ class Loader:
 
         # Check for existing metadata and add remove operations if needed
         removable_metadata_paths = [
+            f"/sections/{form_section}details/dc.title",
             f"/sections/{form_section}details/dc.contributor.author",
             f"/sections/{form_section}details/oairecerif.author.affiliation",
             f"/sections/{form_section}details/oairecerif.affiliation.orgunit",
@@ -609,6 +610,11 @@ class Loader:
                         confidence=600,
                     )
                 ],
+                False,
+            ),
+            (
+                f"/sections/{form_section}details/dc.title",
+                [build_value(row.get("title"))],
                 False,
             ),
             (
