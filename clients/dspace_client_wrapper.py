@@ -235,6 +235,9 @@ class DSpaceClientWrapper:
     def delete_workspace(self, workspace_id):
         return self.client.delete_workspace_item(workspace_id)
 
+    def delete_workflow(self, workflow_id):
+        return self.client.delete_workflow_item(workflow_id)
+
     def search_authority(
         self,
         authority_type="AuthorAuthority",
