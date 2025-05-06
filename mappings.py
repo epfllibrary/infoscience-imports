@@ -305,6 +305,49 @@ doctypes_mapping_dict = {
         #     "dc.type": "text",
         # },
     },
+    # Mapping of DataCite resource types to IFS3 collections and Dublin Core types
+    "source_datacite": {
+        "book": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph",
+        },
+        "bookchapter": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph::book part or chapter",
+        },
+        "conferencepaper": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
+        "conferenceproceeding": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings",
+        },
+        "datapaper": {
+            "collection": "Datasets and Code",
+            "dc.type": "text::dataset",
+        },
+        "dataset": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
+        "journalarticle": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article::research article",
+        },
+        "preprint": {
+            "collection": "Preprints and Working Papers",
+            "dc.type": "text::preprint",
+        },
+        "standard": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::technical documentation or standard",
+        },
+        "text": {
+            "collection": "Preprints and Working Papers",
+            "dc.type": "text::preprint",
+        },
+    },
     "source_zenodo": {
         "dataset": {
             "collection": "Datasets and Code",
