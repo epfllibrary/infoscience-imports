@@ -260,10 +260,10 @@ doctypes_mapping_dict = {
             "collection": "Books and Book parts",
             "dc.type": "text::book/monograph",
         },
-        "peer-review": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
+        # "peer-review": {
+        #     "collection": "Journal articles",
+        #     "dc.type": "text::journal::journal article::research article",
+        # },
         "posted-content": {
             "collection": "Preprints and Working Papers",
             "dc.type": "text::preprint",
