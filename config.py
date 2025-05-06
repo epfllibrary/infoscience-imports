@@ -26,12 +26,12 @@ unit_types = [
     "Groupe",
     "Chaire",
     "Plateforme",
-    "Centre",
+    # "Centre",
 ]
 
 excluded_unit_types = [
     "Ecole",
-    "Entreprise sur site",
+    "Entreprises sur site",
     "Participation",
     "Formation continue",
     "Fondation",
