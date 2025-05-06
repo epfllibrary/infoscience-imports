@@ -367,9 +367,34 @@ class AuthorProcessor:
                 lastname = clean_value(row.get("nameparse_lastname", ""))
                 return f"fullname:{firstname} {lastname}"
 
+        def make_cache_key(row):
+            orcid = row.get("orcid_id")
+            if orcid and str(orcid).strip():
+                return f"orcid:{orcid}"
+
+            internal_author_id = row.get("internal_author_id")
+            source = row.get("source")
+            if (
+                internal_author_id
+                and str(internal_author_id).strip()
+                and source in ["scopus", "wos"]
+            ):
+                return f"{source}:{internal_author_id}"
+
+            author_cleaned = row.get("author_cleaned")
+            if author_cleaned and str(author_cleaned).strip():
+                return f"name:{author_cleaned}"
+
+            firstname = clean_value(row.get("nameparse_firstname", ""))
+            lastname = clean_value(row.get("nameparse_lastname", ""))
+            if firstname and lastname:
+                return f"fullname:{firstname} {lastname}"
+
+            return None
+
         def query_person(row):
             key = make_cache_key(row)
-            if key in cache:
+            if key and key in cache:
                 self.logger.debug(f"Returned cached sciperId {cache[key]} for key {key}")
                 return cache[key]
 
@@ -400,8 +425,8 @@ class AuthorProcessor:
                     format="sciper",
                     use_firstname_lastname=True,
                 )
-
-            cache[key] = sciper_id  # Mémoriser le résultat même si None
+            if key:
+                cache[key] = sciper_id  # Mémoriser le résultat même si None
             return sciper_id
 
         self.df["sciper_id"] = self.df.apply(query_person, axis=1)
