@@ -71,24 +71,22 @@ class DSpaceClientWrapper:
         next_year = pubyear + 1 if pubyear is not None else None
 
         # Construct the item ID based on identifier type
-        if identifier_type == "wos":
-            item_id = str(x["internal_id"]).replace("WOS:", "").strip()
-        elif identifier_type == "scopus":
-            item_id = str(x["internal_id"]).replace("SCOPUS_ID:", "").strip()
-        elif identifier_type == "crossref":
-            item_id = str(x["internal_id"]).strip()
-        elif identifier_type == "openalex":
-            # item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
-            item_id = str(x["doi"]).strip()
-        elif identifier_type == "zenodo":
-            item_id = x["internal_id"].strip()
-        elif identifier_type == "orcidWorks":
-            item_id = None
+        handlers = {
+            "wos": lambda x: str(x["internal_id"]).replace("WOS:", "").strip(),
+            "scopus": lambda x: str(x["internal_id"]).replace("SCOPUS_ID:", "").strip(),
+            "crossref": lambda x: str(x["internal_id"]).strip(),
+            "openalex+crossref": lambda x: str(x["internal_id"]).strip(),
+            "openalex": lambda x: str(x["doi"]).strip(),
+            "zenodo": lambda x: x["internal_id"].strip(),
+            "orcidWorks": lambda x: None,
+        }
+
+        if identifier_type in handlers:
+            item_id = handlers[identifier_type](x)
         else:
             raise ValueError(
-                f"{identifier_type} : identifier_type must be 'wos', 'scopus', 'openalex', 'crossref', 'zenodo' or 'orcidWorks'"
+                f"{identifier_type} : identifier_type must be one of {list(handlers.keys())}"
             )
-
         # Combine all criteria into a single query
         query_parts = []
 
