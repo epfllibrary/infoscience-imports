@@ -11,7 +11,7 @@ from clients.scopus_client import ScopusClient
 from clients.zenodo_client import ZenodoClient
 from clients.openalex_client import OpenAlexClient
 from clients.crossref_client import CrossrefClient
-# from clients.datacite_client import DataCiteClient
+from clients.datacite_client import DataCiteClient
 
 from utils import manage_logger
 from config import logs_dir
@@ -552,53 +552,57 @@ class OpenAlexCrossrefHarvester(Harvester):
             .reset_index(drop=True)
         )
 
-# class DataCiteHarvester(Harvester):
-#     def __init__(
-#         self,
-#         start_date: str,
-#         end_date: str,
-#         query: str = None,
-#         format: str = "ifs3",
-#         filters: dict = None,
-#     ):
-#         super().__init__("DataCite", start_date, end_date, query, format)
-#         self.filters = filters or {}
 
-#     def fetch_and_parse_publications(self) -> pd.DataFrame:
-#         # Construct DataCite API filters with date range
-#         api_filters = {
-#             "created": f"{self.start_date},{self.end_date}",
-#             "state": "findable",
-#         }
-#         api_filters.update(self.filters)
+class DataCiteHarvester(Harvester):
+    """
+    Harvests records from datacite.
+    """
+    def __init__(
+        self,
+        start_date: str,
+        end_date: str,
+        query: str = None,
+        format: str = "ifs3",
+        filters: dict = None,
+    ):
+        super().__init__("DataCite", start_date, end_date, query, format)
+        self.filters = filters or {}
 
-#         self.logger.info(f"Querying DataCite with filters: {api_filters}")
+    def fetch_and_parse_publications(self) -> pd.DataFrame:
+        # Construct DataCite API filters with date range
+        api_filters = {
+            "created": f"{self.start_date},{self.end_date}",
+            "state": "findable",
+        }
+        api_filters.update(self.filters)
 
-#         total = DataCiteClient.count_results(
-#             query=self.query,
-#             filters=api_filters,
-#         )
-#         self.logger.info(f"- Nombre de publications trouvées dans DataCite : {total}")
+        self.logger.info(f"Querying DataCite with filters: {api_filters}")
 
-#         if not total:
-#             return pd.DataFrame()
+        total = DataCiteClient.count_results(
+            query=self.query,
+            filters=api_filters,
+        )
+        self.logger.info(f"- Nombre de publications trouvées dans DataCite : {total}")
 
-#         # Use classic page-number-based pagination to fetch all records
-#         recs = DataCiteClient.fetch_records(
-#             format=self.format,
-#             query=self.query,
-#             filters=api_filters,
-#             page_size=100,  # Maximize efficiency
-#         )
+        if not total:
+            return pd.DataFrame()
 
-#         if not recs:
-#             self.logger.warning("No records returned after fetch.")
-#             return pd.DataFrame()
+        # Use classic page-number-based pagination to fetch all records
+        recs = DataCiteClient.fetch_records(
+            format=self.format,
+            query=self.query,
+            filters=api_filters,
+            page_size=100,  # Maximize efficiency
+        )
 
-#         df = (
-#             pd.DataFrame(recs)
-#             .query('ifs3_collection != "unknown"')
-#             .reset_index(drop=True)
-#         )
+        if not recs:
+            self.logger.warning("No records returned after fetch.")
+            return pd.DataFrame()
 
-#         return df
+        df = (
+            pd.DataFrame(recs)
+            .query('ifs3_collection != "unknown"')
+            .reset_index(drop=True)
+        )
+
+        return df
