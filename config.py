@@ -17,7 +17,7 @@ default_queries = {
 }
 
 # Define the order of the sources during the deduplication process
-source_order = ["scopus", "wos", "crossref", "openalex", "zenodo"]
+source_order = ["scopus", "wos", "openalex+crossref", "crossref", "openalex", "zenodo"]
 
 # Define types of unit to retrieve in priority from api.epfl.ch
 unit_types = [

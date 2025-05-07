@@ -75,7 +75,7 @@ class AuthorProcessor:
                     if row["source"] == "wos"
                     else (
                         self.process_openalex(row["organizations"])
-                        if row["source"] == "openalex"
+                        if row["source"] in ("openalex", "openalex+crossref")
                         else (
                             self.process_crossref(row["organizations"])
                             if row["source"] == "crossref"

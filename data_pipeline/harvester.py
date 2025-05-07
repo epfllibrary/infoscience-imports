@@ -11,7 +11,7 @@ from clients.scopus_client import ScopusClient
 from clients.zenodo_client import ZenodoClient
 from clients.openalex_client import OpenAlexClient
 from clients.crossref_client import CrossrefClient
-from clients.datacite_client import DataCiteClient
+# from clients.datacite_client import DataCiteClient
 
 from utils import manage_logger
 from config import logs_dir
@@ -488,7 +488,7 @@ class OpenAlexCrossrefHarvester(Harvester):
     def __init__(
         self, start_date: str, end_date: str, query: str, format: str = "ifs3"
     ):
-        super().__init__("OpenAlex+Crossref", start_date, end_date, query, format)
+        super().__init__("openalex+crossref", start_date, end_date, query, format)
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
         """
@@ -533,6 +533,7 @@ class OpenAlexCrossrefHarvester(Harvester):
                     doi=doi, format=self.format
                 )
                 if record:
+                    record["source"] = "openalex+crossref"
                     record["authors"] = OpenAlexClient._extract_ifs3_authors(oa_rec)
                     results.append(record)
             except Exception as e:
@@ -551,53 +552,53 @@ class OpenAlexCrossrefHarvester(Harvester):
             .reset_index(drop=True)
         )
 
-class DataCiteHarvester(Harvester):
-    def __init__(
-        self,
-        start_date: str,
-        end_date: str,
-        query: str = None,
-        format: str = "ifs3",
-        filters: dict = None,
-    ):
-        super().__init__("DataCite", start_date, end_date, query, format)
-        self.filters = filters or {}
+# class DataCiteHarvester(Harvester):
+#     def __init__(
+#         self,
+#         start_date: str,
+#         end_date: str,
+#         query: str = None,
+#         format: str = "ifs3",
+#         filters: dict = None,
+#     ):
+#         super().__init__("DataCite", start_date, end_date, query, format)
+#         self.filters = filters or {}
 
-    def fetch_and_parse_publications(self) -> pd.DataFrame:
-        # Construct DataCite API filters with date range
-        api_filters = {
-            "created": f"{self.start_date},{self.end_date}",
-            "state": "findable",
-        }
-        api_filters.update(self.filters)
+#     def fetch_and_parse_publications(self) -> pd.DataFrame:
+#         # Construct DataCite API filters with date range
+#         api_filters = {
+#             "created": f"{self.start_date},{self.end_date}",
+#             "state": "findable",
+#         }
+#         api_filters.update(self.filters)
 
-        self.logger.info(f"Querying DataCite with filters: {api_filters}")
+#         self.logger.info(f"Querying DataCite with filters: {api_filters}")
 
-        total = DataCiteClient.count_results(
-            query=self.query,
-            filters=api_filters,
-        )
-        self.logger.info(f"- Nombre de publications trouvées dans DataCite : {total}")
+#         total = DataCiteClient.count_results(
+#             query=self.query,
+#             filters=api_filters,
+#         )
+#         self.logger.info(f"- Nombre de publications trouvées dans DataCite : {total}")
 
-        if not total:
-            return pd.DataFrame()
+#         if not total:
+#             return pd.DataFrame()
 
-        # Use classic page-number-based pagination to fetch all records
-        recs = DataCiteClient.fetch_records(
-            format=self.format,
-            query=self.query,
-            filters=api_filters,
-            page_size=100,  # Maximize efficiency
-        )
+#         # Use classic page-number-based pagination to fetch all records
+#         recs = DataCiteClient.fetch_records(
+#             format=self.format,
+#             query=self.query,
+#             filters=api_filters,
+#             page_size=100,  # Maximize efficiency
+#         )
 
-        if not recs:
-            self.logger.warning("No records returned after fetch.")
-            return pd.DataFrame()
+#         if not recs:
+#             self.logger.warning("No records returned after fetch.")
+#             return pd.DataFrame()
 
-        df = (
-            pd.DataFrame(recs)
-            .query('ifs3_collection != "unknown"')
-            .reset_index(drop=True)
-        )
+#         df = (
+#             pd.DataFrame(recs)
+#             .query('ifs3_collection != "unknown"')
+#             .reset_index(drop=True)
+#         )
 
-        return df
+#         return df

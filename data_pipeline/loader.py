@@ -100,10 +100,17 @@ class Loader:
         for _, author_row in matching_authors.iterrows():
             authors_metadata.append(create_metadata(author_row["author"]))
 
-            orcid_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
+            orcid_value = author_row.get("orcid_id")
+            if pd.notna(orcid_value) and str(orcid_value).strip():
+                orcid_metadata.append(create_metadata(str(orcid_value).strip()))
+            else:
+                orcid_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
-            affiliation_name = get_first_split(author_row.get("organizations", ""))
-            affiliations_metadata.append(create_metadata(affiliation_name))
+            if author_row.get("source", "").lower() != "crossref":
+                affiliation_name = get_first_split(author_row.get("organizations", ""))
+                affiliations_metadata.append(create_metadata(affiliation_name))
+            else:
+                affiliations_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
             # orgunit_name = get_first_split(author_row.get("suborganization", ""))
             orgunit_metadata.append(
@@ -915,7 +922,7 @@ class Loader:
 
             if source == "openalex" or source == "zenodo":
                 source_id = row.get("doi", source_id)
-            if source == "openalex":
+            if source == "openalex+crossref":
                 source = "crossref"
             elif source == "zenodo":
                 source = "datacite"
