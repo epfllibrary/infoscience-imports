@@ -2,6 +2,7 @@
 
 import string
 import re
+import unicodedata
 import os
 
 import pandas as pd
@@ -82,7 +83,11 @@ class AuthorProcessor:
                             else (
                                 self.process_zenodo(row["organizations"])
                                 if row["source"] == "zenodo"
-                                else False
+                                else (
+                                    self.process_datacite(row["organizations"])
+                                    if row["source"] == "datacite"
+                                    else False
+                                )
                             )
                         )
                     )
@@ -133,6 +138,26 @@ class AuthorProcessor:
         else:
             # Check only the first value
             return any(value in values[0] for value in scopus_epfl_afids)
+
+    def _normalize_signature(self, text: str) -> str:
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = text.lower()
+        text = re.sub(r"[^a-z0-9]+", " ", text)
+        return text.strip()
+
+    def process_datacite(self, text):
+        if not isinstance(text, str):
+            return False
+        norm = self._normalize_signature(text)
+        pattern = re.compile(
+            r"\b(?:"
+            r"epfl"
+            r"|ecole\s+polytechnique\s+federale\s+de\s+lausanne"
+            r"|swiss\s+federal\s+institute\s+of\s+technology\s+in\s+lausanne"
+            r")\b"
+        )
+        return bool(pattern.search(norm))
 
     def process_zenodo(self, text):
         if not isinstance(text, str):

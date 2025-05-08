@@ -49,16 +49,16 @@ def _(datetime, os):
 @app.cell
 def _(DataCiteHarvester):
     # Define the date range and generic query
-    start_date = "2020"
+    start_date = "2025"
     end_date = "2025"
-    generic_query = None
+    generic_query = '(prefix:10.5281 OR prefix:10.48550) AND (creators.affiliation.name:*EPFL* OR creators.affiliation.name:"École Polytechnique Fédérale de Lausanne" OR creators.affiliation.name:"Swiss Federal Institute of Technology in Lausanne" OR creators.affiliation.affiliationIdentifier:02s376052) -prefix:10.5075'
 
-    # Define additional targeted field queries for Crossref
     filters = {
-        "affiliation-id": "02s376052",
         "state": "findable",
         "publisher": "true",
         "affiliation": "true",
+        "include": "client",
+        "registration-agency": "datacite",
         # "prefix": "10.48550",
     }
 
@@ -105,6 +105,26 @@ def _(DataFrameProcessor, df_publications):
     # and second operation : filter by removing founded duplicates in Infoscience
     df_final,df_unloaded = deduplicator.deduplicate_infoscience(deduplicated_sources_df)
     return deduplicated_sources_df, deduplicator, df_final, df_unloaded
+
+
+@app.cell
+def _(deduplicated_sources_df, os, path):
+    deduplicated_sources_df.to_csv(
+        os.path.join(path, "dedupPublications.csv"),
+        index=False,
+        encoding="utf-8",
+    )
+    return
+
+
+@app.cell
+def _(df_final, os, path):
+    df_final.to_csv(
+        os.path.join(path, "Publications.csv"),
+        index=False,
+        encoding="utf-8",
+    )
+    return
 
 
 @app.cell

@@ -78,6 +78,7 @@ class DSpaceClientWrapper:
             "openalex+crossref": lambda x: str(x["internal_id"]).strip(),
             "openalex": lambda x: str(x["doi"]).strip(),
             "zenodo": lambda x: x["internal_id"].strip(),
+            "datacite": lambda x: str(x["internal_id"]).strip(),
             "orcidWorks": lambda x: None,
         }
 

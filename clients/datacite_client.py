@@ -5,14 +5,14 @@ This client provides methods to interact with the Datacite API
 
 import os
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 import tenacity
 from apiclient import APIClient, endpoint, retry_request, JsonResponseHandler
 from apiclient.retrying import retry_if_api_request_error
 from config import logs_dir
 from utils import manage_logger
 import mappings
-from datetime import datetime
+
 
 # Base URL for DataCite Public API
 DATACITE_API_BASE_URL = "https://api.datacite.org"
@@ -246,6 +246,9 @@ class Client(APIClient):
         issue_date = self._extract_pubdate(attrs)
         pubyear = attrs.get("publicationYear")
 
+        # Version
+        version = attrs.get("version", "")
+
         # Contributors: editors and corporate authors
         contributors_obj = attrs.get("contributors", []) or []
         editors = "||".join(
@@ -302,6 +305,7 @@ class Client(APIClient):
             "artno": "",
             "contributors": contributors,
             "keywords": keywords,
+            "version": version,
             **related_items_info,  # Add the related items info here
         }
 
@@ -423,6 +427,9 @@ class Client(APIClient):
         rec["conference_info"] = ""
         rec["fundings_info"] = self._extract_funding(x)
         rec["related_works"] = self._extract_related_identifiers(x)
+        rec["HasVersion"] = self._extract_version_info(x, "HasVersion")
+        rec["IsVersionOf"] = self._extract_version_info(x, "IsVersionOf")
+
         return rec
 
     def _extract_pubdate(self, attrs: Dict) -> str:
@@ -652,6 +659,49 @@ class Client(APIClient):
         if isinstance(issn_field, str):
             return self._normalize_issn(issn_field.split(","))
         return ""
+
+    def _extract_version_info(self, x: Dict, relation_type: str) -> str:
+        """
+        Extracts related identifiers based on the given relation type (HasVersion or IsVersionOf)
+        from the 'relatedIdentifiers' list where the relatedIdentifierType is 'DOI'
+        and the DOI has the same prefix as the 'doi' (DOI of the current item) stored in 'attributes'.
+
+        Args:
+            x (Dict): The data record containing the 'attributes' and 'relatedIdentifiers'.
+            relation_type (str): The relation type to filter by, e.g., 'HasVersion' or 'IsVersionOf'.
+
+        Returns:
+            str: A string of related identifiers separated by '||'.
+        """
+        # Extract the DOI (internal_id) from 'attributes.doi'
+        internal_doi = (
+            x.get("attributes", {}).get("doi", "").lower()
+        )  # Ensure lowercase for comparison
+        # Extract the prefix of the internal DOI (before the first dot)
+        internal_prefix = internal_doi.split("/")[0]
+
+        # Extract relatedIdentifiers
+        related_identifiers = x.get("attributes", {}).get("relatedIdentifiers", [])
+        version_ids = []
+
+        # Iterate over the relatedIdentifiers to find those with the correct conditions
+        for identifier in related_identifiers:
+            # Check if the relationType matches the given relation_type and the relatedIdentifierType is 'DOI'
+            if (
+                identifier.get("relationType") == relation_type
+                and identifier.get("relatedIdentifierType") == "DOI"
+            ):
+                related_doi = identifier.get("relatedIdentifier", "").lower()
+
+                # Extract the prefix of the related DOI (before the first dot)
+                related_prefix = related_doi.split("/")[0]
+
+                # Compare the DOI prefix with the internal DOI prefix
+                if related_prefix == internal_prefix:
+                    version_ids.append(related_doi)
+
+        # Join the version IDs into a single string separated by '||'
+        return "||".join(version_ids)
 
 
 # Initialize the DataCiteClient
