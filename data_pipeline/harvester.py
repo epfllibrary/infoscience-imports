@@ -2,6 +2,7 @@
 
 import abc
 import os
+import re
 import time
 
 import pandas as pd
@@ -604,5 +605,75 @@ class DataCiteHarvester(Harvester):
             .query('ifs3_collection != "unknown"')
             .reset_index(drop=True)
         )
+        df_deduplicate_versions = self._deduplicate_versions_datacite(df)
+        return df_deduplicate_versions
 
-        return df
+    def _deduplicate_versions_datacite(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Deduplicate a DataFrame of publications by keeping only the latest versions.
+        Assumes the DataFrame contains only rows to process (e.g., source == 'datacite').
+
+        Applied rules:
+        1. Remove rows whose HasVersion cell lists any DOI present in internal_id.
+        2. For each parent DOI identified in IsVersionOf (which may list multiple DOIs),
+        keep only the row(s) with the highest numeric suffix per parent.
+        Rows without any IsVersionOf entry are retained.
+
+        Parameters:
+        - df: pandas DataFrame containing at least the columns
+            'internal_id', 'HasVersion', and 'IsVersionOf'.
+
+        Returns:
+        - A new DataFrame deduplicated according to the above rules.
+        """
+        df = df.copy().astype({"HasVersion": str, "internal_id": str, "IsVersionOf": str})
+
+        def parse_versions(cell: str) -> list[str]:
+            # Split by '||', take part after last '::', remove URL prefix if present
+            parts = [part.strip() for part in cell.split("||") if part.strip()]
+            dois = []
+            for part in parts:
+                doi_part = part.split("::")[-1]
+                doi = re.sub(r"^https?://doi\.org/", "", doi_part)
+                dois.append(doi)
+            return dois
+
+        primary_ids = set(df["internal_id"])
+
+        # 1) Drop older versions that reference a primary ID in HasVersion
+        drop_mask = df["HasVersion"].apply(
+            lambda cell: any(doi in primary_ids for doi in parse_versions(cell))
+        )
+        df_filtered = df[~drop_mask].copy()
+
+        # Compute suffix for each internal_id using trailing digits
+        def extract_suffix(doi: str) -> int:
+            match = re.search(r"(\d+)$", doi)
+            return int(match.group(1)) if match else -1
+
+        df_filtered["_suffix"] = df_filtered["internal_id"].apply(extract_suffix)
+
+        # Build groups by each parent DOI in IsVersionOf
+        parent_to_indices = {}
+        no_parent_indices = []
+        for idx, cell in df_filtered["IsVersionOf"].items():
+            parents = parse_versions(cell)
+            if not parents:
+                no_parent_indices.append(idx)
+            else:
+                for parent in parents:
+                    parent_to_indices.setdefault(parent, []).append(idx)
+
+        # For each parent, pick index with max suffix
+        keep_indices = set(no_parent_indices)
+        for indices in parent_to_indices.values():
+            max_idx = max(indices, key=lambda i: df_filtered.at[i, "_suffix"])
+            keep_indices.add(max_idx)
+
+        # Return deduplicated DataFrame
+        df_result = (
+            df_filtered.loc[sorted(keep_indices)]
+            .drop(columns=["_suffix"])
+            .reset_index(drop=True)
+        )
+        return df_result
