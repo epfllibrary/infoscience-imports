@@ -344,8 +344,8 @@ doctypes_mapping_dict = {
             "dc.type": "text::technical documentation or standard",
         },
         "text": {
-            "collection": "Preprints and Working Papers",
-            "dc.type": "text::preprint",
+            "collection": "Other",
+            "dc.type": "text",
         },
     },
     "source_zenodo": {
@@ -514,6 +514,7 @@ types_authority_mapping = {
     "student work::master thesis": "student-coar-types:c_bdcc",
     "student work::semester or other student projects": "student-coar-types:c_18op",
     "student work": "student-coar-types:c_46ec",
+    "other": "publication-coar-types:c_1843",
 }
 
 
