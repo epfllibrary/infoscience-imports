@@ -290,6 +290,7 @@ class Client(APIClient):
 
         # Extract related items like book chapters, journal issues, etc.
         related_items_info = self._extract_related_items(attrs)
+        license_id = self._extract_license(x)
 
         return {
             "source": "datacite",
@@ -306,6 +307,7 @@ class Client(APIClient):
             "contributors": contributors,
             "keywords": keywords,
             "version": version,
+            "license": license_id,
             **related_items_info,  # Add the related items info here
         }
 
@@ -702,6 +704,18 @@ class Client(APIClient):
 
         # Join the version IDs into a single string separated by '||'
         return "||".join(version_ids)
+
+    def _extract_license(self, x: Dict) -> str:
+        """
+        Extrait la licence à partir de l'attribut `rightsList`.
+        Retourne le premier `rightsIdentifier` trouvé, ou une chaîne vide sinon.
+        """
+        rights = x.get("attributes", {}).get("rightsList", []) or []
+        for r in rights:
+            lic = r.get("rightsIdentifier")
+            if lic:
+                return lic
+        return ""
 
 
 # Initialize the DataCiteClient
