@@ -141,7 +141,7 @@ class Client(APIClient):
                         return self._process_person_record(result, query, format)
                     else:
                         self.logger.warning(
-                            f"The single record found does not match the requested name: {lastname}."
+                            f"The single record {clean_value(person_record['lastname'])} found does not match the requested name: {lastname}."
                         )
                     return None
         else:

@@ -1,16 +1,16 @@
 """Metadata enrichment: processors for authors and publications"""
 
+import os
 import string
 import re
+from concurrent.futures import ThreadPoolExecutor
 import unicodedata
-import os
-
+from unidecode import unidecode
 import pandas as pd
 from fuzzywuzzy import fuzz, process
 import nameparser
 from nameparser import HumanName
-from concurrent.futures import ThreadPoolExecutor
-from utils import manage_logger, remove_accents, clean_value
+from utils import manage_logger, clean_value
 
 
 from clients.api_epfl_client import ApiEpflClient
@@ -201,21 +201,30 @@ class AuthorProcessor:
 
         def clean_author(author):
             parsed_name = HumanName(author)
+            # Assemble name components
             formatted_name = (
-                f"{parsed_name.last} {parsed_name.first} {parsed_name.middle} ".strip()
+                f"{parsed_name.last} {parsed_name.first} {parsed_name.middle}".strip()
             )
 
-            separators = r"[-‐‑‒–—―⁃﹘﹣－]"
-            formatted_name = re.sub(separators, " ", formatted_name)
-            formatted_name = re.sub(r"\s+", " ", formatted_name).strip()
+            # Transliterate characters to closest ASCII (e.g., ø → o, Μ → M)
+            formatted_name = unidecode(formatted_name)
 
+            # Replace dash-like characters between initials or names with space
+            formatted_name = re.sub(r"[-‐‑‒–—―⁃﹘﹣－]", " ", formatted_name)
+
+            # Separate joined initials (e.g., J.-L. → J L)
+            formatted_name = re.sub(r"\b([A-Z])\.\-?([A-Z])\.\b", r"\1 \2", formatted_name)
+
+            # Remove remaining periods (e.g., J. → J)
+            formatted_name = formatted_name.replace(".", " ")
+
+            # Remove any leftover punctuation
             formatted_name = formatted_name.translate(
                 str.maketrans("", "", string.punctuation)
             )
-            formatted_name = clean_value(formatted_name)
-            formatted_name = remove_accents(formatted_name)
-            formatted_name = formatted_name.encode("ascii", "ignore").decode("utf-8")
-            formatted_name = " ".join(formatted_name.split())
+
+            # Normalize whitespace
+            formatted_name = re.sub(r"\s+", " ", formatted_name).strip()
 
             return formatted_name
 
@@ -291,7 +300,7 @@ class AuthorProcessor:
             records = ApiEpflClient.fetch_accred_by_unique_id(
                 sciper_id, format="digest"
             )
-            self.logger.debug(f"Person record: {records}")
+            self.logger.debug("Person record: %s", records)
 
             if isinstance(records, list) and records:
                 prioritized_unit = None
@@ -313,14 +322,20 @@ class AuthorProcessor:
                     ):
                         continue
 
+                    # Check if unit_name contains 'laboratoire' or 'laboratory' (case-insensitive)
+                    name_matches_laboratory = (
+                        isinstance(unit_name, str)
+                        and re.search(r"\b(laboratoire|laboratory)\b", unit_name, re.IGNORECASE)
+                    )
+
                     if (
                         unit_order == 1
-                        and unit_type in unit_types
+                        and (unit_type in unit_types or name_matches_laboratory)
                         and not prioritized_unit
                     ):
                         prioritized_unit = (unit_id, unit_name)
 
-                    if unit_type in unit_types:
+                    if unit_type in unit_types or name_matches_laboratory:
                         allowed_units.append(
                             (unit_id, unit_name, unit_type, unit_order)
                         )
@@ -329,19 +344,19 @@ class AuthorProcessor:
                         fallback_unit = (unit_id, unit_name)
 
                 if prioritized_unit:
-                    self.logger.debug(f"Main unit retrieved: {prioritized_unit}")
+                    self.logger.debug("Main unit retrieved: %s", prioritized_unit)
                     self._accred_cache[sciper_id] = prioritized_unit
                     return prioritized_unit
 
                 if allowed_units:
                     allowed_units.sort(key=lambda x: x[3])
                     result = allowed_units[0][:2]
-                    self.logger.debug(f"Main unit retrieved: {result}")
+                    self.logger.debug("Main unit retrieved: %s", result)
                     self._accred_cache[sciper_id] = result
                     return result
 
                 if fallback_unit:
-                    self.logger.debug(f"Main unit retrieved: {fallback_unit}")
+                    self.logger.debug("Main unit retrieved: %s", fallback_unit)
                     self._accred_cache[sciper_id] = fallback_unit
                     return fallback_unit
 
@@ -361,13 +376,13 @@ class AuthorProcessor:
 
         try:
             response = dspace_wrapper.search_authority(filter_text=query)
-            self.logger.info(f"Querying DSpace for author {query}")
+            self.logger.info("Querying DSpace for author %s", query)
             sciper_id = dspace_wrapper.get_sciper_from_authority(response)
-            self.logger.info(f"Sciper {sciper_id} was retrieved in DSpace for author {query}")
+            self.logger.info("Sciper %s was retrieved in DSpace for author %s", sciper_id, query)
             return sciper_id
         except Exception as e:
             self.logger.error(
-                f"Error querying DSpace for author {query} - {e}"
+                "Error querying DSpace for author %s - %s", query, e
             )
 
         return None
@@ -375,22 +390,6 @@ class AuthorProcessor:
     def api_epfl_reconciliation(self, return_df=False):
         self.df = self.df.copy()  # Create a copy of the DataFrame if necessary
         cache = {}  # local cache to store results
-
-        def make_cache_key(row):
-            # Construit une clé unique pour le cache à partir des champs disponibles
-            if pd.notna(row.get("orcid_id")):
-                return f"orcid:{row['orcid_id']}"
-            elif pd.notna(row.get("internal_author_id")) and row.get("source") in [
-                "scopus",
-                "wos",
-            ]:
-                return f"{row['source']}:{row['internal_author_id']}"
-            elif pd.notna(row.get("author_cleaned")):
-                return f"name:{row['author_cleaned']}"
-            else:
-                firstname = clean_value(row.get("nameparse_firstname", ""))
-                lastname = clean_value(row.get("nameparse_lastname", ""))
-                return f"fullname:{firstname} {lastname}"
 
         def make_cache_key(row):
             orcid = row.get("orcid_id")
@@ -420,7 +419,7 @@ class AuthorProcessor:
         def query_person(row):
             key = make_cache_key(row)
             if key and key in cache:
-                self.logger.debug(f"Returned cached sciperId {cache[key]} for key {key}")
+                self.logger.debug("Returned cached sciperId %s for key %s", cache[key], key)
                 return cache[key]
 
             sciper_id = ""
@@ -625,6 +624,6 @@ class PublicationProcessor:
                 self.df.at[index, "upw_version"] = None
                 self.df.at[index, 'upw_pdf_urls'] = None
                 self.df.at[index, "upw_valid_pdf"] = None
-                self.logger.warning(f"No unpaywall data returned for DOI {self.df.at[index, 'doi']}.")
+                self.logger.warning("No unpaywall data returned for DOI %s.", self.df.at[index, 'doi'])
 
         return self.df if return_df else self
