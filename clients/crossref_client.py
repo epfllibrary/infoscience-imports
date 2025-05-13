@@ -25,7 +25,7 @@ crossref_api_base_url = "https://api.crossref.org"
 
 # Load environment variables
 load_dotenv(os.path.join(os.getcwd(), ".env"))
-crossref_email = os.environ.get("CROSSREF_EMAIL")
+crossref_email = os.environ.get("CONTACT_API_EMAIL")
 
 # List of accepted document types (using the same mapping as for OpenAlex to ensure compatibility)
 accepted_doctypes = [

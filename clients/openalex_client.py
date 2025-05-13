@@ -22,7 +22,7 @@ openalex_api_base_url = "https://api.openalex.org"
 
 # Load environment variables
 load_dotenv(os.path.join(os.getcwd(), ".env"))
-openalex_email = os.environ.get("OPENALEX_EMAIL")
+openalex_email = os.environ.get("CONTACT_API_EMAIL")
 
 accepted_doctypes = [
     key for key in mappings.doctypes_mapping_dict["source_crossref"].keys()

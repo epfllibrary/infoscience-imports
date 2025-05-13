@@ -21,7 +21,7 @@ from config import LICENSE_CONDITIONS
 from utils import manage_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
-email = os.environ.get("UPW_EMAIL")
+email = os.environ.get("CONTACT_API_EMAIL")
 
 log_file_path = os.path.join(logs_dir, "logging.log")
 logger = manage_logger(log_file_path)
