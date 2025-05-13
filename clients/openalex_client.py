@@ -281,7 +281,7 @@ class Client(APIClient):
             dict: Extracted information in ifs3 format.
         """
         ifs3_info = self._extract_ifs3_digest_record_info(x)
-        ifs3_info["authors"] = self._extract_ifs3_authors(x)
+        ifs3_info["authors"] = self.extract_ifs3_authors(x)
         return ifs3_info
 
     def openalex_extract_doi(self, x):
@@ -384,7 +384,7 @@ class Client(APIClient):
             orcid if isinstance(orcid, str) else ""
         )
 
-    def _extract_ifs3_authors(self, x):
+    def extract_ifs3_authors(self, x):
         """
         Extract author information for ifs3 format from a single OpenAlex record.
 

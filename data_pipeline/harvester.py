@@ -4,7 +4,7 @@ import abc
 import os
 import re
 import time
-
+from collections import defaultdict
 import pandas as pd
 from data_pipeline.enricher import AuthorProcessor
 from clients.wos_client_v2 import WosClient
@@ -13,7 +13,6 @@ from clients.zenodo_client import ZenodoClient
 from clients.openalex_client import OpenAlexClient
 from clients.crossref_client import CrossrefClient
 from clients.datacite_client import DataCiteClient
-
 from utils import manage_logger
 from config import logs_dir
 
@@ -58,10 +57,12 @@ class Harvester(abc.ABC):
 
         :return: List of publications
         """
-        self.logger.info(f"Harvesting publications from {self.source_name}...")
+        self.logger.info("Harvesting publications from %s...", self.source_name)
         publications = self.fetch_and_parse_publications()
         self.logger.info(
-            f"- Found {len(publications)} {self.source_name}'s publications to be processed for Infoscience "
+            "- Found %d %s's publications to be processed for Infoscience",
+            len(publications),
+            self.source_name,
         )
         return publications
 
@@ -96,17 +97,16 @@ class WosHarvester(Harvester):
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
         )
-        self.logger.info(f"- Nombre de publications trouvées dans le WOS: {total}")
+        self.logger.info("- Nombre de publications trouvées dans le WOS: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
 
-        total = int(total)  # Assurez-vous que `total` est un entier
+        total = int(total) 
         count = 20
         recs = []
 
-        # Cas spécial : un seul résultat
         if total == 1:
             self.logger.info("Only one publication found. Fetching the single record.")
             recs = WosClient.fetch_records(
@@ -119,7 +119,8 @@ class WosHarvester(Harvester):
         else:
             for i in range(1, total + 1, count):
                 self.logger.info(
-                    f"Harvesting publications {i} to {min(i + count - 1, total)} on a total of {total} publications"
+                    "Harvesting publications %d to %d on a total of %d publications",
+                    i, min(i + count - 1, total), total
                 )
                 h_recs = WosClient.fetch_records(
                     format=self.format,
@@ -131,7 +132,7 @@ class WosHarvester(Harvester):
                 recs.extend(h_recs)
         df = (
             pd.DataFrame(recs)
-            .query('ifs3_collection != "unknown"')  # Filtrer les ifs3 inconnus
+            .query('ifs3_collection != "unknown"')
             .reset_index(drop=True)
         )
 
@@ -176,7 +177,7 @@ class ScopusHarvester(Harvester):
         # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(query=updated_query)
-        self.logger.info(f"- Nombre de publications trouvées dans Scopus: {total}")
+        self.logger.info("- Nombre de publications trouvées dans Scopus: %s", total)
 
         if total == "0":  # scopus API returns 0 as string
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -195,7 +196,8 @@ class ScopusHarvester(Harvester):
         else:
             for i in range(0, total, count):
                 self.logger.info(
-                    f"Harvest publications {i + 1} to {min(i + count, total)} on a total of {total} publications"
+                    "Harvest publications %d to %d on a total of %d publications",
+                    i + 1, min(i + count, total), total
                 )
                 h_recs = ScopusClient.fetch_records(
                     format=self.format, query=updated_query, count=count, start=i
@@ -239,11 +241,11 @@ class ZenodoHarvester(Harvester):
         - `ifs3_collection`: IFS3 collection of the object.
         - `ifs3_collection_id`: IFS3 collection ID of the object.
         - `authors`: list of creators, each represented as a dict containing:
-           - `author`
-           - `orcid_id`
-           - `internal_author_id` (empty for Zenoodo)
-           - `organizations`
-           - `suborganization`
+            - `author`
+            - `orcid_id`
+            - `internal_author_id` (empty for Zenoodo)
+            - `organizations`
+            - `suborganization`
         """
 
         columns = (
@@ -267,7 +269,7 @@ class ZenodoHarvester(Harvester):
         )
 
         total = ZenodoClient.count_results(q=updated_query)
-        self.logger.info(f"- Nombre d'objets trouvées dans Zenodo: {total}")
+        self.logger.info("- Number of objects found in Zenodo: %s", total)
         if total == 0:
             self.logger.warning("No object found. Returning an empty DataFrame.")
             return pd.DataFrame()
@@ -275,7 +277,7 @@ class ZenodoHarvester(Harvester):
         recs = []
         for i in range(0, 1 + int(total) // size):
             self.logger.info(
-                f"Harvest objects {i*size+1} to {min((i+1)*size, total)} out of {total}"
+                "Harvest objects %d to %d out of %d", i * size + 1, min((i + 1) * size, total), total
             )
             h_recs = ZenodoClient.fetch_records(
                 format=self.format, q=updated_query, size=size, page=i + 1
@@ -330,7 +332,7 @@ class OpenAlexHarvester(Harvester):
 
         # Count total publications to manage progress logging
         total = OpenAlexClient.count_results(filter=filters)
-        self.logger.info(f"- Nombre de publications trouvées dans OpenAlex: {total}")
+        self.logger.info("- Number of publications found in OpenAlex: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -342,7 +344,7 @@ class OpenAlexHarvester(Harvester):
         page = 1
 
         while True:
-            self.logger.info(f"Harvesting page {page} (cursor: {cursor})")
+            self.logger.info("Harvesting page %d (cursor: %s)", page, cursor)
 
             try:
                 h_recs = OpenAlexClient.fetch_records(
@@ -352,7 +354,7 @@ class OpenAlexHarvester(Harvester):
                 if h_recs:
                     recs.extend(h_recs)
                 else:
-                    self.logger.warning(f"No records found for page {page}.")
+                    self.logger.warning("No records found for page %d.", page)
                     break
 
                 # Get the next cursor from the last API response
@@ -366,16 +368,16 @@ class OpenAlexHarvester(Harvester):
                 page += 1
 
             except Exception as e:
-                self.logger.error(f"Error fetching records for page {page}: {e}")
+                self.logger.error("Error fetching records for page %d: %s", page, e)
                 break
 
         # Build the DataFrame if records were collected
         if recs:
-            # df = (
-            #     pd.DataFrame(recs)
-            #     .query('ifs3_collection != "unknown"')  # Filter out unmapped types
-            #     .reset_index(drop=True)
-            # )
+            df = (
+                pd.DataFrame(recs)
+                .query('ifs3_collection != "unknown"')  # Filter out unmapped types
+                .reset_index(drop=True)
+            )
             df = pd.DataFrame(recs).reset_index(drop=True)
         else:
             self.logger.debug("No valid records fetched. Returning an empty DataFrame.")
@@ -405,12 +407,12 @@ class CrossrefHarvester(Harvester):
         :param query: A generic query string to search across all fields
         :param format: Output format for metadata (default "ifs3")
         :param field_queries: Optional dictionary with additional targeted query parameters.
-                              Example:
-                              {
-                                  "query.author": "Smith",
-                                  "query.title": "machine learning",
-                                  "query.affiliation": "Harvard"
-                              }
+            Example:
+            {
+                "query.author": "Smith",
+                "query.title": "machine learning",
+                "query.affiliation": "Harvard"
+            }
         """
         super().__init__("Crossref", start_date, end_date, query, format)
         self.field_queries = field_queries or {}
@@ -440,7 +442,7 @@ class CrossrefHarvester(Harvester):
         )
 
         total = CrossrefClient.count_results(**params)
-        self.logger.info(f"- Number of publications found in Crossref: {total}")
+        self.logger.info("- Number of publications found in Crossref: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -452,7 +454,8 @@ class CrossrefHarvester(Harvester):
 
         for offset in range(0, total, count):
             self.logger.info(
-                f"Harvesting records {offset + 1} to {min(offset + count, total)} of {total}"
+                "Harvesting records %d to %d of %d",
+                offset + 1, min(offset + count, total), total
             )
             try:
                 h_recs = CrossrefClient.fetch_records(
@@ -464,9 +467,9 @@ class CrossrefHarvester(Harvester):
                 if h_recs:
                     recs.extend(h_recs)
                 else:
-                    self.logger.warning(f"No records found at offset {offset}.")
+                    self.logger.warning("No records found at offset %d.", offset)
             except Exception as e:
-                self.logger.error(f"Error fetching records at offset {offset}: {e}")
+                self.logger.error("Error fetching records at offset %d: %s", offset, e)
 
         if recs:
             df = (
@@ -510,14 +513,14 @@ class OpenAlexCrossrefHarvester(Harvester):
                 format="openalex", filter=filters
             )
         except Exception as e:
-            self.logger.error(f"Failed to fetch records from OpenAlex: {e}")
+            self.logger.error("Failed to fetch records from OpenAlex: %s", e)
             return pd.DataFrame()
 
         if not openalex_records:
             self.logger.warning("No records found in OpenAlex. Returning empty DataFrame.")
             return pd.DataFrame()
 
-        self.logger.info(f"- {len(openalex_records)} records retrieved from OpenAlex.")
+        self.logger.info("- %d records retrieved from OpenAlex.", len(openalex_records))
 
         results = []
 
@@ -527,7 +530,7 @@ class OpenAlexCrossrefHarvester(Harvester):
                 continue
 
             self.logger.info(
-                f"[{idx}/{len(openalex_records)}] Fetching Crossref metadata for DOI: {doi}"
+                "[%d/%d] Fetching Crossref metadata for DOI: %s", idx, len(openalex_records), doi
             )
             try:
                 record = CrossrefClient.fetch_record_by_unique_id(
@@ -535,10 +538,10 @@ class OpenAlexCrossrefHarvester(Harvester):
                 )
                 if record:
                     record["source"] = "openalex+crossref"
-                    record["authors"] = OpenAlexClient._extract_ifs3_authors(oa_rec)
+                    record["authors"] = OpenAlexClient.extract_ifs3_authors(oa_rec)
                     results.append(record)
             except Exception as e:
-                self.logger.warning(f"Failed to enrich DOI {doi}: {e}")
+                self.logger.warning("Failed to enrich DOI %s: %s", doi, e)
                 continue
 
         if not results:
@@ -577,13 +580,13 @@ class DataCiteHarvester(Harvester):
         }
         api_filters.update(self.filters)
 
-        self.logger.info(f"Querying DataCite with filters: {api_filters}")
+        self.logger.info("Querying DataCite with filters: %s", api_filters)
 
         total = DataCiteClient.count_results(
             query=self.query,
             filters=api_filters,
         )
-        self.logger.info(f"- Nombre de publications trouvées dans DataCite : {total}")
+        self.logger.info("- Nombre de publications trouvées dans DataCite : %s", total)
 
         if not total:
             return pd.DataFrame()
@@ -605,78 +608,122 @@ class DataCiteHarvester(Harvester):
             .query('ifs3_collection != "unknown"')
             .reset_index(drop=True)
         )
-        df_deduplicate_versions = self._deduplicate_versions_datacite(df)
+        df_deduplicate_versions = self._deduplicate_versions(df)
         return df_deduplicate_versions
 
-
-    def _deduplicate_versions_datacite(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _deduplicate_versions(self, df: pd.DataFrame) -> pd.DataFrame:
+        """        
+        Deduplicate a DataFrame of publications by:
+        A) Preliminary: for each connected group of DOIs (via HasVersion or IsVersionOf),
+            keep only the row with the most recent 'registered' date (tie-breaker: highest numeric suffix).
+        B) Then apply existing rules:
+            1) Remove rows whose HasVersion lists any DOI present in internal_id.
+            2) For each parent DOI in IsVersionOf, keep only the row with the highest suffix.
         """
-        Deduplicate DataCite records by keeping only the latest version per work.
+        # Normalize
+        df = df.copy()
+        df["HasVersion"] = df["HasVersion"].fillna("").astype(str)
+        df["IsVersionOf"] = df["IsVersionOf"].fillna("").astype(str)
+        df["internal_id"] = df["internal_id"].astype(str)
 
-        Rules applied:
-        1. Drop any row whose HasVersion field references a DOI that appears
-        in the internal_id column (i.e., it’s an older version of a primary record).
-        2. For records that list one or more parents in IsVersionOf, group all
-        version‐suffix variants (e.g. .1, .2, .3) under the same base DOI
-        and keep only the row with the highest numeric suffix per base DOI.
+        # Split by client
+        mask_zen = df.get("client", "") == "cern.zenodo"
+        df_zen = df[mask_zen]
+        df_others = df[~mask_zen]
 
-        Parameters:
-        - df: pandas DataFrame with at least 'internal_id', 'HasVersion',
-            and 'IsVersionOf' columns.
+        # Zenodo: rule2 then rule1
+        denom_zen = self._apply_isversionof(df_zen)
+        final_zen = self._apply_hasversion(denom_zen)
 
-        Returns:
-        - A new DataFrame filtered to only the latest versions.
-        """
-        # Copy and ensure string dtype
-        df2 = df.copy()
-        for col in ("internal_id", "HasVersion", "IsVersionOf"):
-            df2[col] = df2[col].fillna("").astype(str)
+        # Others: registered filter, rule2, then rule1
+        filtered = self._filter_by_registered(df_others)
+        denom_oth = self._apply_isversionof(filtered)
+        final_oth = self._apply_hasversion(denom_oth)
 
-        # Parse DOI lists (splitting on '||' and stripping any DOI URL prefix)
-        def _parse_dois(series: pd.Series) -> pd.Series:
-            parts = series.str.split(r"\s*\|\|\s*")
-            return parts.apply(
-                lambda lst: [
-                    re.sub(r"^https?://(?:dx\.)?doi\.org/", "", item.strip())
-                    for item in lst
-                    if item and item.strip()
-                ]
-            )
+        # Combine
+        result = pd.concat([final_zen, final_oth], ignore_index=True)
+        return result.reset_index(drop=True)
 
-        df2["has_versions"] = _parse_dois(df2["HasVersion"])
-        df2["parents"] = _parse_dois(df2["IsVersionOf"])
+    def _parse_versions(self, cell: str) -> list[str]:
+        parts = [p.strip() for p in cell.split("||") if p and p.strip()]
+        return [re.sub(r"^https?://(?:dx\.)?doi\.org/", "", part) for part in parts]
 
-        primary_ids = set(df2["internal_id"])
+    def _extract_suffix(self, doi: str) -> int:
+        match = re.search(r"(\d+)$", doi)
+        return int(match.group(1)) if match else -1
 
-        # 1) Drop rows that point to any primary_id in their has_versions list
-        mask_old = df2["has_versions"].apply(lambda vs: bool(primary_ids & set(vs)))
-        df2 = df2.loc[~mask_old].copy()
-
-        # 2) Extract numeric suffix from internal_id (or -1 if none)
-        df2["_suffix"] = (
-            df2["internal_id"].str.extract(r"(\d+)$", expand=False).fillna(-1).astype(int)
+    def _apply_hasversion(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Drop rows whose HasVersion lists any remaining internal_id
+        remaining = set(df["internal_id"])
+        mask = df["HasVersion"].apply(
+            lambda cell: any(doi in remaining for doi in self._parse_versions(cell))
         )
+        return df[~mask].reset_index(drop=True)
 
-        # Rows with no parents are always kept
-        no_parent_idx = df2.index[df2["parents"].apply(len) == 0]
+    def _apply_isversionof(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Keep highest suffix per parent DOI
+        df = df.copy()
+        df["_suffix"] = df["internal_id"].map(self._extract_suffix)
+        parent_to_idxs: dict[str, list[int]] = defaultdict(list)
+        no_parent: list[int] = []
+        for idx, cell in df["IsVersionOf"].items():
+            parents = self._parse_versions(cell)
+            if not parents:
+                no_parent.append(idx)
+            else:
+                for p in parents:
+                    parent_to_idxs[p].append(idx)
+        keep = set(no_parent)
+        for idxs in parent_to_idxs.values():
+            best = max(idxs, key=lambda i: df.at[i, "_suffix"])
+            keep.add(best)
+        return df.loc[sorted(keep)].drop(columns=["_suffix"])
 
-        # Explode parents so we can group
-        exploded = df2[["parents", "_suffix"]].explode("parents")
-        exploded = exploded[exploded["parents"] != ""]
-
-        # Derive the base DOI by stripping any trailing ".<digits>"
-        exploded["parent_base"] = exploded["parents"].str.replace(r"\.\d+$", "", regex=True)
-
-        # For each base DOI, pick the row index with the max suffix
-        idx_max_per_base = exploded.groupby("parent_base")["_suffix"].idxmax()
-
-        # Combine the no-parent rows with the winners per base DOI
-        keep_idx = set(no_parent_idx) | set(idx_max_per_base.values)
-
-        # Build the final DataFrame
-        result = (
-            df2.loc[sorted(keep_idx)]
-            .drop(columns=["has_versions", "parents", "_suffix"])
-            .reset_index(drop=True)
-        )
-        return result
+    def _filter_by_registered(self, df: pd.DataFrame) -> pd.DataFrame:
+        # For non-Zenodo: keep most recent registered per versions group
+        df = df.copy()
+        df["registered_dt"] = pd.to_datetime(df.get("registered", ""), errors="coerce")
+        primary = set(df["internal_id"])
+        # Build graph
+        neigh: dict[str, set[str]] = defaultdict(set)
+        for _, row in df.iterrows():
+            me = row["internal_id"]
+            for doi in self._parse_versions(row["HasVersion"]) + self._parse_versions(
+                row["IsVersionOf"]
+            ):
+                if doi in primary:
+                    neigh[me].add(doi)
+                    neigh[doi].add(me)
+        # Explore components
+        visited, groups = set(), []
+        for doi in primary:
+            if doi in visited:
+                continue
+            stack, comp = [doi], {doi}
+            visited.add(doi)
+            while stack:
+                cur = stack.pop()
+                for nbr in neigh[cur]:
+                    if nbr not in visited:
+                        visited.add(nbr)
+                        comp.add(nbr)
+                        stack.append(nbr)
+            groups.append(comp)
+        # Select per group
+        keep = set()
+        for comp in groups:
+            if len(comp) == 1:
+                keep |= comp
+            else:
+                sub = df[df["internal_id"].isin(comp)]
+                max_date = sub["registered_dt"].max()
+                cand = sub[sub["registered_dt"] == max_date]
+                if len(cand) > 1:
+                    cand = cand.copy()
+                    cand["_suffix"] = cand["internal_id"].map(self._extract_suffix)
+                    max_suf = cand["_suffix"].max()
+                    doi_keep = cand[cand["_suffix"] == max_suf]["internal_id"].iloc[0]
+                else:
+                    doi_keep = cand["internal_id"].iloc[0]
+                keep.add(doi_keep)
+        return df[df["internal_id"].isin(keep)].drop(columns=["registered_dt"]).copy()

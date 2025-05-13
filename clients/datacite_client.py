@@ -9,6 +9,7 @@ from typing import List, Dict, Optional
 import tenacity
 from apiclient import APIClient, endpoint, retry_request, JsonResponseHandler
 from apiclient.retrying import retry_if_api_request_error
+from dotenv import load_dotenv
 from config import logs_dir
 from utils import manage_logger
 import mappings
@@ -24,9 +25,20 @@ accepted_doctypes = [
     key for key in mappings.doctypes_mapping_dict["source_datacite"].keys()
 ]
 
+load_dotenv(os.path.join(os.getcwd(), ".env"))
+DATACITE_CONTACT_EMAIL = os.environ.get("CONTACT_API_EMAIL")
+
+USER_AGENT = (
+    "infoscience-imports/1.0 "
+    "(https://infoscience.epfl.ch; "
+    f"mailto:{DATACITE_CONTACT_EMAIL})"
+)
 
 @endpoint(base_url=DATACITE_API_BASE_URL)
 class DataCiteEndpoint:
+    """
+    DataCite API endpoints.
+    """
     dois = "dois"
     doi = "dois/{doi}"
     prefixes = "prefixes/{prefix}"
@@ -34,11 +46,18 @@ class DataCiteEndpoint:
 
 class Client(APIClient):
     """
-    Python client for the DataCite Public API.
+    Python client for the DataCite API.
     """
+
+    user_agent = USER_AGENT
 
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Ici on met à jour le vrai attribut
+        self._session.headers.update({"User-Agent": self.user_agent})
 
     retry_decorator = tenacity.retry(
         retry=retry_if_api_request_error(status_codes=[429]),
@@ -77,7 +96,7 @@ class Client(APIClient):
         params["page[size]"] = str(page_size)
         params.update({k: str(v) for k, v in extra_params.items()})
 
-        self.logger.info(f"Querying page {page_number} with page size {page_size}")
+        self.logger.info("Querying page %d with page size %d", page_number, page_size)
         return self.get(DataCiteEndpoint.dois, params=params)
 
     def count_results(
@@ -266,24 +285,6 @@ class Client(APIClient):
             ]
         )
 
-        # Identifiers for ISBN/PMID
-        identifiers = attrs.get("identifiers", []) or []
-        book_isbns = identifiers or "||".join(
-            [
-                i.get("identifier", "")
-                for i in identifiers
-                if i.get("identifierType", "").lower() == "isbn"
-            ]
-        )
-        pmid = next(
-            (
-                i.get("identifier", "")
-                for i in identifiers
-                if i.get("identifierType", "").lower() == "pmid"
-            ),
-            "",
-        )
-
         # Keywords
         subjects = attrs.get("subjects", []) or []
         keywords = "||".join([s.get("subject", "") for s in subjects])
@@ -292,9 +293,12 @@ class Client(APIClient):
         related_items_info = self._extract_related_items(attrs)
         license_id = self._extract_license(x)
 
+        container_info = self._extract_container_info(x)
+
         return {
             "source": "datacite",
             "internal_id": doi,
+            "registered": self._extract_registered(x),
             "issueDate": issue_date,
             "doi": doi.lower(),
             "title": title,
@@ -302,13 +306,17 @@ class Client(APIClient):
             "pubyear": pubyear,
             "publisher": self._extract_publisher(x),
             "editors": editors,
-            "pmid": pmid,
+            "pmid": self._extract_alternate_identifier(x, "pmid"),
+            "arxiv": self._extract_alternate_identifier(x, "arxiv"),
             "artno": "",
             "contributors": contributors,
+            "corporateAuthor": self._extract_corporate_authors(x),
             "keywords": keywords,
             "version": version,
             "license": license_id,
+            "client": self._extract_client(x),
             **related_items_info,  # Add the related items info here
+            **container_info,
         }
 
     def _extract_publisher(self, x: Dict) -> str:
@@ -424,7 +432,8 @@ class Client(APIClient):
             dict: A dictionary containing the complete ifs3 metadata.
         """
         rec = self._extract_ifs3_digest_record_info(x)
-        rec["abstract"] = self._extract_abstract(x)
+        rec["abstract"] = self._extract_description(x, "Abstract")
+        rec["notes"] = self._extract_description(x, "Other")
         rec["authors"] = self._extract_authors_info(x)
         rec["conference_info"] = ""
         rec["fundings_info"] = self._extract_funding(x)
@@ -457,13 +466,26 @@ class Client(APIClient):
         year = attrs.get("publicationYear")
         return str(year) if year else ""
 
-    def _extract_abstract(self, x: Dict) -> str:
+    def _extract_description(self, x: Dict, description_type: str) -> str:
+        """
+        Extract descriptions from the data record based on the description type.
+        """
         descs = x.get("attributes", {}).get("descriptions", []) or []
+        matches = []
         for d in descs:
-            if d.get("descriptionType", "").lower() == "abstract":
+            if (
+                d.get("descriptionType", "").strip().lower()
+                == description_type.strip().lower()
+            ):
                 text = d.get("description", "")
-                return re.sub(r"\s+", " ", text).strip()
-        return ""
+                cleaned = re.sub(r"\s+", " ", text).strip()
+                if cleaned:
+                    matches.append(cleaned)
+
+        if not matches:
+            return ""
+        # join toutes les descriptions par '||'
+        return "||".join(matches)
 
     def _extract_funding(self, x: Dict) -> str:
         """
@@ -511,23 +533,43 @@ class Client(APIClient):
 
     def _extract_authors_info(self, x: Dict) -> List[Dict]:
         """
-        Extracts author data from DataCite 'creators' attribute, returning a list of dicts.
+        Extracts personal author data from a DataCite record, skipping
+        any creators with nameType == "Organizational".
+
+        Args:
+            x (Dict): The raw DataCite record.
+
+        Returns:
+            List[Dict]: A list of dicts, each containing:
+                - author: "Family, Given" or raw name fallback
+                - internal_author_id: (empty)
+                - orcid_id: ORCID if present
+                - organizations: affiliations joined by "|"
         """
-        creators = x.get("attributes", {}).get("creators", []) or []
+        creators = x.get("attributes", {}).get("creators") or []
         authors_info: List[Dict] = []
 
         for creator in creators:
-            # Safely handle NoneType by using empty strings if the value is None
-            given_name = (creator.get("givenName", "") or "").strip()
-            family_name = (creator.get("familyName", "") or "").strip()
+            # Skip None or non-dict entries
+            if not isinstance(creator, dict):
+                continue
 
-            # Construct author string
+            # Safely get and normalize nameType
+            name_type = (creator.get("nameType") or "").strip().lower()
+            if name_type == "organizational":
+                continue
+
+            # Safely extract given and family names
+            given_name = (creator.get("givenName") or "").strip()
+            family_name = (creator.get("familyName") or "").strip()
+
+            # Build display name
             if given_name and family_name:
-                author_str = f"{family_name}, {given_name}".strip(", ")
+                author_str = f"{family_name}, {given_name}"
             else:
-                # Fallback: use the raw name field as-is
-                author_str = (creator.get("name", "") or "").strip()
+                author_str = (creator.get("name") or "").strip()
 
+            # Extract ORCID and affiliations safely
             orcid = self._extract_orcid(creator)
             organizations = self._join_affiliations(creator)
 
@@ -573,14 +615,32 @@ class Client(APIClient):
 
         return "|".join(affiliation_names)
 
-    def _extract_first_doctype(self, x: Dict) -> Dict:
+    def _extract_first_doctype(self, x: Dict) -> str:
         """
-        Extract doctype from DataCite record using a lowercased resourceTypeGeneral key.
-        """
-        types = x.get("attributes", {}).get("types", {})
-        doctype = types.get("resourceTypeGeneral", "").strip().lower()
+        Extracts the primary document type from a DataCite record.
 
-        return doctype
+        Uses the lowercased 'resourceTypeGeneral' value by default.
+        Special case:
+        - If resourceTypeGeneral == "Text" AND attributes.prefix == "10.48550",
+            then return "preprint" instead of "text".
+
+        Args:
+            x (Dict): The raw DataCite record.
+
+        Returns:
+            str: The normalized document type.
+        """
+        attrs = x.get("attributes", {})
+        types = attrs.get("types", {})
+        doc_type = types.get("resourceTypeGeneral", "").strip().lower()
+
+        # Special handling for preprints on this prefix
+        if doc_type == "text":
+            prefix = attrs.get("prefix", "").strip()
+            if prefix == "10.48550":
+                return "preprint"
+
+        return doc_type
 
     def get_dc_type_info(self, x):
         """
@@ -623,7 +683,7 @@ class Client(APIClient):
                 return mapped_value.get("collection", "unknown")
             else:
                 self.logger.warning(
-                    f"Mapping not found for data_doctype: {data_doctype}"
+                    "Mapping not found for data_doctype: %s", data_doctype
                 )
                 return "unknown"
         return "unknown"
@@ -676,11 +736,9 @@ class Client(APIClient):
             str: A string of related identifiers separated by '||'.
         """
         # Extract the DOI (internal_id) from 'attributes.doi'
-        internal_doi = (
-            x.get("attributes", {}).get("doi", "").lower()
-        )  # Ensure lowercase for comparison
+        attrs = x.get("attributes", {})
         # Extract the prefix of the internal DOI (before the first dot)
-        internal_prefix = internal_doi.split("/")[0]
+        internal_prefix = attrs.get("prefix", "").lower()
 
         # Extract relatedIdentifiers
         related_identifiers = x.get("attributes", {}).get("relatedIdentifiers", [])
@@ -693,14 +751,12 @@ class Client(APIClient):
                 identifier.get("relationType") == relation_type
                 and identifier.get("relatedIdentifierType") == "DOI"
             ):
-                related_doi = identifier.get("relatedIdentifier", "").lower()
-
-                # Extract the prefix of the related DOI (before the first dot)
-                related_prefix = related_doi.split("/")[0]
+                doi = identifier.get("relatedIdentifier", "").strip()
+                doi_lower = doi.lower()
 
                 # Compare the DOI prefix with the internal DOI prefix
-                if related_prefix == internal_prefix:
-                    version_ids.append(related_doi)
+                if doi_lower.startswith(f"{internal_prefix}/"):
+                    version_ids.append(doi_lower)
 
         # Join the version IDs into a single string separated by '||'
         return "||".join(version_ids)
@@ -716,6 +772,93 @@ class Client(APIClient):
             if lic:
                 return lic
         return ""
+
+    def _extract_alternate_identifier(self, x: Dict, alt_type: str) -> str:
+        """
+        Extracts all alternateIdentifiers of a given type from a DataCite record.
+
+        Args:
+            x (Dict): The raw DataCite record.
+            alt_type (str): The alternateIdentifierType to filter on (e.g., "arXiv").
+
+        Returns:
+            str: All matching alternateIdentifier values joined by "||".
+        """
+        alt_type_clean = alt_type.strip().lower()
+
+        alternates = x.get("attributes", {}).get("identifiers", []) or []
+        # Filter for entries where the type matches (case-sensitive by default)
+        values = [
+            alt.get("identifier", "").strip()
+            for alt in alternates
+            if alt.get("identifierType", "").strip().lower() == alt_type_clean
+            and alt.get("identifier")
+        ]
+        return "||".join(values)
+
+    def _extract_corporate_authors(self, x: Dict) -> str:
+        """
+        Extracts organizational creator names from a DataCite record.
+
+        Args:
+            x (Dict): The raw DataCite record.
+
+        Returns:
+            str: All organizational names joined by "||".
+        """
+        creators = x.get("attributes", {}).get("creators") or []
+        org_names: List[str] = []
+
+        for creator in creators:
+            # Skip non-dicts or None
+            if not isinstance(creator, dict):
+                continue
+
+            # Safely get nameType and name, default to empty string
+            name_type = (creator.get("nameType") or "").strip().lower()
+            name = (creator.get("name") or "").strip()
+
+            # Collect only organizational names
+            if name_type == "organizational" and name:
+                org_names.append(name)
+
+        return "||".join(org_names)
+
+    def _extract_client(self, x: Dict) -> str:
+        """
+        Get DOI Client ID.
+        """
+        return (
+            x.get("relationships", {}).get("client", {}).get("data", {}).get("id", "")
+        )
+
+    def _extract_container_info(self, x: Dict) -> Dict[str, str]:
+        """
+        Extracts the container metadata from a DataCite record.
+
+        Args:
+            x (Dict): The raw DataCite record.
+
+        Returns:
+            dict: {
+                "container_type": str,
+                "container_identifier": str,
+                "container_identifier_type": str
+            }
+            All values sont des chaînes, vides si non présentes.
+        """
+        container = x.get("attributes", {}).get("container", {}) or {}
+        return {
+            "container_type": container.get("type", "") or "",
+            "container_identifier": container.get("identifier", "") or "",
+            "container_identifier_type": container.get("identifierType", "") or "",
+        }
+
+    def _extract_registered(self, x: Dict) -> str:
+        """
+        Extract DOI registration date from the DataCite record.
+        """
+        return x.get("attributes", {}).get("registered", "") or ""
 
 
 # Initialize the DataCiteClient

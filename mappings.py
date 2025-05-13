@@ -331,6 +331,14 @@ doctypes_mapping_dict = {
             "collection": "Datasets and Code",
             "dc.type": "dataset",
         },
+        "collection": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
+        "model": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
         "journalarticle": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::research article",
@@ -343,9 +351,25 @@ doctypes_mapping_dict = {
             "collection": "Reports, Documentation, and Standards",
             "dc.type": "text::technical documentation or standard",
         },
+        "report": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::report",
+        },
         "text": {
             "collection": "Other",
-            "dc.type": "text",
+            "dc.type": "other",
+        },
+        "software": {
+            "collection": "Datasets and Code",
+            "dc.type": "software",
+        },
+        "computationalnotebook": {
+            "collection": "Datasets and Code",
+            "dc.type": "software",
+        },
+        "outputmanagementplan": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::report::data management plan",
         },
     },
     "source_zenodo": {
