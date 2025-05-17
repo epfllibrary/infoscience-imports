@@ -107,11 +107,9 @@ class DSpaceClientWrapper:
 
         # Combine all query parts using OR
         final_query = " OR ".join(query_parts)
-        final_query = (
-            f"({final_query}) AND (entityType:(Publication) OR entityType:(Product))"
-        )
+        final_query = f"({final_query}) AND (entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
 
-        final_query_workflow = f"({final_query}) AND (search.resourcetype:(XmlWorkflowItem))"
+        final_query_workflow = f"({final_query}) AND (search.resourcetype:(XmlWorkflowItem) ((search.resourcetype:(WorkspaceItem) AND submitter_authority:(4e8d183f-1309-470c-955e-c45a99c6f1b8)) OR (search.resourcetype:(WorkspaceItem) AND epfl.workflow.rejected:(true))))"
 
         # Search for duplicates using the combined query
         self.logger.debug(
