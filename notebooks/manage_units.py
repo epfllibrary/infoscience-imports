@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.12.4"
+__generated_with = "0.11.20"
 app = marimo.App(width="medium")
 
 
@@ -286,6 +286,7 @@ def _(pd):
         df_units = df_units.copy()
 
         # Prepare empty columns
+        df_units['unittype_acronym'] = None
         df_units['unittype_id'] = None
         df_units['unittype_label'] = None
         df_units['cf'] = None
@@ -293,17 +294,17 @@ def _(pd):
         df_units['responsible_id'] = None
 
         for idx, row in df_units.iterrows():
-            acronym = row.get('acronym')
+            unitid = row.get('unitid')
 
-            if not acronym or pd.isna(acronym):
+            if not unitid or pd.isna(unitid):
                 continue  # leave values as None
 
             try:
-                unit = api_client.fetch_unit_by_unique_id(acronym, format="epfl")
+                unit = api_client.fetch_unit_by_unique_id(unitid, format="epfl")
 
                 if not unit or not isinstance(unit, dict):
                     continue
-
+                df_units.at[idx, 'unittype_acronym'] = unit.get('name')
                 df_units.at[idx, 'unittype_id'] = unit.get('unittype', {}).get('id')
                 df_units.at[idx, 'unittype_label'] = unit.get('unittype', {}).get('label')
                 df_units.at[idx, 'cf'] = unit.get('cf')
@@ -375,14 +376,44 @@ def _(
 
 
 @app.cell
-def _(df_units_final):
-    df_units_final
-    return
+def _(pd):
+    def add_acronym_match_column(df_units):
+        """
+        Add a column 'acronym_match' to indicate whether 'acronym' and 'unittype_acronym'
+        match exactly (case-insensitive, trimmed).
+
+        Parameters:
+        df_units (pd.DataFrame): Must contain 'acronym' and 'unittype_acronym'.
+
+        Returns:
+        pd.DataFrame: Updated DataFrame with 'acronym_match' column.
+        """
+        df_units = df_units.copy()
+
+        def compare_acronyms(a, b):
+            if pd.isna(a) or pd.isna(b):
+                return False
+            return str(a).strip().lower() == str(b).strip().lower()
+
+        df_units['acronym_match'] = df_units.apply(
+            lambda row: compare_acronyms(row['acronym'], row['unittype_acronym']),
+            axis=1
+        )
+
+        return df_units
+    return (add_acronym_match_column,)
 
 
 @app.cell
-def _(df_units_final, mo):
-    transformed_df = mo.ui.dataframe(df_units_final)
+def _(add_acronym_match_column, df_units_final):
+    df_units_enrich = add_acronym_match_column(df_units_final)
+    df_units_enrich
+    return (df_units_enrich,)
+
+
+@app.cell
+def _(df_units_enrich, mo):
+    transformed_df = mo.ui.dataframe(df_units_enrich)
     transformed_df
     return (transformed_df,)
 
@@ -622,7 +653,8 @@ def patch_sponsorship_unit():
             new_value = {
                 "value": active_unit['acronym'],
                 "language": None,
-                "authority": active_unit['uuid']
+                "authority": active_unit['uuid'],
+                "confidence": 600,
             }
             response = d.api_patch(item_url, "replace", path, new_value)
             last_response = response
@@ -701,8 +733,8 @@ def _(df_units_refined, find_closed_with_open_match):
 
 @app.cell
 def _(batch_replace_unit, d):
-    obsolete_unit = {"acronym": "UPLARUS", "uuid": "68963f33-a82e-4971-909f-9ab4d24b5d60"}
-    active_unit = {"acronym": "VLSC", "uuid": "f4a705b5-ef31-4598-8e4b-b1eabc8d3b69"}
+    obsolete_unit = {"acronym": "SLL", "uuid": "d29da36d-eba6-434a-a21c-5b5c84e7574b"}
+    active_unit = {"acronym": "EPFLFR-BUILD", "uuid": "b3826f57-b788-4273-a804-e5a719bd97fc"}
 
     df_replace_unit_report = batch_replace_unit(d, obsolete_unit, active_unit, size=100, max_pages=15)
 
