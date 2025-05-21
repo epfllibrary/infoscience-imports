@@ -592,7 +592,7 @@ class AuthorProcessor:
         return self.df if return_df else self
 
 
-class PublicationProcessor:
+class PublicationProcessor: 
 
     def __init__(self, df):
         self.df = df
@@ -605,6 +605,7 @@ class PublicationProcessor:
     def process(self, return_df=True):
         self.df = self.df.copy()
         self.df["upw_is_oa"] = False
+        self.df["upw_is_oa"] = self.df["upw_is_oa"].astype("boolean")  # Nullable boolean
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             results = list(executor.map(self.fetch_unpaywall_data, self.df['doi'].dropna()))
@@ -618,7 +619,7 @@ class PublicationProcessor:
                 self.df.at[index, 'upw_pdf_urls'] = result.get('pdf_urls')
                 self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
             else:
-                self.df.at[index, "upw_is_oa"] = None
+                self.df.at[index, "upw_is_oa"] = pd.NA  # Use nullable value
                 self.df.at[index, 'upw_oa_status'] = None
                 self.df.at[index, "upw_license"] = None
                 self.df.at[index, "upw_version"] = None
