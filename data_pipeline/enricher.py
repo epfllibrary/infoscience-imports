@@ -174,7 +174,7 @@ class AuthorProcessor:
     def process_openalex(self, text):
         if not isinstance(text, str):
             return False
-        pattern = r"(02s376052|EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
+        pattern = r"(02s376052|EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne|02hdt9m26|Swiss Data Science Center)"
         return bool(re.search(pattern, text, re.IGNORECASE))
 
     def process_wos(self, text):
