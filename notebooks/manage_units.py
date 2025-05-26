@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.11.20"
+__generated_with = "0.12.4"
 app = marimo.App(width="medium")
 
 
@@ -484,7 +484,7 @@ def update_unit():
             unit_name_stripped = unit_name.strip()
             unit_name_lower = unit_name_stripped.lower()
 
-            keywords = ["laboratoire", "laboratory", "unité du prof."]
+            keywords = ["laboratoire", "laboratory", "unité du prof.", "chaire", "chair"]
             starts_with_prof = unit_name_stripped.startswith("Prof.")
 
             if any(kw in unit_name_lower for kw in keywords) or starts_with_prof:
