@@ -150,7 +150,6 @@ class Client(APIClient):
             record.get("is_oa")
             and license_type
             and any(l in license_type for l in LICENSE_CONDITIONS["allowed_licenses"])
-            and best_oa_location.get("url_for_pdf")
         ):
             try:
                 doi = record.get("doi") or record.get("doi_url", "").replace(
@@ -358,14 +357,14 @@ class Client(APIClient):
     @staticmethod
     def _get_crossref_pdf_links(doi: str) -> List[str]:
         """
-        Retrieve PDF links for a given DOI using the Crossref API.
+            Retrieve VOR PDF links for a given DOI using the Crossref API.
 
-        Args:
-            doi (str): The Digital Object Identifier of the publication.
+            Args:
+                doi (str): The Digital Object Identifier of the publication.
 
-        Returns:
-            List[str]: A list of URLs that might contain PDFs.
-        """
+            Returns:
+                List[str]: A list of URLs that match the criteria.
+            """
         if not isinstance(doi, str) or not doi.strip():
             raise ValueError("DOI must be a non-empty string")
 
@@ -377,29 +376,26 @@ class Client(APIClient):
             response.raise_for_status()
             data = response.json()
 
-            if "message" in data and "link" in data["message"]:
-                links = [link["URL"] for link in data["message"]["link"]]
-                logger.info(
-                    f"Crossref links found for DOI {doi}: {links}"
-                )  # Log les liens trouvés
-                return links
+            links = data.get("message", {}).get("link", [])
+            filtered_links = [
+                link["URL"]
+                for link in links
+                if link.get("content-version") in ["vor", "am"]
+            ]
+
+            if filtered_links:
+                logger.info(f"Fulltext links found for DOI {doi}: {filtered_links}")
             else:
-                logger.info(
-                    f"No links found in Crossref for DOI: {doi}"
-                )  # Log si aucun lien n'est trouvé
-                return []
+                logger.info(f"No Fulltext links found for DOI: {doi}")
+
+            return filtered_links
 
         except requests.RequestException as e:
-            logger.error(
-                f"Error fetching Crossref data for DOI {doi}: {str(e)}"
-            )  # Log en cas d'erreur de requête
+            logger.error(f"Error fetching Crossref data for DOI {doi}: {str(e)}")
             return []
         except (KeyError, IndexError, ValueError) as e:
-            logger.error(
-                f"Error parsing Crossref response for DOI {doi}: {str(e)}"
-            )  # Log des erreurs de parsing
+            logger.error(f"Error parsing Crossref response for DOI {doi}: {str(e)}")
             return []
-
 
 UnpaywallClient = Client(
     response_handler=JsonResponseHandler,
