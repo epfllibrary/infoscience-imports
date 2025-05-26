@@ -575,7 +575,7 @@ class DataCiteHarvester(Harvester):
     def fetch_and_parse_publications(self) -> pd.DataFrame:
         # Construct DataCite API filters with date range
         api_filters = {
-            "created": f"{self.start_date},{self.end_date}",
+            "published": f"{self.start_date},{self.end_date}",
             "state": "findable",
         }
         api_filters.update(self.filters)
