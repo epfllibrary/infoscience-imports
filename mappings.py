@@ -100,10 +100,10 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",
         },
-        "Erratum": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article",
-        },
+        # "Erratum": {
+        #     "collection": "Journal articles",
+        #     "dc.type": "text::journal::journal article",
+        # },
         "Business Article": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article",
@@ -780,6 +780,7 @@ MAPPING_UNITS_EN = {
     "SERVICE-GENERAL": "General service",
     "NONE": "Other",
     "SPC": "Center",
+    "PLATEFORME": "Facility",
 }
 MAPPING_UNITS_FR = {
     "ANTENNE": "Antenne",
@@ -802,6 +803,7 @@ MAPPING_UNITS_FR = {
     "SERVICE-GENERAL": "Service général",
     "NONE": "Autre",
     "SPC": "Centre",
+    "PLATEFORME": "Plateforme",
 }
 
 MAPPING_UNITS_CODES = {
@@ -828,4 +830,5 @@ MAPPING_UNITS_CODES = {
     "swiss plasma center": "CENTRE",
     "visibilité annuaire": "NONE",
     "visibilité organigramme": "NONE",
+    "plateforme": "PLATEFORME",
 }
