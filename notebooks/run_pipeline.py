@@ -1,18 +1,12 @@
 import marimo
 
-__generated_with = "0.12.4"
+__generated_with = "0.13.11"
 app = marimo.App()
 
 
 @app.cell
 def _():
     import marimo as mo
-    return (mo,)
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""# Import from External Sources to Infoscience""")
     return
 
 
@@ -23,13 +17,13 @@ def _():
     sys.path.append(os.path.abspath(".."))
     from data_pipeline.main import main
     from data_pipeline.reporting import GenerateReports
-    return GenerateReports, main, os, sys
+    return (main,)
 
 
 @app.cell
 def _():
-    start = "2025-05-01"
-    end = "2025-05-13"
+    start = "2025-05-24"
+    end = "2025-06-01"
 
     # author_ids = ["DYK-7080-2022", "23008979400"]
     author_ids = None
@@ -81,7 +75,7 @@ def _(
     queries = custom_queries if custom_queries else {}
 
     results = main(start_date=start, end_date=end, queries=queries, authors_ids=author_ids)
-    return custom_queries, queries, results
+    return
 
 
 if __name__ == "__main__":

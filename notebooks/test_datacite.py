@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.12.4"
+__generated_with = "0.13.11"
 app = marimo.App(width="medium")
 
 
@@ -13,7 +13,7 @@ def _():
 
 
     sys.path.append(os.path.abspath(".."))
-    return json, os, pd, sys
+    return (os,)
 
 
 @app.cell
@@ -29,7 +29,6 @@ def _():
         DataFrameProcessor,
         PublicationProcessor,
         datetime,
-        default_queries,
     )
 
 
@@ -43,15 +42,18 @@ def _(datetime, os):
 
     if not os.path.exists(path):
         os.mkdir(path)
-    return current_datetime, folder_path, path
+    return (path,)
 
 
 @app.cell
 def _(DataCiteHarvester):
     # Define the date range and generic query
-    start_date = "2025"
+    start_date = "2024"
     end_date = "2025"
-    generic_query = '(prefix:10.5281 OR prefix:10.48550) AND (creators.affiliation.name:*EPFL* OR creators.affiliation.name:"École Polytechnique Fédérale de Lausanne" OR creators.affiliation.name:"Swiss Federal Institute of Technology in Lausanne" OR creators.affiliation.affiliationIdentifier:02s376052) -prefix:10.5075'
+    # generic_query = '(prefix:10.5281 OR prefix:10.48550) AND (creators.affiliation.name:*EPFL* OR creators.affiliation.name:"École Polytechnique Fédérale de Lausanne" OR creators.affiliation.name:"Swiss Federal Institute of Technology in Lausanne" OR creators.affiliation.affiliationIdentifier:02s376052) -prefix:10.5075'
+
+    generic_query = '(creators.affiliation.name:*EPFL* OR creators.affiliation.name:"École Polytechnique Fédérale de Lausanne" OR creators.affiliation.name:"Swiss Federal Institute of Technology in Lausanne" OR creators.affiliation.affiliationIdentifier:02s376052) -prefix:10.5075'
+
 
     filters = {
         "state": "findable",
@@ -73,14 +75,7 @@ def _(DataCiteHarvester):
 
     # Harvest publications from Crossref based on the given parameters
     df_publications = harvester.harvest()
-    return (
-        df_publications,
-        end_date,
-        filters,
-        generic_query,
-        harvester,
-        start_date,
-    )
+    return (df_publications,)
 
 
 @app.cell
@@ -166,7 +161,7 @@ def _(AuthorProcessor, df_authors):
         .api_epfl_reconciliation()
         .generate_dspace_uuid(return_df=True)
     )
-    return author_processor, df_epfl_authors
+    return (df_epfl_authors,)
 
 
 @app.cell
@@ -182,7 +177,7 @@ def _(PublicationProcessor, df_metadata):
     # Generate publications dataframe enriched with OA attributes
     publication_processor = PublicationProcessor(df_metadata)
     df_oa_metadata = publication_processor.process(return_df=True)
-    return df_oa_metadata, publication_processor
+    return (df_oa_metadata,)
 
 
 @app.cell
