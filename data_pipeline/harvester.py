@@ -136,15 +136,15 @@ class WosHarvester(Harvester):
             .reset_index(drop=True)
         )
 
-        author_processor = AuthorProcessor(df)
+        # author_processor = AuthorProcessor(df)
 
-        df = df[
-            df["affiliation_controlled"].isna()
-            | df["affiliation_controlled"].astype(str).str.strip().eq("")
-            | df["affiliation_controlled"]
-            .astype(str)
-            .apply(lambda x: author_processor.process_scopus(x, check_all=True))
-        ]
+        # df = df[
+        #     df["affiliation_controlled"].isna()
+        #     | df["affiliation_controlled"].astype(str).str.strip().eq("")
+        #     | df["affiliation_controlled"]
+        #     .astype(str)
+        #     .apply(lambda x: author_processor.process_scopus(x, check_all=True))
+        # ]
 
         return df
 
