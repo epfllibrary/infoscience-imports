@@ -8,6 +8,7 @@ app = marimo.App(width="medium")
 def _():
     import sys
     import os
+    from pathlib import Path
     from datetime import datetime
     import pandas as pd
     import marimo as mo
@@ -19,15 +20,17 @@ def _():
     from data_pipeline.deduplicator import DataFrameProcessor
     from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
     from data_pipeline.loader import Loader
+    from data_pipeline.reporting import GenerateReports
     from config import default_queries
     app = mo.App()
-
     return (
         AuthorProcessor,
         CrossrefHarvester,
         DataFrameProcessor,
+        GenerateReports,
         Loader,
         OpenAlexCrossrefHarvester,
+        Path,
         PublicationProcessor,
         ScopusHarvester,
         WosHarvester,
@@ -118,7 +121,6 @@ def _(default_queries, mo):
         )
 
     ).form(show_clear_button=True, bordered=True, submit_button_label="🚀 Launch Harvesting")
-
     return (form,)
 
 
@@ -165,7 +167,6 @@ def _(
         openalex_df = pd.DataFrame(
             OpenAlexCrossrefHarvester(start_date, end_date, form.value["openalex_query"]).harvest()
         )
-
     return crossref_df, openalex_df, scopus_df, wos_df
 
 
@@ -190,7 +191,7 @@ def _(crossref_df, mo, openalex_df, scopus_df, wos_df):
         harvested_results.append(mo.ui.table(openalex_df))
 
 
-    harvested_results 
+    harvested_results
     return
 
 
@@ -251,11 +252,11 @@ def _(deduplicated_sources_df, deduplicator, infoscience_btn, mo):
     dedupinfoscience_output.append(mo.ui.table(df_metadata))
     dedupinfoscience_output.append(mo.md("### 👩 Full List of Authors and Affiliations for Candidate Items"))
     dedupinfoscience_output.append(mo.ui.table(df_authors))
-    dedupinfoscience_output.append(mo.md("### ❌ Rejected Items"))
+    dedupinfoscience_output.append(mo.md("### ❌ Duplicated Items"))
     dedupinfoscience_output.append(mo.ui.table(df_unloaded))
 
     dedupinfoscience_output
-    return df_authors, df_metadata
+    return df_authors, df_metadata, df_unloaded
 
 
 @app.cell
@@ -292,11 +293,6 @@ def _(AuthorProcessor, authors_btn, df_authors, mo):
     author_reconcil_output.append(mo.ui.table(df_epfl_authors))
     author_reconcil_output
     return (df_epfl_authors,)
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell
@@ -345,6 +341,51 @@ def _(Loader, df_authors, df_epfl_authors, df_oa_metadata, load_btn, mo):
     loading_output.append(mo.md("### ✅ Imported Items Report"))
     loading_output.append(mo.ui.table(imported_items))
     loading_output
+    return (imported_items,)
+
+
+@app.cell
+def _(df_oa_metadata, imported_items):
+    df_rejected = (
+        df_oa_metadata[~df_oa_metadata["row_id"].isin(imported_items["row_id"])]
+        if "row_id" in df_oa_metadata.columns and "row_id" in imported_items.columns
+        else df_oa_metadata.copy()
+    )
+    df_rejected
+    return
+
+
+@app.cell
+def _(
+    GenerateReports,
+    Path,
+    df_epfl_authors,
+    df_oa_metadata,
+    df_unloaded,
+    imported_items,
+    mo,
+):
+    export_dir = Path("reports")
+    export_dir.mkdir(exist_ok=True)
+
+    report_path = None
+
+    if any(not df.empty for df in [df_oa_metadata, df_unloaded, df_epfl_authors, imported_items]):
+        if "row_id" in imported_items.columns:
+            report_generator = GenerateReports(
+                df_oa_metadata, df_unloaded, df_epfl_authors, imported_items
+            )
+            report_path = Path(report_generator.generate_excel_report(output_dir=export_dir))
+
+    # Afficher un lien de téléchargement ou un message
+    if report_path:
+        with open(report_path, "rb") as f:
+            data = f.read()
+        download_ui = mo.download(data=data, filename=report_path.name, label="📄 Download Excel Report")
+    else:
+        download_ui = mo.md("No Report.")
+
+    download_ui
     return
 
 
