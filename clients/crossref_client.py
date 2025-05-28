@@ -13,6 +13,7 @@ from apiclient import (
     retry_request,
     JsonResponseHandler,
 )
+from clients.openalex_client import OpenAlexClient
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
@@ -408,68 +409,45 @@ class Client(APIClient):
 
     def _remove_jats_from_abstract(self, abstract_text: str) -> str | None:
         """
-        Cleans the abstract text by removing JATS XML tags while preserving and processing
-        math expressions (e.g., LaTeX/MathJax). Extra whitespace is normalized and any
-        doubled dollar signs are collapsed to a single $ delimiter.
-
-        Args:
-            abstract_text (str): Abstract text containing XML tags.
-
-        Returns:
-            str: Cleaned abstract text, or None if no abstract text is provided.
+        Cleans abstract by removing known formatting tags while preserving all textual content.
+        Handles JATS and HTML tags and ensures math and custom tags are retained as text.
         """
         if not abstract_text:
             return None
 
         soup = BeautifulSoup(abstract_text, "lxml")
 
-        # Remove title tags (e.g., generic titles like "Abstract")
-        for title in soup.find_all("jats:title"):
-            title.decompose()
-
         def normalize_text(text: str) -> str:
-            # Remove extra whitespace and newlines.
             return " ".join(text.split())
 
-        # Process all inline formula tags first.
+        # Remove <title> tags (any namespace)
+        for title_tag in soup.find_all(lambda tag: tag.name in ["title", "jats:title"]):
+            if "abstract" in title_tag.get_text(strip=True).lower():
+                title_tag.decompose()
+
+        # Process inline formulas (optional JATS cleanup)
         for inline_formula in soup.find_all("jats:inline-formula"):
             alternatives = inline_formula.find("jats:alternatives")
             if alternatives:
                 tex_math = alternatives.find("jats:tex-math")
-                if tex_math:
-                    # Use the LaTeX version if available.
-                    math_text = normalize_text(tex_math.get_text(separator=" ", strip=True))
-                else:
-                    math_text = normalize_text(
-                        inline_formula.get_text(separator=" ", strip=True)
-                    )
+                math_text = normalize_text(tex_math.get_text()) if tex_math else ""
             else:
-                math_text = normalize_text(
-                    inline_formula.get_text(separator=" ", strip=True)
-                )
-            # Replace the inline formula tag with its normalized text.
+                math_text = normalize_text(inline_formula.get_text())
             inline_formula.replace_with(math_text)
 
-        # Process any remaining standalone math tags (jats:tex-math or mml:math)
-        # that are not part of an alternatives element.
+        # Handle orphan math expressions
         for math_tag in soup.find_all(["jats:tex-math", "mml:math"]):
-            if math_tag.find_parent("jats:alternatives"):
-                continue  # Already handled in inline formulas.
-            math_text = normalize_text(math_tag.get_text(separator=" ", strip=True))
-            math_tag.replace_with(math_text)
+            if not math_tag.find_parent("jats:alternatives"):
+                math_text = normalize_text(math_tag.get_text())
+                math_tag.replace_with(math_text)
 
-        # Concatenate text from all paragraph tags.
-        paragraphs = []
-        for para in soup.find_all("jats:p"):
-            para_text = normalize_text(para.get_text(separator=" ", strip=True))
-            if para_text:
-                paragraphs.append(para_text)
-        cleaned_text = " ".join(paragraphs)
+        # Extract full text content to avoid losing exotic/custom-tag text
+        full_text = normalize_text(soup.get_text())
 
-        # Collapse multiple consecutive dollar signs into a single dollar sign.
-        cleaned_text = re.sub(r"\${2,}", "$", cleaned_text)
+        # Collapse multiple dollar signs (for math)
+        full_text = re.sub(r"\${2,}", "$", full_text)
 
-        return cleaned_text.strip()
+        return full_text.strip()
 
     def _extract_abstract(self, x):
         """
@@ -487,6 +465,19 @@ class Client(APIClient):
         abstract_text = x.get("abstract", "")
         if abstract_text and isinstance(abstract_text, str):
             return self._remove_jats_from_abstract(abstract_text)
+            # If abstract not present in Crossref, attempt to get from OpenAlex
+        doi = x.get("DOI", "")
+        if not doi:
+            return ""
+        try:
+            openalex_id = f"https://doi.org/{doi}"
+            openalex_record = OpenAlexClient.fetch_record_by_unique_id(openalex_id, format="openalex")
+            self.logger.info(f"Get OpenAlex Record by DOI {openalex_record}")
+            if openalex_record:
+                return OpenAlexClient.extract_abstract(openalex_record)
+        except Exception as e:
+            self.logger.warning(f"Fallback to OpenAlex failed for DOI {doi}: {e}")
+
         return ""
 
     def _extract_conference_info(self, x):
