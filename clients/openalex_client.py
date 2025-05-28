@@ -173,7 +173,7 @@ class Client(APIClient):
         return all_records
 
     @retry_decorator
-    def fetch_record_by_unique_id(self, openalex_id):
+    def fetch_record_by_unique_id(self, openalex_id, format="digest"):
         """
         Retrieves a specific record by its unique OpenAlex ID.
 
@@ -244,10 +244,30 @@ class Client(APIClient):
         return {
             "source": "openalex",
             "internal_id": x["id"],
+            "issueDate": self._extract_publication_date(x),
             "doi": self.openalex_extract_doi(x),
-            "title": x.get("display_name"),
+            "title": x.get("display_name", ""),
             "doctype": self._extract_first_doctype(x),
             "pubyear": x.get("publication_year"),
+            "publisher": self._extract_publisher(x),
+            "publisherPlace": "",
+            "journalTitle": self._extract_journal_title(x),
+            "seriesTitle": "",
+            "bookTitle": "",
+            "editors": "",
+            "journalISSN": self._extract_journal_issn(x),
+            "seriesISSN": "",
+            "bookISBN": "",
+            "bookDOI": "",
+            "journalVolume": self._extract_volume(x),
+            "seriesVolume": "",
+            "bookPart": "",
+            "issue": self._extract_issue(x),
+            "startingPage": self._extract_starting_page(x),
+            "endingPage": self._extract_ending_page(x),
+            "pmid": "",
+            "artno": x.get("biblio", {}).get("article_number", ""),
+            "keywords": self._extract_keywords(x),
         }
 
     def _extract_ifs3_digest_record_info(self, x):
@@ -281,6 +301,7 @@ class Client(APIClient):
             dict: Extracted information in ifs3 format.
         """
         ifs3_info = self._extract_ifs3_digest_record_info(x)
+        ifs3_info["abstract"] = self.extract_abstract(x)
         ifs3_info["authors"] = self.extract_ifs3_authors(x)
         return ifs3_info
 
@@ -420,6 +441,61 @@ class Client(APIClient):
             )
         return authors
 
+
+    def extract_abstract(self, x):
+        """
+        Reconstruit l'abstract depuis abstract_inverted_index.
+        """
+        try:
+            index = x.get("abstract_inverted_index")
+            if not index or not isinstance(index, dict):
+                return ""
+
+            position_map = {}
+            for word, positions in index.items():
+                for pos in positions:
+                    position_map[pos] = word
+
+            abstract = " ".join(position_map[i] for i in sorted(position_map))
+            return abstract.strip()
+        except Exception as e:
+            self.logger.error(f"Error extracting abstract: {e}")
+            return ""
+
+    def _extract_publication_date(self, x):
+        try:
+            date_parts = x.get("publication_date", "")
+            return date_parts if date_parts else ""
+        except Exception as e:
+            self.logger.error(f"Error extracting publication date: {e}")
+            return ""
+
+    def _extract_journal_title(self, x):
+        return x.get("primary_location", {}).get("source", {}).get("display_name", "")
+
+    def _extract_journal_issn(self, x):
+        issn = x.get("primary_location", {}).get("source", {}).get("issn_l", "")
+        return issn if isinstance(issn, str) else "||".join(issn)
+
+    def _extract_publisher(self, x):
+        return x.get("primary_location", {}).get("source", {}).get("publisher", "")
+
+    def _extract_volume(self, x):
+        return x.get("biblio", {}).get("volume", "")
+
+    def _extract_issue(self, x):
+        return x.get("biblio", {}).get("issue", "")
+
+    def _extract_starting_page(self, x):
+        return x.get("biblio", {}).get("first_page", "")
+
+    def _extract_ending_page(self, x):
+        return x.get("biblio", {}).get("last_page", "")
+
+    def _extract_keywords(self, x):
+        concepts = x.get("concepts", [])
+        return "||".join([c.get("display_name", "") for c in concepts])
+
     @staticmethod
     def _format_authorname(raw: str) -> str:
         """
@@ -434,6 +510,7 @@ class Client(APIClient):
             given_parts += nm.middle.split()
         given_str = " ".join(given_parts)
         return f"{nm.last}, {given_str}"
+
 
 # Initialize the OpenAlexClient with a JSON response handler
 OpenAlexClient = Client(
