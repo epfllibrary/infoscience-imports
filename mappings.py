@@ -42,10 +42,10 @@ doctypes_mapping_dict = {
         #     "collection": "Journal articles",
         #     "dc.type": "text",
         # },
-        "Correction": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article",
-        },
+        # "Correction": {
+        #     "collection": "Journal articles",
+        #     "dc.type": "text::journal::journal article",
+        # },
         # "Note": {
         #     "collection": "Journal articles",
         #     "dc.type": "text",
