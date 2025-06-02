@@ -84,8 +84,8 @@ def _(pd):
 
 @app.cell
 def _(d, get_items):
-    query ="datacite.rights:(metadata-only) dateIssued.year:2025 dc.identifier.doi:* (types:(conference))"
-    df = get_items(d, query, size=1, max_pages=1)
+    query ="datacite.rights:(metadata-only) dateIssued.year:2025 dc.identifier.doi:* (types:(conference) OR types:(journal))"
+    df = get_items(d, query, size=100, max_pages=None)
     df
     return (df,)
 
