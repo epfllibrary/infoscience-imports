@@ -472,11 +472,11 @@ class Client(APIClient):
         try:
             openalex_id = f"https://doi.org/{doi}"
             openalex_record = OpenAlexClient.fetch_record_by_unique_id(openalex_id, format="openalex")
-            self.logger.info(f"Get OpenAlex Record by DOI {openalex_record}")
+            self.logger.debug(f"Get OpenAlex Record by DOI {openalex_record}")
             if openalex_record:
                 return OpenAlexClient.extract_abstract(openalex_record)
         except Exception as e:
-            self.logger.warning(f"Fallback to OpenAlex failed for DOI {doi}: {e}")
+            self.logger.warning(f"No abstract found in OpenAlex for DOI {doi}: {e}")
 
         return ""
 

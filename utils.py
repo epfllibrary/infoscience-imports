@@ -6,7 +6,7 @@ import unicodedata
 def manage_logger(logfile_name):
     # Configure logging for a specific logger (unique per instance)
     logger = logging.getLogger(logfile_name)
-    logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG
+    logger.setLevel(logging.INFO)  # Set the logging level to DEBUG
 
     # Check if the logger already has handlers to avoid adding multiple handlers
     if not logger.handlers:  # This ensures we don't add handlers multiple times
