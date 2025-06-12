@@ -6,6 +6,7 @@ import re
 import time
 from collections import defaultdict
 import pandas as pd
+import json
 from data_pipeline.enricher import AuthorProcessor
 from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
@@ -434,13 +435,26 @@ class CrossrefHarvester(Harvester):
         """
         # Build the parameter dictionary for targeted queries.
         params = {}
-        if self.query:
+        if isinstance(self.query, dict):
+            params.update(self.query)  # utiliser tel quel
+        elif isinstance(self.query, str):
+            try:
+                parsed_query = json.loads(self.query)
+                if isinstance(parsed_query, dict):
+                    params.update(parsed_query)
+                else:
+                    self.logger.warning("Parsed self.query is not a dictionary.")
+                    params["query"] = self.query
+            except json.JSONDecodeError:
+                self.logger.warning("Failed to parse self.query as JSON string.")
+                params["query"] = self.query
+        elif self.query:
             params["query"] = self.query
+
         params.update(self.field_queries)
         params["filter"] = (
             f"from-created-date:{self.start_date},until-created-date:{self.end_date}"
         )
-
         total = CrossrefClient.count_results(**params)
         self.logger.info("- Total publications found in Crossref: %s", total)
 
