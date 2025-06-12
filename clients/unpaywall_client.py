@@ -21,7 +21,7 @@ from config import LICENSE_CONDITIONS
 from utils import manage_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
-email = os.environ.get("UPW_EMAIL")
+email = os.environ.get("CONTACT_API_EMAIL")
 
 log_file_path = os.path.join(logs_dir, "logging.log")
 logger = manage_logger(log_file_path)
@@ -76,7 +76,7 @@ class Client(APIClient):
 
         try:
             result = self.get(Endpoint.doi.format(doi=doi), params=self.params)
-
+            logger.info(f"Unpaywall response for DOI '{doi}': {result}")
             # Check if the result indicates an error
             if result.get("HTTP_status_code") == 404 and result.get("error"):
                 message = result.get("message", "No specific error message provided.")
@@ -108,152 +108,221 @@ class Client(APIClient):
         rec["oa_status"] = x["oa_status"]
         return rec
 
-    def _extract_best_oa_location_infos(self, x):
-        rec = self._extract_oa_infos(x)
-        logger.info("Extracting OA location infos.")
+    def _extract_best_oa_location_infos(self, record):
+        """
+        Extracts open access information from the best OA location section of the Unpaywall record.
 
+        Parameters:
+            record (dict): A single Unpaywall metadata response for a publication.
+
+        Returns:
+            dict: A dictionary containing open access metadata (oa status, license, version, URLs, etc.).
+        """
+        rec = {}
+
+        # Basic OA info
+        rec["is_oa"] = record.get("is_oa")
+        rec["oa_status"] = record.get("oa_status")
+
+        best_oa_location = record.get("best_oa_location")
+        if not best_oa_location:
+            logger.warning("No 'best_oa_location' found for DOI: %s", record.get("doi"))
+            return rec
+
+        logger.info("Extracting OA metadata from best_oa_location.")
+
+        # Extract license and version even if URL is missing
+        rec["license"] = best_oa_location.get("license")
+        rec["version"] = best_oa_location.get("version")
+
+        # Build a list of available URLs (even if no direct PDF)
+        urls = [
+            best_oa_location.get("url_for_pdf"),
+            best_oa_location.get("url_for_landing_page"),
+            best_oa_location.get("url"),
+        ]
+        urls = list(filter(None, urls))  # remove None values
+        rec["pdf_urls"] = "|".join(urls) if urls else None
+
+        # Only try to download if url_for_pdf is explicitly provided and license is valid
+        license_type = rec["license"]
         if (
-            rec.get("is_oa")
-            and rec.get("oa_status") in LICENSE_CONDITIONS["allowed_oa_statuses"]
+            record.get("is_oa")
+            and license_type
+            and any(l in license_type for l in LICENSE_CONDITIONS["allowed_licenses"])
         ):
-            best_oa_location = x.get("best_oa_location")
-            license_type = best_oa_location["license"]
-            rec["license"] = license_type
-            rec["version"] = best_oa_location["version"]
-
-            result = None
-            logger.debug(f"License type: {license_type}")
-
-            if (
-                license_type is not None
-                and license_type is not np.nan
-                and any(
-                    allowed in license_type
-                    for allowed in LICENSE_CONDITIONS["allowed_licenses"]
+            try:
+                doi = record.get("doi") or record.get("doi_url", "").replace(
+                    "https://doi.org/", ""
                 )
-            ):
-                urls = [
-                    best_oa_location["url_for_pdf"],
-                    best_oa_location["url_for_landing_page"],
-                    best_oa_location["url"],
-                ]
-                urls = list(filter(None, urls))
-                result = "|".join(urls)
-                logger.info("URLs concatenated successfully.")
 
                 valid_pdf_url, local_filename = self._validate_and_download_pdf(
-                    urls, x["doi"]
+                    urls, doi
                 )
                 if valid_pdf_url:
                     rec["pdf_url"] = valid_pdf_url
                     rec["valid_pdf"] = local_filename
                     logger.info(
-                        f"Valid PDF found at: {valid_pdf_url} and saved as {local_filename}"
+                        f"Valid PDF found at: {valid_pdf_url}, saved as {local_filename}"
                     )
                 else:
-                    logger.warning("No valid PDF found among the provided URLs.")
-            else:
-                logger.warning("License type is invalid or not allowed.")
+                    logger.warning("No valid PDF downloaded for DOI: %s", record.get("doi"))
+            except Exception as e:
+                logger.error(
+                    "Error downloading PDF for DOI %s: %s", record.get("doi"), str(e)
+                )
+        else:
+            logger.info(
+                "PDF download skipped for DOI %s (missing url_for_pdf or disallowed license).",
+                record.get("doi"),
+            )
 
-            rec["pdf_urls"] = result
         return rec
 
     def _validate_and_download_pdf(
         self, urls: List[str], doi: str
     ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Iterates through provided and Crossref-derived URLs to find a valid downloadable PDF.
+
+        Parameters:
+            urls (List[str]): List of possible PDF URLs from Unpaywall.
+            doi (str): DOI used to name the downloaded file.
+
+        Returns:
+            Tuple[str, str] if successful: (PDF URL, local filename),
+            otherwise (None, None).
+        """
         ensure_pdf_folder()
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
             "Accept": "application/pdf,application/x-pdf,application/octet-stream,*/*",
-            "Accept-Language": "en-US,en;q=0.5",
             "Referer": "https://www.google.com/",
+            "DNT": "1",  
+            "Upgrade-Insecure-Requests": "1",
         }
 
-        # Regroupe toutes les URLs
+        # Combine with additional Crossref PDF links (fallbacks)
         all_urls = list(dict.fromkeys(urls + self._get_crossref_pdf_links(doi)))
 
         for url in all_urls:
+            if not url:
+                continue
             try:
-                # Vérification de l'URL et téléchargement du PDF si valide
+                logger.info(f"Trying candidate PDF URL: {url}")
                 pdf_url, filename = self._check_and_download_pdf(
-                    url, doi, PDF_FOLDER, headers
+                    url, doi, str(PDF_FOLDER), headers
                 )
 
                 if pdf_url and filename:
-                    # Vérification du fichier téléchargé (est-ce bien un PDF ?)
-                    if filename.lower().endswith(".pdf") and os.path.isfile(
-                        os.path.join(PDF_FOLDER, filename)
-                    ):
-                        logger.info(f"PDF file successfully downloaded from {url}")
+                    full_path = os.path.join(PDF_FOLDER, filename)
+                    if filename.lower().endswith(".pdf") and os.path.isfile(full_path):
+                        logger.info(
+                            f"Successfully validated and downloaded PDF from: {pdf_url}"
+                        )
                         return pdf_url, filename
                     else:
-                        logger.warning(f"Not valid file downloaded from {url}")
+                        logger.warning(
+                            f"File was downloaded but does not appear to be a valid PDF: {filename}"
+                        )
             except Exception as e:
-                # Gestion des exceptions pour ne pas interrompre le processus
-                logger.error(f"Error downloading {url}: {e}")
+                logger.error(f"Unexpected error while downloading from {url}: {e}")
 
-        # Si aucun PDF n'est trouvé
-        logger.warning(f"No PDF file found for DOI: {doi}")
+        logger.warning(f"All attempts failed: no valid PDF found for DOI {doi}")
         return None, None
 
     def _check_and_download_pdf(
         self, url: str, doi: str, pdf_folder: str, headers: dict
     ) -> Tuple[Optional[str], Optional[str]]:
-        def try_download(attempt_url):
-            # Vérification si l'URL contient "api.elsevier.com"
-            if "api.elsevier.com" in attempt_url:
-                logger.info(
-                    f"Elsevier PDF detected : {attempt_url}. Download attempt via dedicated API."
-                )
-                return self._get_elsevier_pdf(doi, els_api_key, PDF_FOLDER)
+        """
+        Attempts to download a PDF from a given URL after checking content type and redirects.
 
-            # Processus normal pour les autres URLs
+        Returns:
+            Tuple[str, str] if successful (URL, filename), or (None, None) otherwise.
+        """
+
+        def try_download(attempt_url):
+            # Elsevier-specific case (API route)
+            if "api.elsevier.com" in attempt_url:
+                logger.info(f"Using Elsevier API download for URL: {attempt_url}")
+                return self._get_elsevier_pdf(doi, els_api_key, pdf_folder)
+
             try:
                 response = requests.get(
-                    attempt_url, headers=headers, stream=True, timeout=30
+                    attempt_url,
+                    headers=headers,
+                    stream=True,
+                    timeout=30,
+                    allow_redirects=True,  # Follow redirects to actual PDF
                 )
                 response.raise_for_status()
+
+                final_url = response.url
                 content_type = response.headers.get("Content-Type", "").lower()
 
-                if "application/pdf" in content_type:
-                    return self._download_pdf(response, attempt_url, doi, PDF_FOLDER)
+                logger.info(f"Resolved URL after redirection: {final_url}")
+                logger.info(f"Content-Type returned: {content_type}")
+
+                # Acceptable content or file extension
+                is_pdf = "application/pdf" in content_type or final_url.lower().endswith(
+                    ".pdf"
+                )
+
+                if is_pdf:
+                    return self._download_pdf(response, final_url, doi, pdf_folder)
                 else:
-                    logger.info(
-                        f"The URL {attempt_url} does not point to a PDF file. Content-Type: {content_type}"
+                    logger.warning(
+                        f"Rejected non-PDF content from {final_url} (Content-Type: {content_type})"
                     )
                     return None, None
             except requests.RequestException as e:
-                logger.error(
-                    f"Error checking/downloading PDF from {attempt_url}: {str(e)}"
-                )
+                logger.error(f"Error downloading from {attempt_url}: {e}")
                 return None, None
 
-        # First attempt with the original URL
+        # First direct try
         result = try_download(url)
         if result[0] is not None:
             return result
 
-        # If the first attempt failed and the URL doesn't end with .pdf, try appending .pdf
+        # Fallback: attempt with '.pdf' appended if applicable
         if not url.lower().endswith(".pdf") and "doi.org" not in url.lower():
             pdf_url = urljoin(url, url.split("/")[-1] + ".pdf")
-            logger.info(f"Attempting to download PDF from modified URL: {pdf_url}")
+            logger.info(f"Retrying with '.pdf' appended URL: {pdf_url}")
             result = try_download(pdf_url)
             if result[0] is not None:
                 return result
 
-        # If both attempts failed, return None, None
         return None, None
 
     def _download_pdf(
         self, response: requests.Response, url: str, doi: str, pdf_folder: str
     ) -> Tuple[str, str]:
+        """
+        Saves a PDF response to disk.
+
+        Parameters:
+            response (requests.Response): The response object from requests.get().
+            url (str): The final resolved URL of the PDF.
+            doi (str): The DOI to use as filename.
+            pdf_folder (str): Destination directory.
+
+        Returns:
+            Tuple[str, str]: (original URL, saved filename)
+        """
         filename = f"{doi.replace('/', '_')}.pdf"
         file_path = os.path.join(pdf_folder, filename)
+
         with open(file_path, "wb") as file:
             for chunk in response.iter_content(chunk_size=8192):
-                file.write(chunk)
-        logger.info(f"PDF successfully downloaded and saved to {file_path}")
+                if chunk:
+                    file.write(chunk)
+
+        logger.info(f"PDF saved to: {file_path}")
         return url, filename
 
     def _get_elsevier_pdf(self, doi, api_key, pdf_folder):
@@ -288,14 +357,14 @@ class Client(APIClient):
     @staticmethod
     def _get_crossref_pdf_links(doi: str) -> List[str]:
         """
-        Retrieve PDF links for a given DOI using the Crossref API.
+            Retrieve VOR PDF links for a given DOI using the Crossref API.
 
-        Args:
-            doi (str): The Digital Object Identifier of the publication.
+            Args:
+                doi (str): The Digital Object Identifier of the publication.
 
-        Returns:
-            List[str]: A list of URLs that might contain PDFs.
-        """
+            Returns:
+                List[str]: A list of URLs that match the criteria.
+            """
         if not isinstance(doi, str) or not doi.strip():
             raise ValueError("DOI must be a non-empty string")
 
@@ -307,27 +376,25 @@ class Client(APIClient):
             response.raise_for_status()
             data = response.json()
 
-            if "message" in data and "link" in data["message"]:
-                links = [link["URL"] for link in data["message"]["link"]]
-                logger.info(
-                    f"Crossref links found for DOI {doi}: {links}"
-                )  # Log les liens trouvés
-                return links
+            links = data.get("message", {}).get("link", [])
+            filtered_links = [
+                link["URL"]
+                for link in links
+                if link.get("content-version") in ["vor", "am"]
+            ]
+
+            if filtered_links:
+                logger.info(f"Fulltext links found for DOI {doi}: {filtered_links}")
             else:
-                logger.info(
-                    f"No links found in Crossref for DOI: {doi}"
-                )  # Log si aucun lien n'est trouvé
-                return []
+                logger.info(f"No Fulltext links found for DOI: {doi}")
+
+            return filtered_links
 
         except requests.RequestException as e:
-            logger.error(
-                f"Error fetching Crossref data for DOI {doi}: {str(e)}"
-            )  # Log en cas d'erreur de requête
+            logger.error(f"Error fetching Crossref data for DOI {doi}: {str(e)}")
             return []
         except (KeyError, IndexError, ValueError) as e:
-            logger.error(
-                f"Error parsing Crossref response for DOI {doi}: {str(e)}"
-            )  # Log des erreurs de parsing
+            logger.error(f"Error parsing Crossref response for DOI {doi}: {str(e)}")
             return []
 
 UnpaywallClient = Client(

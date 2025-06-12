@@ -303,9 +303,9 @@ class Client(APIClient):
             "artno": self._extract_artno(x),
             "corporateAuthor": self._extract_corporate_authors(x),
             "keywords": self._extract_keywords(x),
-            "affiliation_controlled": ScopusClient.fetch_record_by_unique_id(
-                doi, format="affiliations"
-            ),
+            # "affiliation_controlled": ScopusClient.fetch_record_by_unique_id(
+            #     doi, format="affiliations"
+            # ),
         }
         return record
 

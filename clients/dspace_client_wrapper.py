@@ -64,37 +64,52 @@ class DSpaceClientWrapper:
         if isinstance(pubyear, str) and pubyear.isdigit():
             pubyear = int(pubyear)
         elif not isinstance(pubyear, int):
-            raise ValueError("pubyear must be an integer")
-        previous_year = pubyear - 1
-        next_year = pubyear + 1
+            pubyear = None
+
+        # Define previous and next years if pubyear is valid
+        previous_year = pubyear - 1 if pubyear is not None else None
+        next_year = pubyear + 1 if pubyear is not None else None
 
         # Construct the item ID based on identifier type
-        if identifier_type == "wos":
-            item_id = str(x["internal_id"]).replace("WOS:", "").strip()
-        elif identifier_type == "scopus":
-            item_id = str(x["internal_id"]).replace("SCOPUS_ID:", "").strip()
-        elif identifier_type == "openalex":
-            item_id = str(x["internal_id"]).replace("https://openalex.org/", "").strip()
-        elif identifier_type == "zenodo":
-            item_id = x["internal_id"].strip()
-        else:
-            raise ValueError("identifier_type must be 'wos', 'scopus' or 'zenodo'")
+        handlers = {
+            "wos": lambda x: str(x["internal_id"]).replace("WOS:", "").strip(),
+            "scopus": lambda x: str(x["internal_id"]).replace("SCOPUS_ID:", "").strip(),
+            "crossref": lambda x: str(x["internal_id"]).strip(),
+            "openalex+crossref": lambda x: str(x["internal_id"]).strip(),
+            "openalex": lambda x: str(x["doi"]).strip(),
+            "zenodo": lambda x: x["internal_id"].strip(),
+            "datacite": lambda x: str(x["internal_id"]).strip(),
+            "orcidWorks": lambda x: None,
+        }
 
+        if identifier_type in handlers:
+            item_id = handlers[identifier_type](x)
+        else:
+            raise ValueError(
+                f"{identifier_type} : identifier_type must be one of {list(handlers.keys())}"
+            )
         # Combine all criteria into a single query
         query_parts = []
 
         if item_id:
             query_parts.append(f'(itemidentifier_keyword:"{item_id}")')
 
-        query_parts.append(
-            f"(title:({cleaned_title}) AND (dateIssued.year:{pubyear} OR dateIssued.year:{previous_year} OR dateIssued.year:{next_year}))"
-        )
+        if pubyear is not None:
+            query_parts.append(
+                    f"(title:({cleaned_title}) AND (dateIssued.year:{pubyear} "
+                    f"OR dateIssued.year:{previous_year} OR dateIssued.year:{next_year}))"
+                )
+        else:
+            query_parts.append(f"(title:({cleaned_title}))")
 
         if "doi" in x and x["doi"] not in ["", None]:
             query_parts.append(f"(itemidentifier_keyword:\"{str(x['doi']).strip()}\")")
 
         # Combine all query parts using OR
         final_query = " OR ".join(query_parts)
+        final_query = f"({final_query}) AND (entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
+
+        final_query_workflow = f"({final_query}) AND (search.resourcetype:(XmlWorkflowItem) OR ((search.resourcetype:(WorkspaceItem) AND submitter_authority:(4e8d183f-1309-470c-955e-c45a99c6f1b8)) OR (search.resourcetype:(WorkspaceItem) AND epfl.workflow.rejected:(true))))"
 
         # Search for duplicates using the combined query
         self.logger.debug(
@@ -104,22 +119,25 @@ class DSpaceClientWrapper:
         # Check the researchoutput configuration
         dsos_researchoutputs = self._search_objects(
             query=final_query,
-            filters={'f.entityType': 'Publication,equals'},
             page=0,
             size=1,
             dso_type="item",
             configuration="administrativeView",
+            max_pages=1,
         )
         num_items_researchoutputs = len(dsos_researchoutputs)
 
-        self.logger.debug(f"Searching workflow items with query: {final_query}...")
+        self.logger.debug(
+            f"Searching workflow items with query: {final_query_workflow}..."
+        )
 
         # Check the supervision configuration
         dsos_supervision = self._search_objects(
-            query=final_query,
+            query=final_query_workflow,
             page=0,
             size=1,
             configuration="supervision",
+            max_pages=1,
         )
         num_items_supervision = len(dsos_supervision)
 
@@ -155,18 +173,18 @@ class DSpaceClientWrapper:
             sciper_id = (
                 sciper_metadata[0]["value"] if sciper_metadata and len(sciper_metadata) > 0 else ""
             )
-            affiliation_metadata = dsos_persons[0].metadata.get("person.affiliation.name", "")
+            # affiliation_metadata = dsos_persons[0].metadata.get("person.affiliation.name", "")
 
-            self.logger.debug("affiliation_metadata: %s", affiliation_metadata)
+            # self.logger.debug("affiliation_metadata: %s", affiliation_metadata)
 
-            main_affiliation = (
-                affiliation_metadata[0]["value"]
-                if affiliation_metadata else ""
-            )
+            # main_affiliation = (
+            #     affiliation_metadata[0]["value"]
+            #     if affiliation_metadata else ""
+            # )
             return {
                 "uuid": dsos_persons[0].uuid,
                 "sciper_id": sciper_id,
-                "main_affiliation": main_affiliation,
+                # "main_affiliation": main_affiliation,
             }
         elif num_items_persons == 0:
             self.logger.warning(
@@ -215,6 +233,9 @@ class DSpaceClientWrapper:
 
     def delete_workspace(self, workspace_id):
         return self.client.delete_workspace_item(workspace_id)
+
+    def delete_workflow(self, workflow_id):
+        return self.client.delete_workflow_item(workflow_id)
 
     def search_authority(
         self,

@@ -1,8 +1,10 @@
 """OpenAlex client for Infoscience imports"""
 
 import os
+import re
 from typing import List
 import tenacity
+from nameparser import HumanName
 from apiclient import (
     APIClient,
     endpoint,
@@ -20,7 +22,7 @@ openalex_api_base_url = "https://api.openalex.org"
 
 # Load environment variables
 load_dotenv(os.path.join(os.getcwd(), ".env"))
-openalex_email = os.environ.get("OPENALEX_EMAIL")
+openalex_email = os.environ.get("CONTACT_API_EMAIL")
 
 accepted_doctypes = [
     key for key in mappings.doctypes_mapping_dict["source_crossref"].keys()
@@ -41,7 +43,7 @@ class OpenAlexEndpoint:
     work_id = "works/{openalexId}"
 
 
-class OpenAlexClient(APIClient):
+class Client(APIClient):
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
@@ -61,7 +63,12 @@ class OpenAlexClient(APIClient):
         """
         param_kwargs.setdefault("email", openalex_email)
         self.params = {**param_kwargs}
-        return self.get(OpenAlexEndpoint.works, params=self.params)
+        response = self.get(OpenAlexEndpoint.works, params=self.params)
+
+        # 🟢 Stocke la dernière réponse ici
+        self.last_response = response
+
+        return response
 
     @retry_request
     def count_results(self, **param_kwargs) -> int:
@@ -98,32 +105,75 @@ class OpenAlexClient(APIClient):
         A list of IDs from OpenAlex.
         """
         param_kwargs.setdefault("email", openalex_email)
-        param_kwargs.setdefault("per_page", 10)
-        param_kwargs.setdefault("page", 1)
-        self.params = {**param_kwargs}
-        return [x["id"] for x in self.search_query(**self.params)["results"]]
+        param_kwargs.setdefault("per_page", 50)
+        # Curseur initial
+        cursor = param_kwargs.pop("cursor", "*")
+
+        all_ids: List[str] = []
+
+        while True:
+            # On inclut le curseur à chaque requête
+            self.params = {**param_kwargs, "cursor": cursor}
+            response = self.search_query(**self.params)
+
+            results = response.get("results", [])
+            if not results:
+                break
+
+            for record in results:
+                raw_doi = record.get("doi")
+                if raw_doi:
+                    doi_id = re.sub(r'^https?://(?:dx\.)?doi\.org/', '', raw_doi, flags=re.IGNORECASE)
+                    all_ids.append(doi_id)
+                else:
+                    all_ids.append(record["id"])
+
+            # Passage au curseur suivant
+            cursor = response.get("meta", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return all_ids
 
     @retry_decorator
     def fetch_records(self, format="digest", **param_kwargs):
         """
-        Fetch records from OpenAlex API, processing them into the specified format.
+        Fetch all records from OpenAlex API using cursor-based pagination.
 
         Args:
-            format (str): Desired format for output records. Options are 'digest', 'digest-ifs3', 'ifs3', or 'openalex'.
-            **param_kwargs: Additional parameters for querying OpenAlex.
+            format (str): Desired format for output records. Options: 'digest', 'digest-ifs3', 'ifs3', or 'openalex'.
+            **param_kwargs: Parameters for querying OpenAlex (e.g., filter, per_page).
 
         Returns:
-            list or None: Processed records in the specified format, or None if no records are found.
+            list: Processed records in the specified format.
         """
         param_kwargs.setdefault("email", openalex_email)
-        self.params = param_kwargs
-        result = self.search_query(**self.params)
-        if result["meta"]["count"] > 0:
-            return self._process_fetch_records(format, **self.params)
-        return None
+        param_kwargs.setdefault("per_page", 50)
+        cursor = param_kwargs.pop("cursor", "*")
+
+        all_records = []
+
+        while True:
+            self.params = {**param_kwargs, "cursor": cursor}
+            response = self.search_query(**self.params)
+
+            results = response.get("results", [])
+            if not results:
+                break
+
+            for record in results:
+                parsed = self._process_record(record, format)
+                if parsed:
+                    all_records.append(parsed)
+
+            cursor = response.get("meta", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return all_records
 
     @retry_decorator
-    def fetch_record_by_unique_id(self, openalex_id):
+    def fetch_record_by_unique_id(self, openalex_id, format="digest"):
         """
         Retrieves a specific record by its unique OpenAlex ID.
 
@@ -194,10 +244,30 @@ class OpenAlexClient(APIClient):
         return {
             "source": "openalex",
             "internal_id": x["id"],
-            "doi": self._extract_doi(x), 
-            "title": x.get("display_name"),
+            "issueDate": self._extract_publication_date(x),
+            "doi": self.openalex_extract_doi(x),
+            "title": x.get("display_name", ""),
             "doctype": self._extract_first_doctype(x),
             "pubyear": x.get("publication_year"),
+            "publisher": self._extract_publisher(x),
+            "publisherPlace": "",
+            "journalTitle": self._extract_journal_title(x),
+            "seriesTitle": "",
+            "bookTitle": "",
+            "editors": "",
+            "journalISSN": self._extract_journal_issn(x),
+            "seriesISSN": "",
+            "bookISBN": "",
+            "bookDOI": "",
+            "journalVolume": self._extract_volume(x),
+            "seriesVolume": "",
+            "bookPart": "",
+            "issue": self._extract_issue(x),
+            "startingPage": self._extract_starting_page(x),
+            "endingPage": self._extract_ending_page(x),
+            "pmid": "",
+            "artno": x.get("biblio", {}).get("article_number", ""),
+            "keywords": self._extract_keywords(x),
         }
 
     def _extract_ifs3_digest_record_info(self, x):
@@ -231,10 +301,11 @@ class OpenAlexClient(APIClient):
             dict: Extracted information in ifs3 format.
         """
         ifs3_info = self._extract_ifs3_digest_record_info(x)
-        ifs3_info["authors"] = self._extract_ifs3_authors(x)
+        ifs3_info["abstract"] = self.extract_abstract(x)
+        ifs3_info["authors"] = self.extract_ifs3_authors(x)
         return ifs3_info
 
-    def _extract_doi(self, x):
+    def openalex_extract_doi(self, x):
         """
         Extract DOI from an OpenAlex record, removing the prefix 'https://doi.org/'.
 
@@ -334,7 +405,7 @@ class OpenAlexClient(APIClient):
             orcid if isinstance(orcid, str) else ""
         )
 
-    def _extract_ifs3_authors(self, x):
+    def extract_ifs3_authors(self, x):
         """
         Extract author information for ifs3 format from a single OpenAlex record.
 
@@ -353,9 +424,12 @@ class OpenAlexClient(APIClient):
                         for inst in author.get("institutions", [])
                     ]
                 )
+                raw_name = author["author"]["display_name"]
+                formatted_name = self._format_authorname(raw_name)
+
                 authors.append(
                     {
-                        "author": author["author"]["display_name"],
+                        "author": formatted_name,
                         "internal_author_id": author["author"]["id"],
                         "orcid_id": self._extract_author_orcid(author["author"]),
                         "organizations": institutions,
@@ -368,7 +442,77 @@ class OpenAlexClient(APIClient):
         return authors
 
 
+    def extract_abstract(self, x):
+        """
+        Reconstruit l'abstract depuis abstract_inverted_index.
+        """
+        try:
+            index = x.get("abstract_inverted_index")
+            if not index or not isinstance(index, dict):
+                return ""
+
+            position_map = {}
+            for word, positions in index.items():
+                for pos in positions:
+                    position_map[pos] = word
+
+            abstract = " ".join(position_map[i] for i in sorted(position_map))
+            return abstract.strip()
+        except Exception as e:
+            self.logger.error(f"Error extracting abstract: {e}")
+            return ""
+
+    def _extract_publication_date(self, x):
+        try:
+            date_parts = x.get("publication_date", "")
+            return date_parts if date_parts else ""
+        except Exception as e:
+            self.logger.error(f"Error extracting publication date: {e}")
+            return ""
+
+    def _extract_journal_title(self, x):
+        return x.get("primary_location", {}).get("source", {}).get("display_name", "")
+
+    def _extract_journal_issn(self, x):
+        issn = x.get("primary_location", {}).get("source", {}).get("issn_l", "")
+        return issn if isinstance(issn, str) else "||".join(issn)
+
+    def _extract_publisher(self, x):
+        return x.get("primary_location", {}).get("source", {}).get("publisher", "")
+
+    def _extract_volume(self, x):
+        return x.get("biblio", {}).get("volume", "")
+
+    def _extract_issue(self, x):
+        return x.get("biblio", {}).get("issue", "")
+
+    def _extract_starting_page(self, x):
+        return x.get("biblio", {}).get("first_page", "")
+
+    def _extract_ending_page(self, x):
+        return x.get("biblio", {}).get("last_page", "")
+
+    def _extract_keywords(self, x):
+        concepts = x.get("concepts", [])
+        return "||".join([c.get("display_name", "") for c in concepts])
+
+    @staticmethod
+    def _format_authorname(raw: str) -> str:
+        """
+        Formate un nom complet en "Nom, Prénom(s) Initiales" en conservant tous les middle names et initiales.
+        """
+        nm = HumanName(raw)
+        given_parts = []
+        if nm.first:
+            given_parts.append(nm.first)
+        if nm.middle:
+            # splitte les middle names/initiales (ex: "D. P.")
+            given_parts += nm.middle.split()
+        given_str = " ".join(given_parts)
+        return f"{nm.last}, {given_str}"
+
+
 # Initialize the OpenAlexClient with a JSON response handler
-OpenAlexClient = OpenAlexClient(
+OpenAlexClient = Client(
     response_handler=JsonResponseHandler,
 )
