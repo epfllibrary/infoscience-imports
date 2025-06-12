@@ -1,5 +1,5 @@
 # Use the official Apache Airflow image
-FROM apache/airflow:latest-python3.11
+FROM apache/airflow:latest
 
 # Set Airflow home directory
 ENV AIRFLOW_HOME=/opt/airflow

@@ -14,7 +14,8 @@ from data_pipeline.reporting import GenerateReports
 from data_pipeline.harvester import (
     WosHarvester,
     ScopusHarvester,
-    # OpenAlexHarvester (if needed)
+    CrossrefHarvester,
+    OpenAlexCrossrefHarvester,
 )
 
 load_dotenv()
@@ -91,7 +92,17 @@ def main(
     harvesters = {
         "wos": WosHarvester(start_date, end_date, merged_queries["wos"]),
         "scopus": ScopusHarvester(start_date, end_date, merged_queries["scopus"]),
-        # "openalex": OpenAlexHarvester(start_date, end_date, merged_queries["openalex"])  # Uncomment if needed
+        "crossref": CrossrefHarvester(
+            start_date,
+            end_date,
+            query=None,
+            field_queries={
+                "query.affiliation": merged_queries["crossref"],
+            },
+        ),
+        "openalex": OpenAlexCrossrefHarvester(
+            start_date, end_date, merged_queries["openalex"]
+        ),  # Uncomment if needed
     }
 
     # Harvest publications

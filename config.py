@@ -10,27 +10,44 @@ os.makedirs(logs_dir, exist_ok=True)
 # Default queries for harvest
 default_queries = {
     "wos": "OG=(Ecole Polytechnique Federale de Lausanne)",
-    "scopus": "AF-ID(60028186) OR AF-ID(60210159) OR AF-ID(60070536) OR AF-ID(60204330) OR AF-ID(60070531) OR AF-ID(60070534) OR AF-ID(60070538) OR AF-ID(60014951) OR AF-ID(60070529) OR AF-ID(60070532) OR AF-ID(60070535) OR AF-ID(60122563) OR AF-ID(60210160) OR AF-ID(60204331)",
-    "openalex": "authorships.institutions.lineage:i5124864",
-    "zenodo": "parent.communities.entries.id:\"3c1383da-d7ab-4167-8f12-4d8aa0cc637f\"",
+    "scopus": "AF-ID(60028186) OR AF-ID(60210159) OR AF-ID(60070536) OR AF-ID(60204330) OR AF-ID(60070531) OR AF-ID(60070534) OR AF-ID(60070538) OR AF-ID(60014951) OR AF-ID(60070529) OR AF-ID(60070532) OR AF-ID(60070535) OR AF-ID(60122563) OR AF-ID(60210160) OR AF-ID(60204331) OR AF-ID(126395205) OR AF-ID(128154174) OR AF-ID(121763255) OR AF-ID(126033832) OR AF-ID(127851587) OR AF-ID(126100075) OR AF-ID(126035869) OR AF-ID(126394243)",
+    "openalex": "authorships.institutions.lineage:i5124864,is_retracted:false,is_paratext:false",
+    "zenodo": 'parent.communities.entries.id:"3c1383da-d7ab-4167-8f12-4d8aa0cc637f"',
+    "crossref": "EPFL",
 }
 
 # Define the order of the sources during the deduplication process
-source_order = ["scopus", "wos", "openalex", "zenodo"]
+source_order = [
+    "scopus",
+    "wos",
+    "openalex+crossref",
+    "crossref",
+    "openalex",
+    "datacite",
+    "zenodo",
+]
 
-# Define types of unit to retrieve from api.epfl.ch
+# Define types of unit to retrieve in priority from api.epfl.ch
 unit_types = [
     "Laboratoire",
     "Swiss Plasma Center",
     "Groupe",
     "Chaire",
     "Plateforme",
-    "Centre",
+    # "Centre",
 ]
 
-# excluded_unit_types = [
-
-# ]
+excluded_unit_types = [
+    "Ecole",
+    "Entreprises sur site",
+    "Participation",
+    "Formation continue",
+    "Fondation",
+    "Entités hôtes de l'EPFL",
+    "Entité technique",
+    "Decanat / Etat major",
+    "Service central",
+]
 
 
 # Scopus : EPFL labs internal IDs
@@ -51,6 +68,12 @@ scopus_epfl_afids = [
     "60204331",
     "126395205",
     "128154174",
+    "121763255",
+    "126033832",
+    "127851587",
+    "126100075",
+    "126035869",
+    "126394243",
 ]
 
 # License conditions for Unpaywall

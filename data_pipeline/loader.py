@@ -18,6 +18,8 @@ pdf_dir = project_root / "data" / "pdfs"
 
 
 dspace_wrapper = DSpaceClientWrapper()
+
+
 class Loader:
     """Load items into DSpace using workflow."""
 
@@ -80,9 +82,11 @@ class Loader:
             """
             if pd.notna(value) and value.strip():
                 first_part = value.split(delimiter, 1)[0].strip()
-                # Check if the prefix consists of digits followed by ':'
-                if re.match(r"^\d+:", first_part):
-                    return first_part.split(":", 1)[-1].strip()
+                # Regex pour détecter soit :
+                #  - un préfixe 100% numérique suivi de ':'
+                #  - un identifiant ROR (2 chiffres + 7 alphanumériques) suivi de ':'
+                if re.match(r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE):
+                    return first_part.split(":", 1)[1].strip()
                 return first_part
             else:
                 return default
@@ -96,10 +100,17 @@ class Loader:
         for _, author_row in matching_authors.iterrows():
             authors_metadata.append(create_metadata(author_row["author"]))
 
-            orcid_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
+            orcid_value = author_row.get("orcid_id")
+            if pd.notna(orcid_value) and str(orcid_value).strip():
+                orcid_metadata.append(create_metadata(str(orcid_value).strip()))
+            else:
+                orcid_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
-            affiliation_name = get_first_split(author_row.get("organizations", ""))
-            affiliations_metadata.append(create_metadata(affiliation_name))
+            if author_row.get("source", "").lower() != "crossref":
+                affiliation_name = get_first_split(author_row.get("organizations", ""))
+                affiliations_metadata.append(create_metadata(affiliation_name))
+            else:
+                affiliations_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
             # orgunit_name = get_first_split(author_row.get("suborganization", ""))
             orgunit_metadata.append(
@@ -150,12 +161,7 @@ class Loader:
             },
             {
                 "op": "add",
-                "path": f"/sections/{form_section}details/oairecerif.affiliation.orgunit",
-                "value": orgunit_metadata,
-            },
-            {
-                "op": "add",
-                "path": f"/sections/{form_section}details/person.identifier.orcid",
+                "path": f"/sections/{form_section}details/epfl.author.orcid",
                 "value": orcid_metadata,
             },
             {
@@ -172,7 +178,7 @@ class Loader:
     ):
         """Update only necessary fields based on errors returned in workspace_response."""
         form_section = self._get_form_section(ifs3_collection_id)
-        logger.info(
+        logger.debug(
             f"Collection ID: '{ifs3_collection_id}' and section name: '{form_section}'."
         )
         if not form_section:
@@ -287,6 +293,7 @@ class Loader:
 
         # Check for existing metadata and add remove operations if needed
         removable_metadata_paths = [
+            f"/sections/{form_section}details/dc.title",
             f"/sections/{form_section}details/dc.contributor.author",
             f"/sections/{form_section}details/oairecerif.author.affiliation",
             f"/sections/{form_section}details/oairecerif.affiliation.orgunit",
@@ -339,6 +346,7 @@ class Loader:
             conference_names = []
             conference_places = []
             conference_dates = []
+            conference_acronyms = []
 
             for conf in conferences:
                 parts = conf.split("::")
@@ -352,13 +360,36 @@ class Loader:
                 end_date = (
                     parts[3].strip() if len(parts) > 3 and parts[3].strip() else None
                 )
+                acronym = parts[4].strip() if len(parts) > 4 and parts[4].strip() else None
 
                 if name:
                     conference_names.append(build_value(name))
+
                 if place:
                     conference_places.append(build_value(place))
+
                 if start_date and end_date:
                     conference_dates.append(build_value(f"{start_date} - {end_date}"))
+                else:
+                    conference_dates.append(
+                        build_value(
+                            "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            confidence=-1,
+                            language=None,
+                        )
+                    )
+
+                if acronym:
+                    conference_acronyms.append(build_value(acronym))
+                else:
+                    conference_acronyms.append(
+                        build_value(
+                            "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                            confidence=-1,
+                            language=None,
+                        )
+                    )
+
                 conference_types.append(build_value("conference"))
 
             if conference_types:
@@ -393,20 +424,28 @@ class Loader:
                         "value": conference_dates,
                     }
                 )
-
-            operations.append(
-                {
-                    "op": "add",
-                    "path": "/sections/conference_event/oairecerif.acronym",
-                    "value": [
-                        build_value(
-                            "#PLACEHOLDER_PARENT_METADATA_VALUE#",
-                            confidence=-1,
-                            language=None,
-                        )
-                    ],
-                }
-            )
+            if conference_acronyms:
+                operations.append(
+                    {
+                        "op": "add",
+                        "path": "/sections/conference_event/oairecerif.acronym",
+                        "value": conference_acronyms,
+                    }
+                )
+            else:
+                operations.append(
+                    {
+                        "op": "add",
+                        "path": "/sections/conference_event/oairecerif.acronym",
+                        "value": [
+                            build_value(
+                                "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+                                confidence=-1,
+                                language=None,
+                            )
+                        ],
+                    }
+                )
 
             return operations
 
@@ -513,16 +552,10 @@ class Loader:
                             affiliations,
                         )
                     )
-                    operations.append(
-                        self._create_op(
-                            "/sections/bookcontainer_details/oairecerif.affiliation.orgunit",
-                            affiliations,
-                        )
-                    )
                 if orcids:
                     operations.append(
                         self._create_op(
-                            "/sections/bookcontainer_details/person.identifier.orcid",
+                            "/sections/bookcontainer_details/epfl.scientificeditor.orcid",
                             orcids,
                         )
                     )
@@ -530,9 +563,11 @@ class Loader:
             return operations
 
         # Determine correct form_section and related sections
-        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_'] else 'type'}"
-
+        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_'] else 'type'}"
         dc_type = row.get("dc.type")
+
+        refereed = None if form_section in ("preprint_", "dataset_") else "REVIEWED"
+
         if dc_type in [
             "text::book/monograph::book part or chapter",
             "text::book/monograph",
@@ -548,16 +583,30 @@ class Loader:
                 if dc_type == "text::book/monograph"
                 else "dc.relation.isbn"
             )
+            alter_id_section = "book_details"
         else:
             pagination_section = "journalcontainer_details"
             isbn_section = "bookcontainer_details"
             isbn_metadata = "dc.relation.isbn"
+            alter_id_section = "alternative_identifiers"
+
+        if dc_type in [
+            "text::preprint",
+
+        ]:
+            publisher_container = "preprint_details"
+        else:
+            publisher_container = "bookcontainer_details"
 
         metadata_definitions = []
 
         journal_issn = str(row.get("journalISSN", ""))
         issn_list = [issn.strip() for issn in journal_issn.split("||") if issn.strip()]
         authority_journal = f"will be generated::ISSN::{issn_list[0]}" if issn_list else None
+
+        acronyms = [unit.get("acro") for unit in units if unit.get("acro")]
+        if len(acronyms) > 1 and "EPFL" in acronyms:
+            acronyms = [acro for acro in acronyms if acro != "EPFL"]
 
         fields = [
             (
@@ -573,12 +622,17 @@ class Loader:
                 False,
             ),
             (
+                f"/sections/{form_section}details/dc.title",
+                [build_value(row.get("title"))],
+                False,
+            ),
+            (
                 f"/sections/{form_section}details/dc.date.issued",
                 [build_value(row.get("issueDate"))],
                 False,
             ),
             (
-                "/sections/alternative_identifiers/dc.identifier.pmid",
+                f"/sections/{alter_id_section}/dc.identifier.pmid",
                 [build_value(row.get("pmid"))],
                 False,
             ),
@@ -637,12 +691,12 @@ class Loader:
                 False,
             ),
             (
-                "/sections/bookcontainer_details/dc.publisher",
+                f"/sections/{publisher_container}/dc.publisher",
                 [build_value(row.get("publisher"))],
                 False,
             ),
             (
-                "/sections/bookcontainer_details/dc.publisher.place",
+                f"/sections/{publisher_container}/dc.publisher.place",
                 [build_value(row.get("publisherPlace"))],
                 False,
             ),
@@ -703,12 +757,11 @@ class Loader:
                 f"/sections/{form_section}details/dc.description.sponsorship",
                 [
                     build_value(
-                        unit.get("acro"),
-                        f"will be referenced::ACRONYM::{unit.get('acro')}",
+                        acro,
+                        f"will be referenced::ACRONYM::{acro}",
                         confidence=600,
                     )
-                    for unit in units
-                    if unit.get("acro")
+                    for acro in acronyms
                 ],
                 True,
             ),
@@ -719,15 +772,21 @@ class Loader:
             ),
             (
                 f"/sections/{form_section}details/epfl.peerreviewed",
-                [build_value("REVIEWED")],
+                [build_value(refereed)],
                 False,
             ),
             (
                 "/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
-                [build_value(row.get("license"))],
+                [
+                    build_value(
+                        licenses_mapping.get(row.get("license"), {}).get("value")
+                        or row.get("license")
+                    )
+                ],
                 False,
             ),
         ]
+        logger.debug(f"Constructed initial metadata fields: {fields}")
 
         for path, value, is_repeatable in fields:
             if value and not all(
@@ -740,10 +799,12 @@ class Loader:
                     path = f"{path}/0"
                 metadata_definitions.append({"op": op, "path": path, "value": value})
 
-        metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
-        metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
-        # Process editors
-        metadata_definitions.extend(parse_editors(row.get("editors")))
+        if form_section not in ["dataset_"]:
+            metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
+            metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
+            # Process editors
+            metadata_definitions.extend(parse_editors(row.get("editors")))
+
         # Add specific patch for license/granted
         metadata_definitions.append(
             {"op": "add", "path": "/sections/license/granted", "value": "true"}
@@ -861,7 +922,7 @@ class Loader:
 
             if source == "openalex" or source == "zenodo":
                 source_id = row.get("doi", source_id)
-            if source == "openalex":
+            if source == "openalex+crossref":
                 source = "crossref"
             elif source == "zenodo":
                 source = "datacite"
@@ -896,6 +957,7 @@ class Loader:
                     and author["epfl_api_mainunit_name"] != ""
                 ]
                 unique_units = {unit["acro"]: unit for unit in units}.values()
+                logger.debug(f"Found units: {unique_units}")
 
                 if unique_units:
                     self._patch_additional_metadata(
@@ -934,6 +996,9 @@ class Loader:
                             f"Successfully created workflow item with ID: {workflow_id}"
                         )
                         df_items_imported.at[index, "workflow_id"] = workflow_id
+                    else:
+                        logger.error(f"Unable to create workflow item for workspace item {workspace_id}")
+                        df_items_imported.at[index, "workflow_id"] = None
                 else:
                     logger.warning(
                         f"No matching units found for row ID: {row['row_id']}."

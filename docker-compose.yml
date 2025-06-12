@@ -67,7 +67,7 @@ services:
       - ./.env:/opt/airflow/.env
 
     ports:
-      - "8080:8080"
+      - "8081:8080"
     entrypoint: >
       /bin/bash -c "
       airflow db init &&

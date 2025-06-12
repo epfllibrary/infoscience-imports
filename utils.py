@@ -1,24 +1,25 @@
 import logging
+import re
 import string
 import unicodedata
 
 def manage_logger(logfile_name):
     # Configure logging for a specific logger (unique per instance)
     logger = logging.getLogger(logfile_name)
-    logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG
+    logger.setLevel(logging.INFO)  # Set the logging level to DEBUG
 
     # Check if the logger already has handlers to avoid adding multiple handlers
     if not logger.handlers:  # This ensures we don't add handlers multiple times
         # Create a file handler
         file_handler = logging.FileHandler(logfile_name)
         file_handler.setLevel(
-            logging.INFO
+            logging.DEBUG
         )  # Set the level for the file handler to DEBUG
 
         # Create a console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(
-            logging.INFO
+            logging.DEBUG
         )  # Set the level for the console handler to INFO
 
         # Create a formatter and set it for both handlers
@@ -37,38 +38,26 @@ def manage_logger(logfile_name):
 
     return logger
 
-def clean_value(value):
-    value = value.lower()
-    value = value.translate(
-        str.maketrans(string.punctuation, " " * len(string.punctuation))
+def clean_value(formatted_name):
+    formatted_name = formatted_name.lower()
+
+    # Replace dash-like characters between initials or names with space
+    formatted_name = re.sub(r"[-‐‑‒–—―⁃﹘﹣－]", " ", formatted_name)
+
+    # Separate joined initials (e.g., J.-L. → J L)
+    formatted_name = re.sub(r"\b([A-Z])\.\-?([A-Z])\.\b", r"\1 \2", formatted_name)
+
+    # Remove remaining periods (e.g., J. → J)
+    formatted_name = formatted_name.replace(".", " ")
+
+    # Remove any leftover punctuation
+    formatted_name = formatted_name.translate(
+        str.maketrans("", "", string.punctuation)
     )
-    value = remove_accents(value)
-    value = value.encode("ascii", "ignore").decode("utf-8")
-    return value
+    # Normalize whitespace
+    formatted_name = re.sub(r"\s+", " ", formatted_name).strip()
 
-
-def remove_accents(input_str):
-    replacements = {
-        "ø": "o",
-        "ä": "ae",
-        "ö": "oe",
-        "ü": "ue",
-        "ß": "ss",
-        "å": "aa",
-        "é": "e",
-        "è": "e",
-        "ê": "e",
-        "æ": "ae",
-        "œ": "oe",
-    }
-
-    for original, replacement in replacements.items():
-        input_str = input_str.replace(original, replacement)
-
-    nfkd_form = unicodedata.normalize("NFKD", input_str)
-    cleaned_str = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-
-    return cleaned_str
+    return formatted_name
 
 
 def normalize_title(title):

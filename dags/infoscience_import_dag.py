@@ -41,8 +41,8 @@ def deserialize_dataframe(data):
 default_args = {
     "owner": "airflow",
     "depends_on_past": False,
-    "start_date": datetime(2024, 2, 13),
-    "retries": 1,
+    "start_date": datetime(2024, 2, 15),
+    "retries": False,
     "retry_delay": timedelta(minutes=30),
 }
 
@@ -50,7 +50,7 @@ default_args = {
 def get_date_range():
     """Calculate date range for harvesting"""
     today = datetime.now().date()
-    start = (today - timedelta(days=2)).strftime("%Y-%m-%d")
+    start = (today - timedelta(days=15)).strftime("%Y-%m-%d")
     end = today.strftime("%Y-%m-%d")
     return start, end
 
@@ -69,7 +69,7 @@ with DAG(
     "infoscience_import_pipeline",
     default_args=default_args,
     description="A DAG to orchestrate the infoscience import data pipeline",
-    schedule_interval="@daily",
+    schedule_interval="0 7 * * 1-5",
     catchup=False,
 ) as dag:
 

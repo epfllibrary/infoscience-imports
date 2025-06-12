@@ -10,10 +10,10 @@ doctypes_mapping_dict = {
             "collection": "Conferences, Workshops, Symposiums, and Seminars",
             "dc.type": "text::conference output::conference proceedings::conference paper",
         },
-        # "Meeting Abstract": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings::conference paper",
-        # },
+        "Meeting Abstract": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
         "Review": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",
@@ -44,7 +44,7 @@ doctypes_mapping_dict = {
         # },
         # "Correction": {
         #     "collection": "Journal articles",
-        #     "dc.type": "text",
+        #     "dc.type": "text::journal::journal article",
         # },
         # "Note": {
         #     "collection": "Journal articles",
@@ -80,10 +80,10 @@ doctypes_mapping_dict = {
             "collection": "Conferences, Workshops, Symposiums, and Seminars",
             "dc.type": "text::conference output::conference proceedings::conference paper",
         },
-        # "Conference Review": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings::conference paper",
-        # },
+        "Conference Review": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
         "Data Paper": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::data paper",
@@ -92,22 +92,22 @@ doctypes_mapping_dict = {
             "collection": "Journal articles",
             "dc.type": "text::journal::editorial",
         },
-        # "Letter": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
+        "Letter": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article",
+        },
         "Review": {
             "collection": "Journal articles",
             "dc.type": "text::journal::journal article::review article",
         },
         # "Erratum": {
         #     "collection": "Journal articles",
-        #     "dc.type": "text",
+        #     "dc.type": "text::journal::journal article",
         # },
-        # "Business Article": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
+        "Business Article": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article",
+        },
         # "Note": {
         #     "collection": "",
         #     "dc.type": "text",
@@ -216,14 +216,14 @@ doctypes_mapping_dict = {
             "collection": "Books and Book parts",
             "dc.type": "text::book/monograph::book part or chapter",
         },
-        "book-set": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        "book-track": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
+        # "book-set": {
+        #     "collection": "Books and Book parts",
+        #     "dc.type": "text::book/monograph",
+        # },
+        # "book-track": {
+        #     "collection": "Books and Book parts",
+        #     "dc.type": "text::book/monograph",
+        # },
         # "component": {
         #     "collection": "Other",
         #     "dc.type": "text",
@@ -260,10 +260,10 @@ doctypes_mapping_dict = {
             "collection": "Books and Book parts",
             "dc.type": "text::book/monograph",
         },
-        "peer-review": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
+        # "peer-review": {
+        #     "collection": "Journal articles",
+        #     "dc.type": "text::journal::journal article::research article",
+        # },
         "posted-content": {
             "collection": "Preprints and Working Papers",
             "dc.type": "text::preprint",
@@ -304,6 +304,73 @@ doctypes_mapping_dict = {
         #     "collection": "Other",
         #     "dc.type": "text",
         # },
+    },
+    # Mapping of DataCite resource types to IFS3 collections and Dublin Core types
+    "source_datacite": {
+        "book": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph",
+        },
+        "bookchapter": {
+            "collection": "Books and Book parts",
+            "dc.type": "text::book/monograph::book part or chapter",
+        },
+        "conferencepaper": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings::conference paper",
+        },
+        "conferenceproceeding": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings",
+        },
+        "datapaper": {
+            "collection": "Datasets and Code",
+            "dc.type": "text::dataset",
+        },
+        "dataset": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
+        "collection": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
+        "model": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
+        "journalarticle": {
+            "collection": "Journal articles",
+            "dc.type": "text::journal::journal article::research article",
+        },
+        "preprint": {
+            "collection": "Preprints and Working Papers",
+            "dc.type": "text::preprint",
+        },
+        "standard": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::technical documentation or standard",
+        },
+        "report": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::report",
+        },
+        "text": {
+            "collection": "Other",
+            "dc.type": "other",
+        },
+        "software": {
+            "collection": "Datasets and Code",
+            "dc.type": "software",
+        },
+        "computationalnotebook": {
+            "collection": "Datasets and Code",
+            "dc.type": "software",
+        },
+        "outputmanagementplan": {
+            "collection": "Reports, Documentation, and Standards",
+            "dc.type": "text::report::data management plan",
+        },
     },
     "source_zenodo": {
         "dataset": {
@@ -394,10 +461,10 @@ doctypes_mapping_dict = {
             "collection": "Datasets and Code",
             "dc.type": "dataset",
         },
-        # "other": {
-        #     "collection": "",
-        #     "dc.type": "",
-        # },
+        "other": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset",
+        },
     },
 }
 
@@ -471,7 +538,79 @@ types_authority_mapping = {
     "student work::master thesis": "student-coar-types:c_bdcc",
     "student work::semester or other student projects": "student-coar-types:c_18op",
     "student work": "student-coar-types:c_46ec",
+    "other": "publication-coar-types:c_1843",
 }
+
+
+## SANDBOX MAPPINGS
+
+# collections_mapping = {
+#     "Patents": {
+#         "id": "29a84f70-9fb7-49d3-bd73-65e8e680ac3c",
+#         "section": "patent",
+#     },
+#     "Teaching Materials": {
+#         "id": "20c6f943-35c6-4a18-96fc-3447b0f0df2b",
+#         "section": "teaching_",
+#     },
+#     "Images, Videos, Interactive resources, and Design": {
+#         "id": "3b9fb2fb-edc3-4c44-833a-1815a4d503b8",
+#         "section": "design_",
+#     },
+#     "Newspaper, Magazine, or Blog post": {
+#         "id": "792410d0-424c-4957-9faf-719852e88083",
+#         "section": "media_",
+#     },
+#     "Datasets and Code": {
+#         "id": "a8857a33-b849-4c17-9a14-d00e2caa3e20",
+#         "section": "dataset_",
+#     },
+#     "Student works": {
+#         "id": "2d77dd3f-64eb-42ba-9352-c5946a17cce5",
+#         "section": "thesis_",
+#     },
+#     "Units": {
+#         "id": "ddc8a019-0764-4f26-b29f-76c1b86c3747",
+#         "section": "orgunit",
+#     },
+#     "EPFL thesis": {
+#         "id": "cc9a689b-b5aa-4d9c-ae13-a313590a456f",
+#         "section": "thesis_",
+#     },
+#     "Reports, Documentation, and Standards": {
+#         "id": "d2af63ef-93e5-4822-9eba-a1a80bd9832b",
+#         "section": "report_",
+#     },
+#     "Preprints and Working Papers": {
+#         "id": "60b85c13-5884-4213-b1b9-58e9a024ae32",
+#         "section": "preprint_",
+#     },
+#     "Books and Book parts": {
+#         "id": "ca9a2328-2f85-4ce9-80b5-69212dcd6a91",
+#         "section": "book_",
+#     },
+#     "Persons": {
+#         "id": "c6d34926-0b98-4852-8398-9172fb83ab62",
+#         "section": "person",
+#     },
+#     "Events": {
+#         "id": "36b742e3-72e3-454a-91f8-2d782908647a",
+#         "section": "events_section",
+#     },
+#     "Conferences, Workshops, Symposiums, and Seminars": {
+#         "id": "d8d0d545-f4e1-4d5a-bcf8-66a487216910",
+#         "section": "conference_",
+#     },
+#     "Journals": {
+#         "id": "90fe759b4-9567-4457-bc6c-c9eac8c5d531",
+#         "section": "journal",
+#     },
+#     "Journal articles": {
+#         "id": "c977fcc1-dc4b-465e-9ac0-56d87b802ca3",
+#         "section": "article_",
+#     },
+# }
+
 
 collections_mapping = {
     "Patents": {
@@ -559,6 +698,7 @@ collections_mapping = {
         "section": "article_",
     },
 }
+
 # Mappings pour les licenses
 licenses_mapping = {
     "cc-by": {
@@ -593,6 +733,10 @@ licenses_mapping = {
         "value": "N/A",
         "display": "N/A (Copyrighted)",
     },
+    "mit-license": {
+        "value": "MIT",
+        "display": "MIT",
+    },
 }
 
 # Mappings pour les versions
@@ -613,4 +757,78 @@ versions_mapping = {
         "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
         "display": "Not Applicable (or Unknown)",
     },
+}
+
+MAPPING_UNITS_EN = {
+    "ANTENNE": "Antenna",
+    "CENTRE": "Center",
+    "CHAIRE": "Chair",
+    "COLLEGE": "College",
+    "DPT": "Department",
+    "ECOLE": "Doctoral program",
+    "EHE": "Host entities",
+    "ENTREPRISES": "Corporate Company",
+    "FACULTE": "School",
+    "FONDATION": "Foundation",
+    "GROUPE": "Group",
+    "INSTITUT": "Institute",
+    "LABO": "Laboratory",
+    "PARTICIPATION": "Participation",
+    "PROGRAMME": "Program",
+    "SECTION": "Section",
+    "SERVICE-CENTRAL": "Central service",
+    "SERVICE-GENERAL": "General service",
+    "NONE": "Other",
+    "SPC": "Center",
+    "PLATEFORME": "Facility",
+}
+MAPPING_UNITS_FR = {
+    "ANTENNE": "Antenne",
+    "CENTRE": "Centre",
+    "CHAIRE": "Chaire",
+    "COLLEGE": "Collège",
+    "DPT": "Département",
+    "ECOLE": "Ecole doctorale",
+    "EHE": "Entités hôtes de l'EPFL",
+    "ENTREPRISES": "Entreprises sur site",
+    "FACULTE": "Faculté",
+    "FONDATION": "Fondation",
+    "GROUPE": "Groupe",
+    "INSTITUT": "Institut",
+    "LABO": "Laboratoire",
+    "PARTICIPATION": "Participation",
+    "PROGRAMME": "Programme",
+    "SECTION": "Section",
+    "SERVICE-CENTRAL": "Service central",
+    "SERVICE-GENERAL": "Service général",
+    "NONE": "Autre",
+    "SPC": "Centre",
+    "PLATEFORME": "Plateforme",
+}
+
+MAPPING_UNITS_CODES = {
+    "antenne": "ANTENNE",
+    "centre": "CENTRE",
+    "chaire": "CHAIRE",
+    "collège": "COLLEGE",
+    "direction": "DIRECTION",
+    "dpt": "DPT",
+    "ecole": "ECOLE",
+    "entités hôtes de l'epfl": "EHE",
+    "entreprises": "ENTREPRISES",
+    "faculté": "FACULTE",
+    "fondation": "FONDATION",
+    "groupe": "GROUPE",
+    "institut": "INSTITUT",
+    "laboratoire": "LABO",
+    "participation": "PARTICIPATION",
+    "programme": "PROGRAMME",
+    "section": "SECTION",
+    "service central": "SERVICE-CENTRAL",
+    "service général": "SERVICE-GENERAL",
+    "divers": "NONE",
+    "swiss plasma center": "CENTRE",
+    "visibilité annuaire": "NONE",
+    "visibilité organigramme": "NONE",
+    "plateforme": "PLATEFORME",
 }
