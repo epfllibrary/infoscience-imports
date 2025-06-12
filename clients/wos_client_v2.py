@@ -647,9 +647,9 @@ class Client(APIClient):
 
         if document_info is None:
             # Handle the case where the doctype is not found
-            self.logger.warning(
-                f"Document type '{data_doctype}' not found in doctype_mapping."
-            )
+            # self.logger.warning(
+            #     f"Document type '{data_doctype}' not found in doctype_mapping."
+            # )
             dc_type = "unknown"
         else:
             dc_type = document_info.get("dc.type", "unknown")

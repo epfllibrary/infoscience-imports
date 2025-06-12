@@ -97,7 +97,7 @@ class WosHarvester(Harvester):
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
         )
-        self.logger.info("- Nombre de publications trouvées dans le WOS: %s", total)
+        self.logger.info("- Total publications found in WOS: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -177,7 +177,7 @@ class ScopusHarvester(Harvester):
         # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(query=updated_query)
-        self.logger.info("- Nombre de publications trouvées dans Scopus: %s", total)
+        self.logger.info("- Total publications found in Scopus: %s", total)
 
         if total == "0":  # scopus API returns 0 as string
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -332,7 +332,7 @@ class OpenAlexHarvester(Harvester):
 
         # Count total publications to manage progress logging
         total = OpenAlexClient.count_results(filter=filters)
-        self.logger.info("- Number of publications found in OpenAlex: %s", total)
+        self.logger.info("- Total publications found in OpenAlex: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -442,7 +442,7 @@ class CrossrefHarvester(Harvester):
         )
 
         total = CrossrefClient.count_results(**params)
-        self.logger.info("- Number of publications found in Crossref: %s", total)
+        self.logger.info("- Total publications found in Crossref: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -586,7 +586,7 @@ class DataCiteHarvester(Harvester):
             query=self.query,
             filters=api_filters,
         )
-        self.logger.info("- Nombre de publications trouvées dans DataCite : %s", total)
+        self.logger.info("- Total publications found in DataCite : %s", total)
 
         if not total:
             return pd.DataFrame()

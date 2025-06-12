@@ -69,14 +69,14 @@ class Endpoint:
 class Client(APIClient):
     @retry_request
     def fetch_by_doi(self, doi, format="best-oa-location", **param_kwargs):
-        logger.info("Starting upw DOI retrieval process.")
+        logger.info("Starting Unpaywall DOI retrieval process.")
 
         param_kwargs.setdefault("email", email)
         self.params = {**param_kwargs}
 
         try:
             result = self.get(Endpoint.doi.format(doi=doi), params=self.params)
-            logger.info(f"Unpaywall response for DOI '{doi}': {result}")
+            logger.debug(f"Unpaywall response for DOI '{doi}': {result}")
             # Check if the result indicates an error
             if result.get("HTTP_status_code") == 404 and result.get("error"):
                 message = result.get("message", "No specific error message provided.")
@@ -129,7 +129,7 @@ class Client(APIClient):
             logger.warning("No 'best_oa_location' found for DOI: %s", record.get("doi"))
             return rec
 
-        logger.info("Extracting OA metadata from best_oa_location.")
+        logger.debug("Extracting OA metadata from best_oa_location.")
 
         # Extract license and version even if URL is missing
         rec["license"] = best_oa_location.get("license")
@@ -214,7 +214,7 @@ class Client(APIClient):
             if not url:
                 continue
             try:
-                logger.info(f"Trying candidate PDF URL: {url}")
+                logger.debug(f"Trying candidate PDF URL: {url}")
                 pdf_url, filename = self._check_and_download_pdf(
                     url, doi, str(PDF_FOLDER), headers
                 )
@@ -265,8 +265,8 @@ class Client(APIClient):
                 final_url = response.url
                 content_type = response.headers.get("Content-Type", "").lower()
 
-                logger.info(f"Resolved URL after redirection: {final_url}")
-                logger.info(f"Content-Type returned: {content_type}")
+                logger.debug(f"Resolved URL after redirection: {final_url}")
+                logger.debug(f"Content-Type returned: {content_type}")
 
                 # Acceptable content or file extension
                 is_pdf = "application/pdf" in content_type or final_url.lower().endswith(
@@ -292,7 +292,7 @@ class Client(APIClient):
         # Fallback: attempt with '.pdf' appended if applicable
         if not url.lower().endswith(".pdf") and "doi.org" not in url.lower():
             pdf_url = urljoin(url, url.split("/")[-1] + ".pdf")
-            logger.info(f"Retrying with '.pdf' appended URL: {pdf_url}")
+            logger.debug(f"Retrying with '.pdf' appended URL: {pdf_url}")
             result = try_download(pdf_url)
             if result[0] is not None:
                 return result

@@ -178,7 +178,7 @@ class Loader:
     ):
         """Update only necessary fields based on errors returned in workspace_response."""
         form_section = self._get_form_section(ifs3_collection_id)
-        logger.info(
+        logger.debug(
             f"Collection ID: '{ifs3_collection_id}' and section name: '{form_section}'."
         )
         if not form_section:
@@ -957,7 +957,7 @@ class Loader:
                     and author["epfl_api_mainunit_name"] != ""
                 ]
                 unique_units = {unit["acro"]: unit for unit in units}.values()
-                logger.info(f"Found units: {unique_units}")
+                logger.debug(f"Found units: {unique_units}")
 
                 if unique_units:
                     self._patch_additional_metadata(

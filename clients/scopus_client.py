@@ -795,9 +795,9 @@ class Client(APIClient):
                 ]
 
                 if not organizations:
-                    self.logger.warning(
-                        f"No valid affiliations found for author '{name}'."
-                    )
+                    # self.logger.warning(
+                    #     f"No valid affiliations found for author '{name}'."
+                    # )
                     continue  # Skip this author if no valid affiliations are found
 
                 organizations_str = "|".join(organizations)
