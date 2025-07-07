@@ -757,6 +757,10 @@ versions_mapping = {
         "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
         "display": "Not Applicable (or Unknown)",
     },
+    "None": {
+        "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
+        "display": "Not Applicable (or Unknown)",
+    },
 }
 
 MAPPING_UNITS_EN = {
