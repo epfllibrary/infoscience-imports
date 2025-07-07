@@ -142,8 +142,7 @@ with DAG(
             .filter_epfl_authors()
             .clean_authors()
             .nameparse_authors()
-            .api_epfl_reconciliation()
-            .generate_dspace_uuid(return_df=True)
+            .reconcile_authors(return_df=True)
         )
         epfl_authors_path = get_execution_path() / "EpflAuthors.csv"
         if not df_epfl_authors.empty:

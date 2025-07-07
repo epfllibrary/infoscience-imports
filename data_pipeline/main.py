@@ -145,8 +145,7 @@ def main(
         .filter_epfl_authors()
         .clean_authors()
         .nameparse_authors()
-        .api_epfl_reconciliation()
-        .generate_dspace_uuid(return_df=True)
+        .reconcile_authors(return_df=True)
         if author_processor
         else pd.DataFrame()
     )
