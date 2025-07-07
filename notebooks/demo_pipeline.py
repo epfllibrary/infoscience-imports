@@ -41,24 +41,6 @@ def _():
 
 
 @app.cell
-def _(mo):
-    mo.md(
-        """
-    # 🔍 Demo: Pipeline For Importing Publications into DSpace
-
-    This notebook walks through a pipeline for harvesting, deduplicating, enriching, and loading scientific publications into a DSpace repository.
-    """
-    )
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""## Harvesting Data From External Sources""")
-    return
-
-
-@app.cell
 def _(default_queries, mo):
     form = mo.md('''
         ### Harvesting Criterias Form
@@ -85,8 +67,8 @@ def _(default_queries, mo):
         ),
         date_range=mo.ui.date_range(
             label="Date Range:",
-            start="2025-01-01",
-            stop="2025-12-31",
+            start="2024-01-01",
+            stop="2026-12-31",
         ),
         scopus_query=mo.ui.text_area(
             label="Scopus query:",
@@ -122,6 +104,24 @@ def _(default_queries, mo):
 
     ).form(show_clear_button=True, bordered=True, submit_button_label="🚀 Launch Harvesting")
     return (form,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+    # 🔍 Demo: Pipeline For Importing Publications into DSpace
+
+    This notebook walks through a pipeline for harvesting, deduplicating, enriching, and loading scientific publications into a DSpace repository.
+    """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Harvesting Data From External Sources""")
+    return
 
 
 @app.cell
@@ -285,14 +285,80 @@ def _(AuthorProcessor, authors_btn, df_authors, mo):
         .filter_epfl_authors()
         .clean_authors()
         .nameparse_authors()
-        .api_epfl_reconciliation()
-        .generate_dspace_uuid(return_df=True)
+        .reconcile_authors(return_df=True)
     )
 
     author_reconcil_output.append(mo.md("### 👩‍🏫 EPFL Authors Reconciled"))
     author_reconcil_output.append(mo.ui.table(df_epfl_authors))
     author_reconcil_output
     return (df_epfl_authors,)
+
+
+@app.cell
+def _(pd):
+    def enrich_candidates_with_epfl_authors(candidates_df: pd.DataFrame, authors_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Enrichit le DataFrame des publications avec les informations des auteurs EPFL.
+        Supprime les doublons, filtre certains types de documents, renomme les colonnes et réorganise.
+
+        Étapes :
+        - Garde uniquement les auteurs avec epfl_api_mainunit_name non nul/vides.
+        - Supprime les publications avec doctype == 'dataset' ou 'posted-content'.
+        - Agrège et déduplique les champs sciper_id, epfl_api_mainunit_name, dspace_uuid.
+        - Renomme les colonnes agrégées.
+        - Replace row_id en première colonne.
+
+        :param candidates_df: DataFrame des publications
+        :param authors_df: DataFrame des auteurs
+        :return: DataFrame enrichi
+        """
+
+        # Étape 1 : filtrer les auteurs EPFL
+        epfl_authors = authors_df[
+            authors_df['epfl_api_mainunit_name'].notna() & (authors_df['epfl_api_mainunit_name'].str.strip() != '')
+        ]
+
+        # Étape 2 : regrouper les infos auteurs par row_id, en supprimant les doublons
+        grouped_authors = epfl_authors.groupby('row_id').agg({
+            'sciper_id': lambda x: '||'.join(sorted(set(x.dropna().astype(str)))),
+            'epfl_api_mainunit_name': lambda x: '||'.join(sorted(set(x.dropna().astype(str)))),
+            'dspace_uuid': lambda x: '||'.join(sorted(set(x.dropna().astype(str)))),
+        }).reset_index()
+
+        # Étape 3 : renommer les colonnes
+        grouped_authors.rename(columns={
+            'sciper_id': 'epfl_sciper_ids',
+            'epfl_api_mainunit_name': 'epfl_units',
+            'dspace_uuid': 'epfl_dspace_uuids'
+        }, inplace=True)
+
+        # Étape 4 : filtrer les publications à exclure
+        valid_candidates = candidates_df[
+            ~candidates_df['doctype'].isin(['dataset'])
+        ]
+
+        # Étape 5 : garder uniquement celles qui ont au moins un auteur EPFL
+        filtered_candidates = valid_candidates[
+            valid_candidates['row_id'].isin(grouped_authors['row_id'])
+        ].copy()
+
+        # Étape 6 : fusion avec les données agrégées
+        enriched_df = filtered_candidates.merge(grouped_authors, on='row_id', how='left')
+
+        # Étape 7 : mettre row_id en première colonne
+        cols = ['row_id'] + [col for col in enriched_df.columns if col != 'row_id']
+        enriched_df = enriched_df[cols]
+
+        return enriched_df
+
+    return (enrich_candidates_with_epfl_authors,)
+
+
+@app.cell
+def _(df_epfl_authors, df_metadata, enrich_candidates_with_epfl_authors):
+    df_candidates_enriched = enrich_candidates_with_epfl_authors(df_metadata, df_epfl_authors)
+    df_candidates_enriched
+    return (df_candidates_enriched,)
 
 
 @app.cell
@@ -303,12 +369,12 @@ def _(mo):
 
 
 @app.cell
-def _(PublicationProcessor, df_metadata, mo, publications_btn):
+def _(PublicationProcessor, df_candidates_enriched, mo, publications_btn):
     mo.stop(not publications_btn.value)
 
     oa_metadata_output =[]
 
-    publication_processor = PublicationProcessor(df_metadata)
+    publication_processor = PublicationProcessor(df_candidates_enriched)
     df_oa_metadata = publication_processor.process(return_df=True)
 
     oa_metadata_output.append(mo.md("### 📚 Final Enriched Publications"))

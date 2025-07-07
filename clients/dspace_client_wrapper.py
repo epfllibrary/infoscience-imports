@@ -150,7 +150,7 @@ class DSpaceClientWrapper:
             )
             return True  # Duplicate found
 
-        self.logger.debug(
+        self.logger.info(
             f"Publication searched with id:{item_id} not found in Infoscience."
         )
         return False  # No duplicates found

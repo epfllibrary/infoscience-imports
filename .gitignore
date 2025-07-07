@@ -11,6 +11,7 @@
 ###################
 *.ipynb_checkpoints
 __pycache__
+**/__marimo__/**
 
 # Ignore some local dev stuffs
 ###################
@@ -34,5 +35,5 @@ test.csv
 
 # Ignore env & config files #
 ###################
-**/.env
+**/.env**
 **/config.ini

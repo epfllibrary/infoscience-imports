@@ -6,6 +6,7 @@ import re
 import time
 from collections import defaultdict
 import pandas as pd
+import json
 from data_pipeline.enricher import AuthorProcessor
 from clients.wos_client_v2 import WosClient
 from clients.scopus_client import ScopusClient
@@ -60,7 +61,7 @@ class Harvester(abc.ABC):
         self.logger.info("Harvesting publications from %s...", self.source_name)
         publications = self.fetch_and_parse_publications()
         self.logger.info(
-            "- Found %d %s's publications to be processed for Infoscience",
+            "Found %d %s's publications to be processed for Infoscience",
             len(publications),
             self.source_name,
         )
@@ -97,7 +98,7 @@ class WosHarvester(Harvester):
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
         )
-        self.logger.info("- Total publications found in WOS: %s", total)
+        self.logger.info("Total publications found in WOS: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -177,7 +178,7 @@ class ScopusHarvester(Harvester):
         # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(query=updated_query)
-        self.logger.info("- Total publications found in Scopus: %s", total)
+        self.logger.info("Total publications found in Scopus: %s", total)
 
         if total == "0":  # scopus API returns 0 as string
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -332,7 +333,7 @@ class OpenAlexHarvester(Harvester):
 
         # Count total publications to manage progress logging
         total = OpenAlexClient.count_results(filter=filters)
-        self.logger.info("- Total publications found in OpenAlex: %s", total)
+        self.logger.info("Total publications found in OpenAlex: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -434,15 +435,28 @@ class CrossrefHarvester(Harvester):
         """
         # Build the parameter dictionary for targeted queries.
         params = {}
-        if self.query:
+        if isinstance(self.query, dict):
+            params.update(self.query)  # utiliser tel quel
+        elif isinstance(self.query, str):
+            try:
+                parsed_query = json.loads(self.query)
+                if isinstance(parsed_query, dict):
+                    params.update(parsed_query)
+                else:
+                    self.logger.warning("Parsed self.query is not a dictionary.")
+                    params["query"] = self.query
+            except json.JSONDecodeError:
+                self.logger.warning("Failed to parse self.query as JSON string.")
+                params["query"] = self.query
+        elif self.query:
             params["query"] = self.query
+
         params.update(self.field_queries)
         params["filter"] = (
             f"from-created-date:{self.start_date},until-created-date:{self.end_date}"
         )
-
         total = CrossrefClient.count_results(**params)
-        self.logger.info("- Total publications found in Crossref: %s", total)
+        self.logger.info("Total publications found in Crossref: %s", total)
 
         if total == 0:
             self.logger.debug("No publications found. Returning an empty DataFrame.")
@@ -586,7 +600,7 @@ class DataCiteHarvester(Harvester):
             query=self.query,
             filters=api_filters,
         )
-        self.logger.info("- Total publications found in DataCite : %s", total)
+        self.logger.info("Total publications found in DataCite : %s", total)
 
         if not total:
             return pd.DataFrame()

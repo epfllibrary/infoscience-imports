@@ -107,7 +107,7 @@ class Client(APIClient):
                 except exceptions.ServerError:
                     self.logger.error(f"{lastname} {firstname} caused an EPFL API error")
                     pass
-                
+
                 self.logger.info(
                     f"Attempting personsFirstnameLastname for {firstname} {lastname}."
                 )
@@ -130,20 +130,22 @@ class Client(APIClient):
             self.logger.debug(f"Response for personsQuery : {result_query}.")
             # Process results based on the count
             for result in results:
-                if result and result["count"] == 1:
+                if result and result.get("count") == 1 and result.get("persons"):
                     person_record = result["persons"][0]
                     self.logger.info(f"Single record found for {query}. Processing record.")
-                    # Verify that the returned name matches the requested name
-                    if (
-                        lastname
-                        and clean_value(person_record["lastname"]) == lastname
-                    ):
-                        return self._process_person_record(result, query, format)
+
+                    # Vérifie le nom *seulement* si `lastname` est défini (donc utilisé dans la requête)
+                    if lastname:
+                        if clean_value(person_record["lastname"]) == clean_value(lastname):
+                            return self._process_person_record(result, query, format)
+                        else:
+                            self.logger.warning(
+                                f"The single record {clean_value(person_record['lastname'])} found does not match the requested name: {lastname}."
+                            )
+                            return None
                     else:
-                        self.logger.warning(
-                            f"The single record {clean_value(person_record['lastname'])} found does not match the requested name: {lastname}."
-                        )
-                    return None
+                        # Aucun lastname à vérifier, on accepte le résultat unique
+                        return self._process_person_record(result, query, format)
         else:
             self.logger.warning("personsQuery is missing; skipping...")
 
@@ -253,9 +255,35 @@ class Client(APIClient):
         self.logger.info("Extracting digest person information from the record.")
         record = {
             "sciper_id": x["persons"][0]["id"],
-            "unitsIds": "|".join([unit["unitid"] for unit in x["persons"][0]["rooms"]]),
+            # "unitsIds": "|".join([unit["unitid"] for unit in x["persons"][0]["rooms"]]),
+
         }
         self.logger.debug(f"Extracted digest record: {record}")
+        return record
+
+    def _extract_digest_person_info(self, x):
+        self.logger.info("Extracting enriched digest person information from the record.")
+
+        person = x["persons"][0]
+
+        epfl_status = person.get("status", None)
+        position_labelen = person.get("position", {}).get("labelen", None)
+        orcid_raw = person.get("orcid")
+        orcid = None
+        if isinstance(orcid_raw, str):
+            orcid = (
+                orcid_raw.replace("https://orcid.org/", "")
+                .strip()
+            )
+
+        record = {
+            "sciper_id": person.get("id"),
+            "epfl_status": epfl_status,
+            "epfl_position": position_labelen,
+            "epfl_orcid": orcid,
+        }
+
+        self.logger.debug(f"Extracted enriched digest record: {record}")
         return record
 
     def _extract_accred_units_info(self, x, parent_order=None):
@@ -264,6 +292,7 @@ class Client(APIClient):
         record = {
             "unit_id": str(x["unit"]["id"]),
             "unit_name": x["unit"]["name"],
+            "unit_label": x["unit"]["labelen"],
             "unit_type": unit_type,
             "unit_order": parent_order,
         }

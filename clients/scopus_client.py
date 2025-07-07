@@ -191,6 +191,7 @@ class Client(APIClient):
                 # It's a Scopus ID, use the Scopus ID-based endpoint
                 url = Endpoint.scopusId.format(scopusId=unique_id)
 
+            self.logger.info("Fetching Scopus Abstract API for ID: %s", unique_id)
             # Fetch the record using the correct URL
             result = self.get(url, headers={"Accept": "application/json"})
 
