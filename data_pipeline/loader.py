@@ -101,8 +101,12 @@ class Loader:
             authors_metadata.append(create_metadata(author_row["author"]))
 
             orcid_value = author_row.get("orcid_id")
+            epfl_orcid_value = author_row.get("epfl_orcid")
+
             if pd.notna(orcid_value) and str(orcid_value).strip():
                 orcid_metadata.append(create_metadata(str(orcid_value).strip()))
+            elif pd.notna(epfl_orcid_value) and str(epfl_orcid_value).strip():
+                orcid_metadata.append(create_metadata(str(epfl_orcid_value).strip()))
             else:
                 orcid_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
@@ -822,7 +826,7 @@ class Loader:
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
         """Patch metadata for file."""
         license_metadata = licenses_mapping.get(upw_license)
-        version_metadata = versions_mapping.get(upw_version)
+        version_metadata = versions_mapping.get(upw_version or "None")
 
         if not license_metadata:
             logger.error(f"License mapping for '{upw_license}' does not exist.")
