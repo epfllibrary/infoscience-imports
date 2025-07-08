@@ -231,6 +231,12 @@ class DSpaceClientWrapper:
     def upload_file_to_workspace(self, workspace_id, file_path):
         return self.client.upload_file_to_workspace(workspace_id, file_path)
 
+    def update_adminitem(self, uuid, patch_operations):
+        return self.client.update_adminitem(uuid, patch_operations)
+
+    def add_file_adminitem(self, uuid, file_path):
+        return self.client.add_file_adminitem(uuid, file_path)
+
     def delete_workspace(self, workspace_id):
         return self.client.delete_workspace_item(workspace_id)
 

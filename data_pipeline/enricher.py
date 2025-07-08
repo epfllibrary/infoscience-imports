@@ -516,13 +516,14 @@ class AuthorProcessor:
 
 class PublicationProcessor: 
 
-    def __init__(self, df):
+    def __init__(self, df, unpaywall_format="best-oa-location"):
         self.df = df
+        self.unpaywall_format = unpaywall_format 
         log_file_path = os.path.join(logs_dir, "logging.log")
         self.logger = manage_logger(log_file_path)
 
     def fetch_unpaywall_data(self, doi):
-        return UnpaywallClient.fetch_by_doi(doi, format="best-oa-location")
+        return UnpaywallClient.fetch_by_doi(doi, format=self.unpaywall_format)
 
     def process(self, return_df=True):
         self.df = self.df.copy()
@@ -530,23 +531,36 @@ class PublicationProcessor:
         self.df["upw_is_oa"] = self.df["upw_is_oa"].astype("boolean")  # Nullable boolean
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(self.fetch_unpaywall_data, self.df['doi'].dropna()))
+            results = list(executor.map(self.fetch_unpaywall_data, self.df["doi"].dropna()))
 
         for index, result in zip(self.df.index, results):
             if result is not None:
                 self.df.at[index, "upw_is_oa"] = bool(result.get("is_oa"))
-                self.df.at[index, 'upw_oa_status'] = result.get('oa_status')
-                self.df.at[index, "upw_license"] = result.get("license")
-                self.df.at[index, "upw_version"] = result.get("version")
-                self.df.at[index, 'upw_pdf_urls'] = result.get('pdf_urls')
-                self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
+                self.df.at[index, "upw_oa_status"] = result.get("oa_status")
+                self.df.at[index, "journal_is_oa"] = result.get("journal_is_oa")
+                self.df.at[index, "journal_is_in_doaj"] = result.get("journal_is_in_doaj")
+
+                if self.unpaywall_format == "best-oa-location":
+                    self.df.at[index, "upw_license"] = result.get("license")
+                    self.df.at[index, "upw_version"] = result.get("version")
+                    self.df.at[index, "upw_pdf_urls"] = result.get("pdf_urls")
+                    self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
+                else:
+                    self.df.at[index, "upw_license"] = None
+                    self.df.at[index, "upw_version"] = None
+                    self.df.at[index, "upw_pdf_urls"] = None
+                    self.df.at[index, "upw_valid_pdf"] = None
             else:
-                self.df.at[index, "upw_is_oa"] = pd.NA  # Use nullable value
-                self.df.at[index, 'upw_oa_status'] = None
+                self.df.at[index, "upw_is_oa"] = pd.NA
+                self.df.at[index, "upw_oa_status"] = None
+                self.df.at[index, "journal_is_oa"] = None
+                self.df.at[index, "journal_is_in_doaj"] = None
                 self.df.at[index, "upw_license"] = None
                 self.df.at[index, "upw_version"] = None
-                self.df.at[index, 'upw_pdf_urls'] = None
+                self.df.at[index, "upw_pdf_urls"] = None
                 self.df.at[index, "upw_valid_pdf"] = None
-                self.logger.warning("No unpaywall data returned for DOI %s.", self.df.at[index, 'doi'])
+                self.logger.warning(
+                    "No unpaywall data returned for DOI %s.", self.df.at[index, "doi"]
+                )
 
         return self.df if return_df else self
