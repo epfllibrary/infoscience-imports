@@ -47,6 +47,7 @@ excluded_unit_types = [
     "Entité technique",
     "Decanat / Etat major",
     "Service central",
+    "Divers",
 ]
 
 

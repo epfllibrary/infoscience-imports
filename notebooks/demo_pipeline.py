@@ -302,9 +302,9 @@ def _(pd):
         Supprime les doublons, filtre certains types de documents, renomme les colonnes et réorganise.
 
         Étapes :
-        - Garde uniquement les auteurs avec epfl_api_mainunit_name non nul/vides.
+        - Garde uniquement les auteurs avec final_mainunit non nul/vides.
         - Supprime les publications avec doctype == 'dataset' ou 'posted-content'.
-        - Agrège et déduplique les champs sciper_id, epfl_api_mainunit_name, dspace_uuid.
+        - Agrège et déduplique les champs sciper_id, final_mainunit, dspace_uuid.
         - Renomme les colonnes agrégées.
         - Replace row_id en première colonne.
 

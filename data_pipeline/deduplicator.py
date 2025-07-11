@@ -153,6 +153,7 @@ class DataFrameProcessor:
         duplicates_df = df[df["is_duplicate"] == True].drop(columns=["is_duplicate"])
         return filtered_df, duplicates_df
 
+
     def generate_main_dataframes(self, df):
         # Step 1: Add an incremental row_id to the DataFrame
         df["row_id"] = range(1, len(df) + 1)
@@ -162,12 +163,14 @@ class DataFrameProcessor:
         for _, row in df.iterrows():
             row_id = row["row_id"]
             source = row["source"]
+            year = row["pubyear"]
             authors = row["authors"]
 
             for author_data in authors:
                 new_row = {
-                    "row_id": row_id,
+                    "row_id": row_id,  # Ensure row_id is the first key
                     "source": source,
+                    "year": year,
                     "role": author_data.get("role", None),
                     "author": author_data.get("author", None),
                     "orcid_id": author_data.get("orcid_id", None),
@@ -178,6 +181,14 @@ class DataFrameProcessor:
                 new_rows.append(new_row)
 
         df_authors = pd.DataFrame(new_rows)
+
+        # Keep row_id as first column in df_authors
+        author_cols = ["row_id"] + [col for col in df_authors.columns if col != "row_id"]
+        df_authors = df_authors[author_cols]
+
+        # Remove 'authors' column and ensure row_id is first in df_metadata
         df_metadata = df.drop(columns=["authors"])
+        metadata_cols = ["row_id"] + [col for col in df_metadata.columns if col != "row_id"]
+        df_metadata = df_metadata[metadata_cols]
 
         return df_metadata, df_authors

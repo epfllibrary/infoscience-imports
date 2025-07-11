@@ -78,7 +78,7 @@ class GenerateReports:
         """Return the number of unique publications where an EPFL author has been reconciled with their unit."""
         df_reconciled_unit = self.df_epfl_authors[
             (self.df_epfl_authors["sciper_id"].notna())
-            & (self.df_epfl_authors["epfl_api_mainunit_name"].notna())
+            & (self.df_epfl_authors["final_mainunit"].notna())
         ]
         return df_reconciled_unit["row_id"].nunique(), df_reconciled_unit
 

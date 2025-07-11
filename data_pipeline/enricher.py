@@ -16,7 +16,6 @@ from utils import manage_logger, clean_value
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-from clients.orcid_client import OrcidClient
 from config import scopus_epfl_afids, unit_types, excluded_unit_types
 from config import logs_dir
 
@@ -345,20 +344,20 @@ class AuthorProcessor:
                     if unit_order == 1 and not fallback_unit:
                         fallback_unit = (unit_id, unit_name, unit_type)
 
+                main_unit = None
+
                 if prioritized_unit:
-                    self.logger.debug("Main unit retrieved: %s", prioritized_unit)
-                    self._accred_cache[sciper_id] = prioritized_unit
-                    return prioritized_unit
+                    main_unit = prioritized_unit
                 elif allowed_units:
-                    allowed_units.sort(key=lambda x: x[3])
-                    result = allowed_units[0][:3]
-                    self.logger.debug("Main unit retrieved: %s", result)
-                    self._accred_cache[sciper_id] = result
-                    return result
+                    allowed_units.sort(key=lambda unit: unit[3])
+                    main_unit = allowed_units[0][:3]
                 elif fallback_unit:
-                    self.logger.debug("Main unit retrieved: %s", fallback_unit)
-                    self._accred_cache[sciper_id] = fallback_unit
-                    return fallback_unit
+                    main_unit = fallback_unit
+
+                if main_unit:
+                    self.logger.debug("Main unit retrieved: %s", main_unit)
+                    self._accred_cache[sciper_id] = main_unit
+                    return main_unit
 
             default = ("10000", "EPFL", "Ecole")
             self.logger.warning(
@@ -366,6 +365,50 @@ class AuthorProcessor:
             )
             self._accred_cache[sciper_id] = default
             return default
+
+    def _infer_unit_from_dspace_facets(self, sciper_id: str, year: int, facet="unitOrLab"):
+        """
+        Infer the most likely affiliation unit from DSpace publications using facet aggregation.
+
+        This method uses DSpace's internal faceting (sorted by count by default) to deduce
+        an author's most probable unit for a given year.
+
+        Args:
+            sciper_id (str): The EPFL unique identifier of the author.
+            year (int): The publication year to scope the query.
+            facet (str): The facet to query (default: 'unitOrLab').
+
+        Returns:
+            str: The most frequent unit label (e.g. 'lasur', 'lphe'), or None if not found.
+        """
+        if not sciper_id or not year:
+            return None
+        
+        year = int(year)
+
+        query = (
+            f"cris.virtual.sciperId:({sciper_id}) "
+            f"AND (dateIssued.year:[{year-5} TO {year}]) "
+            f"AND (entityType:(Publication) -types:(doctoral thesis))"
+        )
+
+        try:
+            facet_values = dspace_wrapper.client.get_facet_values(
+                facet_name=facet, query=query, configuration="researchoutputs", size=5
+            )
+        except Exception as e:
+            self.logger.error(
+                "Error fetching facet values for sciper %s: %s", sciper_id, str(e)
+            )
+            return None
+
+        if facet_values:
+            top_value = facet_values[0]
+            unit_label = top_value.get("label", "").upper()
+            self.logger.info("Inferred unit for %s (%s): %s", sciper_id, year, unit_label)
+            return unit_label
+
+        return None
 
     def _query_dspace_authority(self, query):
         """
@@ -452,11 +495,36 @@ class AuthorProcessor:
             return None, None
 
         def query_and_enrich_person(row):
+            """
+            Enriches author metadata by reconciling identifiers (sciper, ORCID, internal IDs) 
+            and inferring their most likely EPFL unit affiliation at the time of publication.
+
+            This function performs the following steps:
+            1. Tries to find the author in DSpace to get the sciper ID and internal UUID.
+            2. Uses the sciper or name information to query the EPFL API for additional metadata.
+            3. Retrieves unit information from EPFL API (current accreditation).
+            4. Infers the most likely unit of affiliation at the time of publication using DSpace facet data.
+            5. Compares both units (API vs guessed) to determine concordance.
+            6. Chooses the most reliable unit as final_mainunit (priority: guessed over API).
+
+            Args:
+                row (pd.Series): A row from the DataFrame representing one author/publication entry.
+
+            Returns:
+                dict: Enriched author information, including:
+                    - sciper_id, epfl_orcid, epfl_status, epfl_position
+                    - epfl_api_mainunit_id / name / type
+                    - dspace_uuid
+                    - guessing_mainunit
+                    - mainunit_match (bool)
+                    - final_mainunit (str)
+            """
             key = make_cache_key(row)
             if key in cache:
                 self.logger.debug("Returned cached data for key %s", key)
                 return cache[key]
 
+            # Initialize result container
             result = {
                 "sciper_id": None,
                 "epfl_status": None,
@@ -464,15 +532,19 @@ class AuthorProcessor:
                 "epfl_orcid": None,
                 "epfl_api_mainunit_id": None,
                 "epfl_api_mainunit_name": None,
+                "epfl_api_mainunit_type": None,
                 "dspace_uuid": None,
+                "guessing_mainunit": None,
+                "mainunit_match": None,
+                "final_mainunit": None,
             }
 
-            # Step 1 : DSpace first
+            # Step 1: Query DSpace for sciper and uuid
             uuid, dspace_sciper = get_dspace_data(row)
             result["dspace_uuid"] = uuid
             sciper_id = dspace_sciper or row.get("sciper_id")
 
-            # Step 2 : enrich from EPFL API using sciper_id or author name
+            # Step 2: Query EPFL API (by sciper if possible, fallback to name)
             if sciper_id:
                 person_info = ApiEpflClient.query_person(
                     query=sciper_id, format="digest", use_firstname_lastname=False
@@ -488,22 +560,42 @@ class AuthorProcessor:
                     use_firstname_lastname=True,
                 )
 
-            # Step 3: embed additional information in the result
+            # Step 3: Populate EPFL metadata if available
             if isinstance(person_info, dict):
-                result.update(
-                    {
-                        "sciper_id": person_info.get("sciper_id"),
-                        "epfl_orcid": person_info.get("epfl_orcid"),
-                        "epfl_status": person_info.get("epfl_status"),
-                        "epfl_position": person_info.get("epfl_position"),
-                    }
-                )
+                result.update({
+                    "sciper_id": person_info.get("sciper_id"),
+                    "epfl_orcid": person_info.get("epfl_orcid"),
+                    "epfl_status": person_info.get("epfl_status"),
+                    "epfl_position": person_info.get("epfl_position"),
+                })
 
                 if person_info.get("sciper_id"):
                     uid, uname, utype = self._fetch_accred_info(person_info["sciper_id"])
-                    result["epfl_api_mainunit_id"] = uid
-                    result["epfl_api_mainunit_name"] = uname
-                    result["epfl_api_mainunit_type"] = utype
+                    result.update({
+                        "epfl_api_mainunit_id": uid,
+                        "epfl_api_mainunit_name": uname,
+                        "epfl_api_mainunit_type": utype,
+                    })
+
+            # Step 4: Guess unit at publication date from DSpace facets
+            year = row.get("year")
+            if result.get("sciper_id") and year:
+                guessed_unit = self._infer_unit_from_dspace_facets(result["sciper_id"], year)
+                result["guessing_mainunit"] = guessed_unit
+
+                api_unit = result.get("epfl_api_mainunit_name")
+                if guessed_unit:
+                    if api_unit:
+                        result["mainunit_match"] = api_unit.strip().upper() == guessed_unit.strip().upper()
+                    else:
+                        result["mainunit_match"] = False
+
+            # Step 5: Select final_mainunit based on best guess at time of publication
+            result["final_mainunit"] = (
+                result["guessing_mainunit"]
+                or result["epfl_api_mainunit_name"]
+                or None
+            )
 
             cache[key] = result
             return result
@@ -512,7 +604,6 @@ class AuthorProcessor:
         self.df = pd.concat([self.df, enrichment_df], axis=1)
 
         return self.df if return_df else self
-
 
 class PublicationProcessor: 
 

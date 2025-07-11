@@ -897,7 +897,7 @@ class Loader:
     def _filter_publications_by_valid_affiliations(self):
         """Filter publications with valid author affiliations."""
         valid_author_ids = self.df_epfl_authors[
-            self.df_epfl_authors["epfl_api_mainunit_name"].notnull()
+            self.df_epfl_authors["final_mainunit"].notnull()
         ]["row_id"].unique()
 
         if len(valid_author_ids) > 0:
@@ -907,7 +907,7 @@ class Loader:
             logger.info(f"Filtered publications count: {len(filtered_publications)}")
             return filtered_publications
         else:
-            logger.warning("No valid authors found with 'epfl_api_mainunit_name'.")
+            logger.warning("No valid authors found with 'final_mainunit'.")
             return pd.DataFrame()  # Return an empty DataFrame if no valid authors found
 
     def create_complete_publication(self):
@@ -955,10 +955,10 @@ class Loader:
                     self.df_epfl_authors["row_id"] == row["row_id"]
                 ]
                 units = [
-                    {"acro": author["epfl_api_mainunit_name"]}
+                    {"acro": author["final_mainunit"]}
                     for _, author in matching_authors.iterrows()
-                    if pd.notna(author["epfl_api_mainunit_name"])
-                    and author["epfl_api_mainunit_name"] != ""
+                    if pd.notna(author["final_mainunit"])
+                    and author["final_mainunit"] != ""
                 ]
                 unique_units = {unit["acro"]: unit for unit in units}.values()
                 logger.debug(f"Found units: {unique_units}")
