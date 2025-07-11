@@ -12,7 +12,9 @@ def _():
     import pandas as pd
     sys.path.append(os.path.abspath(".."))
     from data_pipeline.enricher import PublicationProcessor
-    return PublicationProcessor, pd
+    from data_pipeline.PDFUpdater import PDFUpdater
+
+    return PDFUpdater, PublicationProcessor, pd
 
 
 @app.cell
@@ -84,7 +86,8 @@ def _(pd):
 
 @app.cell
 def _(d, get_items):
-    query ="datacite.rights:(metadata-only) dateIssued.year:2025 dc.identifier.doi:* (types:(conference) OR types:(journal))"
+    query ="datacite.rights:(metadata-only) dateIssued.year:2024 dc.identifier.doi:10.1016/j.trip.2024.101183 (types:(conference paper) OR types:(article))"
+    # query ="dc.identifier.doi:(10.1126/sciadv.adt7195) (types:(conference) OR types:(journal))"
     df = get_items(d, query, size=100, max_pages=None)
     df
     return (df,)
@@ -95,6 +98,23 @@ def _(PublicationProcessor, df):
     processor = PublicationProcessor(df)
     df_enriched = processor.process(return_df=True)
     df_enriched
+    return (df_enriched,)
+
+
+@app.cell
+def _(PDFUpdater, df_enriched):
+    updater = PDFUpdater(df_enriched)
+    updated_df = updater.update_pdfs()
+    return
+
+
+@app.cell
+def _():
+    from clients.unpaywall_client import UnpaywallClient
+
+    doi = "10.1088/1361-665X/adae6a"
+    UnpaywallClient.fetch_by_doi(doi, format="upw")
+
     return
 
 

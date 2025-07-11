@@ -106,6 +106,8 @@ class Client(APIClient):
         rec = {}
         rec["is_oa"] = x["is_oa"]
         rec["oa_status"] = x["oa_status"]
+        rec["journal_is_oa"] = x["journal_is_oa"]
+        rec["journal_is_in_doaj"] = x["journal_is_in_doaj"]
         return rec
 
     def _extract_best_oa_location_infos(self, record):
@@ -123,6 +125,8 @@ class Client(APIClient):
         # Basic OA info
         rec["is_oa"] = record.get("is_oa")
         rec["oa_status"] = record.get("oa_status")
+        rec["journal_is_oa"] = record.get("journal_is_oa")
+        rec["journal_is_in_doaj"] = record.get("journal_is_in_doaj")
 
         best_oa_location = record.get("best_oa_location")
         if not best_oa_location:
