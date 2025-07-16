@@ -31,7 +31,7 @@ accepted_doctypes = [
 # Retry decorator to handle request retries on specific status codes
 retry_decorator = tenacity.retry(
     retry=retry_if_api_request_error(status_codes=[429]),
-    wait=tenacity.wait_fixed(2),
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=5),
     stop=tenacity.stop_after_attempt(5),
     reraise=True,
 )
@@ -41,6 +41,7 @@ retry_decorator = tenacity.retry(
 class OpenAlexEndpoint:
     works = "works"
     work_id = "works/{openalexId}"
+    doi = "works/doi:{doi}"
 
 
 class Client(APIClient):
@@ -175,22 +176,35 @@ class Client(APIClient):
     @retry_decorator
     def fetch_record_by_unique_id(self, openalex_id, format="digest"):
         """
-        Retrieves a specific record by its unique OpenAlex ID.
+        Retrieves a specific record by its unique OpenAlex ID or DOI.
 
-        Example request:
-        https://api.openalex.org/works/W2762925973
+        Supports both:
+        - OpenAlex ID: "W2762925973"
+        - DOI: "10.1103/physrevd.111.l091101"
 
-        Usage:
-        OpenAlexClient.fetch_record_by_unique_id("W2762925973")
+        Args:
+            openalex_id (str): The OpenAlex ID or DOI.
+            format (str): Output format for processing ("digest", "digest-ifs3", "ifs3", or "openalex").
 
         Returns:
-        A record with key fields.
+            dict or None: Processed metadata record, or None if not found.
         """
-        self.params = {"email": openalex_email}
-        result = self.get(
-            OpenAlexEndpoint.work_id.format(openalexId=openalex_id), params=self.params
-        )
-        return self._process_record(result, format) if result else None
+        self.params = {"email": openalex_email} if openalex_email else {}
+
+        # Determine endpoint based on whether it's a DOI or an OpenAlex ID
+        if isinstance(openalex_id, str) and openalex_id.lower().startswith("10."):
+            # Handle DOI case
+            endpoint_url = OpenAlexEndpoint.doi.format(doi=openalex_id)
+        else:
+            # Fallback to OpenAlex ID
+            endpoint_url = OpenAlexEndpoint.work_id.format(openalexId=openalex_id)
+
+        try:
+            result = self.get(endpoint_url, params=self.params)
+            return self._process_record(result, format) if result else None
+        except Exception as e:
+            self.logger.error(f"Error fetching record for ID/DOI '{openalex_id}': {e}")
+            return None
 
     def _process_fetch_records(self, format, **param_kwargs):
         """
@@ -250,24 +264,25 @@ class Client(APIClient):
             "doctype": self._extract_first_doctype(x),
             "pubyear": x.get("publication_year"),
             "publisher": self._extract_publisher(x),
-            "publisherPlace": "",
-            "journalTitle": self._extract_journal_title(x),
-            "seriesTitle": "",
-            "bookTitle": "",
-            "editors": "",
-            "journalISSN": self._extract_journal_issn(x),
-            "seriesISSN": "",
-            "bookISBN": "",
-            "bookDOI": "",
-            "journalVolume": self._extract_volume(x),
-            "seriesVolume": "",
-            "bookPart": "",
+            "ContainerTitle": self._extract_container(x),
+            "issn": self._extract_issn(x),
+            "issn_l": self._extract_issn_l(x),
+            "volume": self._extract_volume(x),
             "issue": self._extract_issue(x),
             "startingPage": self._extract_starting_page(x),
             "endingPage": self._extract_ending_page(x),
-            "pmid": "",
             "artno": x.get("biblio", {}).get("article_number", ""),
             "keywords": self._extract_keywords(x),
+            "is_oa": self._extract_is_oa(x),
+            "oa_status": self._extract_oa_status(x),
+            "is_core": self._extract_is_core(x),
+            "source_type": self._extract_source_type(x),
+            "source_version": self._extract_source_version(x),
+            "source_license": self._extract_source_license(x),
+            "is_paratext": self._extract_is_paratext(x),
+            "is_retracted": self._extract_is_retracted(x),
+            "openalex_type": self._extract_openalex_doctype(x),
+            "openalex_id": self._extract_openalex_id(x),
         }
 
     def _extract_ifs3_digest_record_info(self, x):
@@ -305,6 +320,16 @@ class Client(APIClient):
         ifs3_info["authors"] = self.extract_ifs3_authors(x)
         return ifs3_info
 
+    def _extract_openalex_id(self, x):
+        try:
+            full_id = x.get("id", "")
+            if isinstance(full_id, str) and full_id.startswith("https://openalex.org/"):
+                return full_id.replace("https://openalex.org/", "")
+            return full_id if isinstance(full_id, str) else ""
+        except Exception as e:
+            self.logger.error(f"Error extracting OpenAlex ID: {e}")
+            return ""
+
     def openalex_extract_doi(self, x):
         """
         Extract DOI from an OpenAlex record, removing the prefix 'https://doi.org/'.
@@ -333,6 +358,48 @@ class Client(APIClient):
             str: Document type extracted from the record.
         """
         return x.get("type_crossref")
+
+    def _extract_openalex_doctype(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("type")
+
+    def _extract_is_paratext(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("is_paratext")
+
+    def _extract_is_retracted(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("is_retracted")
+
+    def _extract_oa_status(self, x):
+        try:
+            return x.get("open_access", {}).get("oa_status", "") or ""
+        except Exception as e:
+            return ""
 
     def get_dc_type_info(self, x):
         """
@@ -441,60 +508,137 @@ class Client(APIClient):
             )
         return authors
 
-
     def extract_abstract(self, x):
         """
         Reconstruit l'abstract depuis abstract_inverted_index.
         """
         try:
             index = x.get("abstract_inverted_index")
-            if not index or not isinstance(index, dict):
+            if not isinstance(index, dict):
                 return ""
-
             position_map = {}
             for word, positions in index.items():
+                if not isinstance(positions, list):
+                    continue
                 for pos in positions:
-                    position_map[pos] = word
-
+                    if isinstance(pos, int):
+                        position_map[pos] = word
             abstract = " ".join(position_map[i] for i in sorted(position_map))
             return abstract.strip()
         except Exception as e:
-            self.logger.error(f"Error extracting abstract: {e}")
             return ""
 
     def _extract_publication_date(self, x):
         try:
             date_parts = x.get("publication_date", "")
-            return date_parts if date_parts else ""
+            return date_parts if isinstance(date_parts, str) else ""
         except Exception as e:
-            self.logger.error(f"Error extracting publication date: {e}")
             return ""
 
-    def _extract_journal_title(self, x):
-        return x.get("primary_location", {}).get("source", {}).get("display_name", "")
+    def _extract_issn_l(self, x):
+        try:
+            issn_l = x.get("primary_location", {}).get("source", {}).get("issn_l", "")
+            return issn_l if isinstance(issn_l, str) else ""
+        except Exception as e:
+            return ""
 
-    def _extract_journal_issn(self, x):
-        issn = x.get("primary_location", {}).get("source", {}).get("issn_l", "")
-        return issn if isinstance(issn, str) else "||".join(issn)
+    def _extract_issn(self, x):
+        try:
+            issn = x.get("primary_location", {}).get("source", {}).get("issn", [])
+            if isinstance(issn, list):
+                return "||".join(issn)
+            elif isinstance(issn, str):
+                return issn
+            return ""
+        except Exception as e:
+            return ""
+
+    def _extract_container(self, x):
+        try:
+            return (
+                x.get("primary_location", {}).get("source", {}).get("display_name", "")
+                or ""
+            )
+        except Exception as e:
+            return ""
+
+    def _extract_is_oa(self, x):
+        try:
+            is_oa = x.get("primary_location", {}).get("is_oa")
+            return str(is_oa) if isinstance(is_oa, bool) else ""
+        except Exception as e:
+            return ""
+
+    def _extract_is_core(self, x):
+        try:
+            is_core = x.get("primary_location", {}).get("source", {}).get("is_core")
+            return str(is_core) if isinstance(is_core, bool) else ""
+        except Exception as e:
+            return ""
 
     def _extract_publisher(self, x):
-        return x.get("primary_location", {}).get("source", {}).get("publisher", "")
+        try:
+            return (
+                x.get("primary_location", {})
+                .get("source", {})
+                .get("host_organization_name", "")
+                or ""
+            )
+        except Exception as e:
+            return ""
+
+    def _extract_source_type(self, x):
+        try:
+            return x.get("primary_location", {}).get("source", {}).get("type", "") or ""
+        except Exception as e:
+            return ""
+
+    def _extract_source_version(self, x):
+        try:
+            return x.get("primary_location", {}).get("version", "") or ""
+        except Exception as e:
+            return ""
+
+    def _extract_source_license(self, x):
+        try:
+            return x.get("primary_location", {}).get("license", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_volume(self, x):
-        return x.get("biblio", {}).get("volume", "")
+        try:
+            return x.get("biblio", {}).get("volume", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_issue(self, x):
-        return x.get("biblio", {}).get("issue", "")
+        try:
+            return x.get("biblio", {}).get("issue", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_starting_page(self, x):
-        return x.get("biblio", {}).get("first_page", "")
+        try:
+            return x.get("biblio", {}).get("first_page", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_ending_page(self, x):
-        return x.get("biblio", {}).get("last_page", "")
+        try:
+            return x.get("biblio", {}).get("last_page", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_keywords(self, x):
-        concepts = x.get("concepts", [])
-        return "||".join([c.get("display_name", "") for c in concepts])
+        try:
+            concepts = x.get("concepts", [])
+            if not isinstance(concepts, list):
+                return ""
+            return "||".join(
+                [c.get("display_name", "") for c in concepts if isinstance(c, dict)]
+            )
+        except Exception as e:
+            return ""
 
     @staticmethod
     def _format_authorname(raw: str) -> str:

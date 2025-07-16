@@ -335,57 +335,31 @@ class OpenAlexHarvester(Harvester):
         total = OpenAlexClient.count_results(filter=filters)
         self.logger.info("Total publications found in OpenAlex: %s", total)
 
-        if total == 0:
-            self.logger.debug("No publications found. Returning an empty DataFrame.")
-            return pd.DataFrame()
-
-        count = 50  # Number of items per request
-        recs = []
-        cursor = "*"
-        page = 1
-
-        while True:
-            self.logger.info("Harvesting page %d (cursor: %s)", page, cursor)
-
-            try:
-                h_recs = OpenAlexClient.fetch_records(
-                    format=self.format, filter=filters, per_page=count, cursor=cursor
-                )
-
-                if h_recs:
-                    recs.extend(h_recs)
-                else:
-                    self.logger.warning("No records found for page %d.", page)
-                    break
-
-                # Get the next cursor from the last API response
-                last_response_meta = OpenAlexClient.last_response.get("meta", {})
-                cursor = last_response_meta.get("next_cursor", None)
-
-                if not cursor:
-                    self.logger.info("No next cursor found. Pagination complete.")
-                    break
-
-                page += 1
-
-            except Exception as e:
-                self.logger.error("Error fetching records for page %d: %s", page, e)
-                break
-
-        # Build the DataFrame if records were collected
-        if recs:
-            df = (
-                pd.DataFrame(recs)
-                .query('ifs3_collection != "unknown"')  # Filter out unmapped types
-                .reset_index(drop=True)
+        try:
+            openalex_records = OpenAlexClient.fetch_records(
+                format=self.format, filter=filters
             )
-            df = pd.DataFrame(recs).reset_index(drop=True)
-        else:
-            self.logger.debug("No valid records fetched. Returning an empty DataFrame.")
+        except Exception as e:
+            self.logger.error("Failed to fetch records from OpenAlex: %s", e)
             return pd.DataFrame()
 
-        return df
+        if not openalex_records:
+            self.logger.warning(
+                "No records found in OpenAlex. Returning empty DataFrame."
+            )
+            return pd.DataFrame()
 
+        self.logger.info("- %d records retrieved from OpenAlex.", len(openalex_records))
+
+        df = pd.DataFrame(openalex_records)
+
+        if "ifs3_collection" in df.columns:
+            df = df.query('ifs3_collection != "unknown"')
+
+        df = df.copy()
+        df["source"] = "openalex"
+
+        return df.reset_index(drop=True)
 
 class CrossrefHarvester(Harvester):
     """

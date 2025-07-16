@@ -5,6 +5,7 @@ import string
 import re
 from datetime import datetime
 from collections import Counter
+import time
 from concurrent.futures import ThreadPoolExecutor
 import unicodedata
 from unidecode import unidecode
@@ -17,6 +18,7 @@ from utils import manage_logger, clean_value
 
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
+from clients.openalex_client import OpenAlexClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from config import scopus_epfl_afids, unit_types, excluded_unit_types
 from config import logs_dir
@@ -693,6 +695,50 @@ class PublicationProcessor:
                 self.df.at[index, "upw_valid_pdf"] = None
                 self.logger.warning(
                     "No unpaywall data returned for DOI %s.", self.df.at[index, "doi"]
+                )
+
+        return self.df if return_df else self
+
+
+class OpenAlexProcessor:
+    def __init__(self, df, format="digest"):
+        self.df = df.copy()
+        self.format = format
+        log_file_path = os.path.join(logs_dir, "logging.log")
+        self.logger = manage_logger(log_file_path)
+        self.openalex_prefix = "openalex_"
+
+    def fetch_openalex_data(self, doi):
+        return OpenAlexClient.fetch_record_by_unique_id(doi, format=self.format)
+
+    def process(self, return_df=True):
+        self.df = self.df.copy()
+        dois = self.df["doi"].dropna()
+        results = []
+
+        for i, (index, doi) in enumerate(zip(dois.index, dois), 1):
+            result = self.fetch_openalex_data(doi)
+            results.append((index, result))
+            self.logger.info(f"[{i}/{len(dois)}] Processed DOI: {doi}")
+            time.sleep(1.0)  # Avoid 429 Too Many Requests
+
+        non_null_result = next((r for _, r in results if r), {})
+        openalex_keys = list(non_null_result.keys()) if non_null_result else []
+
+        for key in openalex_keys:
+            col_name = f"{self.openalex_prefix}{key}"
+            if col_name not in self.df.columns:
+                self.df[col_name] = pd.NA
+
+        # Remplir les données dans le DataFrame
+        for index, result in results:
+            if result:
+                for key, value in result.items():
+                    col_name = f"{self.openalex_prefix}{key}"
+                    self.df.at[index, col_name] = value
+            else:
+                self.logger.warning(
+                    f"No OpenAlex data returned for DOI {self.df.at[index, 'doi']}"
                 )
 
         return self.df if return_df else self
