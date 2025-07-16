@@ -668,15 +668,16 @@ class PublicationProcessor:
                 self.df.at[index, "upw_oa_status"] = result.get("oa_status")
                 self.df.at[index, "journal_is_oa"] = result.get("journal_is_oa")
                 self.df.at[index, "journal_is_in_doaj"] = result.get("journal_is_in_doaj")
+                self.df.at[index, "upw_license"] = result.get("license")
+                self.df.at[index, "upw_version"] = result.get("version")
+                self.df.at[index, "upw_host"] = result.get("host_type")
+                self.df.at[index, "upw_oai_id"] = result.get("pmh_id")
+
 
                 if self.unpaywall_format == "best-oa-location":
-                    self.df.at[index, "upw_license"] = result.get("license")
-                    self.df.at[index, "upw_version"] = result.get("version")
                     self.df.at[index, "upw_pdf_urls"] = result.get("pdf_urls")
                     self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
                 else:
-                    self.df.at[index, "upw_license"] = None
-                    self.df.at[index, "upw_version"] = None
                     self.df.at[index, "upw_pdf_urls"] = None
                     self.df.at[index, "upw_valid_pdf"] = None
             else:
@@ -686,6 +687,8 @@ class PublicationProcessor:
                 self.df.at[index, "journal_is_in_doaj"] = None
                 self.df.at[index, "upw_license"] = None
                 self.df.at[index, "upw_version"] = None
+                self.df.at[index, "upw_host"] = None
+                self.df.at[index, "upw_oai_id"] = None
                 self.df.at[index, "upw_pdf_urls"] = None
                 self.df.at[index, "upw_valid_pdf"] = None
                 self.logger.warning(

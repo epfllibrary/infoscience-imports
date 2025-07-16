@@ -96,18 +96,38 @@ class Client(APIClient):
 
     def _process_fetch_record(self, x, format):
         if format == "oa":
-            return self._extract_oa_infos(x)
+            return self._extract_advanced_oa_info(x)
         elif format == "best-oa-location":
             return self._extract_best_oa_location_infos(x)
         elif format == "upw":
             return x
 
-    def _extract_oa_infos(self, x):
-        rec = {}
-        rec["is_oa"] = x["is_oa"]
-        rec["oa_status"] = x["oa_status"]
-        rec["journal_is_oa"] = x["journal_is_oa"]
-        rec["journal_is_in_doaj"] = x["journal_is_in_doaj"]
+    def _extract_basic_oa_info(self, record):
+        return {
+            "is_oa": record.get("is_oa"),
+            "oa_status": record.get("oa_status"),
+            "journal_is_oa": record.get("journal_is_oa"),
+            "journal_is_in_doaj": record.get("journal_is_in_doaj"),
+        }
+
+    def _extract_advanced_oa_info(self, record):
+        rec = self._extract_basic_oa_info(record)
+
+        best_oa_location = record.get("best_oa_location")
+        if not best_oa_location:
+            logger.warning("No 'best_oa_location' found for DOI: %s", record.get("doi"))
+            return rec
+
+        logger.debug("Extracting OA metadata from best_oa_location.")
+        rec.update(
+            {
+                "license": best_oa_location.get("license"),
+                "version": best_oa_location.get("version"),
+                "host_type": best_oa_location.get("host_type"),
+                "pmh_id": best_oa_location.get("pmh_id"),
+            }
+        )
+
         return rec
 
     def _extract_best_oa_location_infos(self, record):
@@ -120,13 +140,9 @@ class Client(APIClient):
         Returns:
             dict: A dictionary containing open access metadata (oa status, license, version, URLs, etc.).
         """
-        rec = {}
-
-        # Basic OA info
-        rec["is_oa"] = record.get("is_oa")
-        rec["oa_status"] = record.get("oa_status")
-        rec["journal_is_oa"] = record.get("journal_is_oa")
-        rec["journal_is_in_doaj"] = record.get("journal_is_in_doaj")
+        rec = self._extract_advanced_oa_info(
+            record
+        )  # includes basic OA info + license/version/host_type if available
 
         best_oa_location = record.get("best_oa_location")
         if not best_oa_location:
@@ -135,17 +151,16 @@ class Client(APIClient):
 
         logger.debug("Extracting OA metadata from best_oa_location.")
 
-        # Extract license and version even if URL is missing
-        rec["license"] = best_oa_location.get("license")
-        rec["version"] = best_oa_location.get("version")
+        best_oa_location = record.get("best_oa_location")
+        if not best_oa_location:
+            return rec
 
-        # Build a list of available URLs (even if no direct PDF)
         urls = [
             best_oa_location.get("url_for_pdf"),
             best_oa_location.get("url_for_landing_page"),
             best_oa_location.get("url"),
         ]
-        urls = list(filter(None, urls))  # remove None values
+        urls = [url for url in urls if url]  # Filter out None
         rec["pdf_urls"] = "|".join(urls) if urls else None
 
         # Only try to download if url_for_pdf is explicitly provided and license is valid
@@ -400,6 +415,7 @@ class Client(APIClient):
         except (KeyError, IndexError, ValueError) as e:
             logger.error(f"Error parsing Crossref response for DOI {doi}: {str(e)}")
             return []
+
 
 UnpaywallClient = Client(
     response_handler=JsonResponseHandler,
