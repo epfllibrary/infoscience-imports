@@ -3,6 +3,8 @@
 import os
 import string
 import re
+from datetime import datetime
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import unicodedata
 from unidecode import unidecode
@@ -378,35 +380,58 @@ class AuthorProcessor:
             year (int): The publication year to scope the query.
             facet (str): The facet to query (default: 'unitOrLab').
 
+        Todo:
+            - Add logic when member is flagged as 'former' in DSpace.
+            - Add logic to handle cases where EPFL is declared as "Hôte" or "Hors EPFL" in accred.
+            - Add logic to handle cases where api_epfl_mainunit is "EPFL".
+
         Returns:
             str: The most frequent unit label (e.g. 'lasur', 'lphe'), or None if not found.
         """
-        if not sciper_id or not year:
+        if not sciper_id or pd.isna(year):
             return None
-        
+
         year = int(year)
+        ranges = [
+            (year - 2, year),
+            (year - 3, year + 1),
+            (year - 5, year + 1),
+        ]
 
-        query = (
-            f"cris.virtual.sciperId:({sciper_id}) "
-            f"AND (dateIssued.year:[{year-5} TO {year}]) "
-            f"AND (entityType:(Publication) -types:(doctoral thesis))"
-        )
+        unit_counter = Counter()
 
-        try:
-            facet_values = dspace_wrapper.client.get_facet_values(
-                facet_name=facet, query=query, configuration="researchoutputs", size=5
+        for start_year, end_year in ranges:
+            query = (
+                f"cris.virtual.sciperId:({sciper_id}) "
+                f"AND (dateIssued.year:[{start_year} TO {end_year}]) "
+                f"AND (entityType:(Publication) -types:(doctoral thesis))"
             )
-        except Exception as e:
-            self.logger.error(
-                "Error fetching facet values for sciper %s: %s", sciper_id, str(e)
-            )
-            return None
+            try:
+                facet_values = dspace_wrapper.client.get_facet_values(
+                    facet_name=facet, query=query, configuration="researchoutputs", size=5
+                )
+            except Exception as e:
+                self.logger.error(
+                    "Error fetching facet values for sciper %s: %s", sciper_id, str(e)
+                )
+                continue
 
-        if facet_values:
-            top_value = facet_values[0]
-            unit_label = top_value.get("label", "").upper()
-            self.logger.info("Inferred unit for %s (%s): %s", sciper_id, year, unit_label)
-            return unit_label
+            if facet_values:
+                top_value = facet_values[0]
+                label = top_value.get("label", "")
+                count = top_value.get("count", 0)
+                if label and count > 3:
+                    unit_label = label.upper()
+                    self.logger.info(
+                        "Inferred unit for %s (%s): %s (%d publications, from %d–%d)",
+                        sciper_id,
+                        year,
+                        unit_label,
+                        count,
+                        start_year,
+                        end_year,
+                    )
+                    return unit_label
 
         return None
 
@@ -591,11 +616,24 @@ class AuthorProcessor:
                         result["mainunit_match"] = False
 
             # Step 5: Select final_mainunit based on best guess at time of publication
-            result["final_mainunit"] = (
-                result["guessing_mainunit"]
-                or result["epfl_api_mainunit_name"]
-                or None
-            )
+            current_year = datetime.now().year
+            publication_year = row.get("year")
+
+            # Convert and compare publication year safely
+            try:
+                publication_year = int(publication_year)
+            except (ValueError, TypeError):
+                publication_year = None
+
+            # Prioritize based on year
+            if publication_year and abs(publication_year - current_year) <= 1:
+                result["final_mainunit"] = (
+                    result["epfl_api_mainunit_name"] or result["guessing_mainunit"]
+                )
+            else:
+                result["final_mainunit"] = (
+                    result["guessing_mainunit"] or result["epfl_api_mainunit_name"]
+                )
 
             cache[key] = result
             return result
