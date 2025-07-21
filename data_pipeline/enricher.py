@@ -658,13 +658,30 @@ class PublicationProcessor:
 
     def process(self, return_df=True):
         self.df = self.df.copy()
-        self.df["upw_is_oa"] = False
+
+        # Initialisation des colonnes
+        self.df["upw_is_oa"] = pd.NA
         self.df["upw_is_oa"] = self.df["upw_is_oa"].astype("boolean")  # Nullable boolean
+        self.df["upw_oa_status"] = None
+        self.df["journal_is_oa"] = None
+        self.df["journal_is_in_doaj"] = None
+        self.df["upw_license"] = None
+        self.df["upw_version"] = None
+        self.df["upw_host"] = None
+        self.df["upw_oai_id"] = None
+        self.df["upw_pdf_urls"] = None
+        self.df["upw_valid_pdf"] = None
 
+        # Filtrer uniquement les lignes avec un DOI valide
+        valid_dois = self.df["doi"].dropna()
+        valid_indexes = valid_dois.index
+
+        # Récupérer les données Unpaywall en parallèle
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(self.fetch_unpaywall_data, self.df["doi"].dropna()))
+            results = list(executor.map(self.fetch_unpaywall_data, valid_dois))
 
-        for index, result in zip(self.df.index, results):
+        # Injecter les résultats dans le DataFrame original
+        for index, result in zip(valid_indexes, results):
             if result is not None:
                 self.df.at[index, "upw_is_oa"] = bool(result.get("is_oa"))
                 self.df.at[index, "upw_oa_status"] = result.get("oa_status")
@@ -675,7 +692,6 @@ class PublicationProcessor:
                 self.df.at[index, "upw_host"] = result.get("host_type")
                 self.df.at[index, "upw_oai_id"] = result.get("pmh_id")
 
-
                 if self.unpaywall_format == "best-oa-location":
                     self.df.at[index, "upw_pdf_urls"] = result.get("pdf_urls")
                     self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
@@ -683,22 +699,11 @@ class PublicationProcessor:
                     self.df.at[index, "upw_pdf_urls"] = None
                     self.df.at[index, "upw_valid_pdf"] = None
             else:
-                self.df.at[index, "upw_is_oa"] = pd.NA
-                self.df.at[index, "upw_oa_status"] = None
-                self.df.at[index, "journal_is_oa"] = None
-                self.df.at[index, "journal_is_in_doaj"] = None
-                self.df.at[index, "upw_license"] = None
-                self.df.at[index, "upw_version"] = None
-                self.df.at[index, "upw_host"] = None
-                self.df.at[index, "upw_oai_id"] = None
-                self.df.at[index, "upw_pdf_urls"] = None
-                self.df.at[index, "upw_valid_pdf"] = None
                 self.logger.warning(
                     "No unpaywall data returned for DOI %s.", self.df.at[index, "doi"]
                 )
 
         return self.df if return_df else self
-
 
 class OpenAlexProcessor:
     def __init__(self, df, format="digest"):
