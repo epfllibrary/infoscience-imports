@@ -98,21 +98,24 @@ class AuthorProcessor:
             ),
             axis=1,
         )
+        if author_ids_to_check is not None:
+            if author_ids_to_check:
+                if isinstance(author_ids_to_check, str):
+                    author_ids_to_check = [
+                        x.strip().lower() for x in author_ids_to_check.split(",") if x.strip()
+                    ]
+                else:
+                    author_ids_to_check = [str(x).strip().lower() for x in author_ids_to_check]
+                author_ids_to_check = set(author_ids_to_check)
+                def check_and_log(row):
+                    internal_id = str(row.get("internal_author_id", "")).strip().lower()
+                    orcid_id = str(row.get("orcid_id", "")).strip().lower()
+                    if internal_id in author_ids_to_check or orcid_id in author_ids_to_check:
+                        return True
+                    else:
+                        return row["epfl_affiliation"]
 
-        # Step 2: Override epfl_affiliation if internal_author_id matches a given author ID
-        if author_ids_to_check:
-            author_ids_to_check = set(
-                map(str, author_ids_to_check)
-            )  # Convert list to string set for fast lookup
-            self.df["epfl_affiliation"] = self.df.apply(
-                lambda row: (
-                    True
-                    if str(row["internal_author_id"]) in author_ids_to_check
-                    or str(row["orcid_id"]) in author_ids_to_check
-                    else row["epfl_affiliation"]
-                ),
-                axis=1,
-            )
+                self.df["epfl_affiliation"] = self.df.apply(check_and_log, axis=1)
 
         return self.df if return_df else self
 
@@ -395,12 +398,10 @@ class AuthorProcessor:
 
         year = int(year)
         ranges = [
-            (year - 2, year),
-            (year - 3, year + 1),
-            (year - 5, year + 1),
+            (year - 2, year + 1),
+            (year - 3, year),
+            (year - 4, year),
         ]
-
-        unit_counter = Counter()
 
         for start_year, end_year in ranges:
             query = (
@@ -422,7 +423,7 @@ class AuthorProcessor:
                 top_value = facet_values[0]
                 label = top_value.get("label", "")
                 count = top_value.get("count", 0)
-                if label and count > 3:
+                if label and count > 2:
                     unit_label = label.upper()
                     self.logger.info(
                         "Inferred unit for %s (%s): %s (%d publications, from %d–%d)",
