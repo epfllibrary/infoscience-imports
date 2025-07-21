@@ -6,6 +6,7 @@ itables
 nameparser
 pandas
 numpy
+pyarrow
 plotly
 python-dotenv
 python-Levenshtein

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.11"
+__generated_with = "0.14.12"
 app = marimo.App(width="medium")
 
 
@@ -59,6 +59,7 @@ def _(default_queries, mo):
         {wos_query}
         {crossref_query}
         {openalex_query}
+        {author_ids}
         '''
     ).style(max_height="800px", overflow="auto").batch(
         sources=mo.ui.multiselect(
@@ -67,7 +68,7 @@ def _(default_queries, mo):
         ),
         date_range=mo.ui.date_range(
             label="Date Range:",
-            start="2024-01-01",
+            start="2008-08-01",
             stop="2026-12-31",
         ),
         scopus_query=mo.ui.text_area(
@@ -97,6 +98,14 @@ def _(default_queries, mo):
             label="OpenAlex query:",
             value=default_queries["openalex"],
             placeholder="Default OpenAlex query",
+            rows=2,
+            full_width=True,
+
+        ),
+        author_ids=mo.ui.text_area(
+            label="Author Identifiers:",
+            value='["a5013293385", "0000-0002-5070-2196", "6602121680", "B-9884-2008"]',
+            placeholder="Default Author Identifiers",
             rows=2,
             full_width=True,
 
@@ -273,15 +282,17 @@ def _(mo):
 
 
 @app.cell
-def _(AuthorProcessor, authors_btn, df_authors, mo):
+def _(AuthorProcessor, authors_btn, df_authors, form, mo):
     mo.stop(not authors_btn.value)
 
     author_reconcil_output = []
 
+    author_ids = form.value["author_ids"]
+
     author_processor = AuthorProcessor(df_authors)
 
     df_epfl_authors = (
-        author_processor.process()
+        author_processor.process(author_ids_to_check=author_ids)
         .filter_epfl_authors()
         .clean_authors()
         .nameparse_authors()
