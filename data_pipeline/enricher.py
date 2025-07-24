@@ -399,8 +399,8 @@ class AuthorProcessor:
         year = int(year)
         ranges = [
             (year - 2, year + 1),
-            (year - 3, year),
-            (year - 4, year),
+            # (year - 3, year),
+            # (year - 4, year),
         ]
 
         for start_year, end_year in ranges:
@@ -708,6 +708,13 @@ class PublicationProcessor:
 
 class OpenAlexProcessor:
     def __init__(self, df, format="digest"):
+        """
+        Initialize the OpenAlexProcessor.
+
+        Args:
+            df (pd.DataFrame): Input DataFrame containing at least a 'doi' column.
+            format (str): Format to request from the OpenAlex client ('digest', 'openalex', etc.).
+        """
         self.df = df.copy()
         self.format = format
         log_file_path = os.path.join(logs_dir, "logging.log")
@@ -715,32 +722,60 @@ class OpenAlexProcessor:
         self.openalex_prefix = "openalex_"
 
     def fetch_openalex_data(self, doi):
+        """
+        Fetch a single OpenAlex record using a DOI.
+
+        Args:
+            doi (str): The DOI of the record to fetch.
+
+        Returns:
+            dict or None: Parsed metadata dictionary or None if not found or failed.
+        """
         return OpenAlexClient.fetch_record_by_unique_id(doi, format=self.format)
 
     def process(self, return_df=True):
+        """
+        Process the DataFrame by fetching and appending OpenAlex metadata per DOI.
+
+        Args:
+            return_df (bool): If True, returns the enriched DataFrame. If False, returns self.
+
+        Returns:
+            pd.DataFrame or OpenAlexProcessor: Enriched DataFrame or self.
+        """
         self.df = self.df.copy()
         dois = self.df["doi"].dropna()
         results = []
 
+        # Traitement DOI par DOI
         for i, (index, doi) in enumerate(zip(dois.index, dois), 1):
-            result = self.fetch_openalex_data(doi)
-            results.append((index, result))
-            self.logger.info(f"[{i}/{len(dois)}] Processed DOI: {doi}")
-            time.sleep(1.0)  # Avoid 429 Too Many Requests
+            self.logger.info(f"[{i}/{len(dois)}] Fetching OpenAlex data for DOI: {doi}")
+            try:
+                result = self.fetch_openalex_data(doi)
+                results.append((index, result))
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch data for DOI {doi}: {e}")
+                results.append((index, None))
+            time.sleep(1.0)  # pour respecter les limites de l’API
 
-        non_null_result = next((r for _, r in results if r), {})
-        openalex_keys = list(non_null_result.keys()) if non_null_result else []
+        # Collecte de toutes les clés uniques retournées
+        all_keys = set()
+        for _, result in results:
+            if isinstance(result, dict):
+                all_keys.update(result.keys())
 
-        for key in openalex_keys:
+        # Création des colonnes si absentes
+        for key in sorted(all_keys):
             col_name = f"{self.openalex_prefix}{key}"
             if col_name not in self.df.columns:
                 self.df[col_name] = pd.NA
 
-        # Remplir les données dans le DataFrame
+        # Injection des données dans le DataFrame
         for index, result in results:
-            if result:
-                for key, value in result.items():
+            if isinstance(result, dict):
+                for key in all_keys:
                     col_name = f"{self.openalex_prefix}{key}"
+                    value = result.get(key, pd.NA)
                     self.df.at[index, col_name] = value
             else:
                 self.logger.warning(
