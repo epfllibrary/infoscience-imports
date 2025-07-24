@@ -255,7 +255,7 @@ class Client(APIClient):
         Returns:
             dict: Extracted information in digest format.
         """
-        return {
+        digest = {
             "source": "openalex",
             "internal_id": x["id"],
             "issueDate": self._extract_publication_date(x),
@@ -263,27 +263,32 @@ class Client(APIClient):
             "title": x.get("display_name", ""),
             "doctype": self._extract_first_doctype(x),
             "pubyear": x.get("publication_year"),
-            "publisher": self._extract_publisher(x),
-            "ContainerTitle": self._extract_container(x),
-            "issn": self._extract_issn(x),
-            "issn_l": self._extract_issn_l(x),
             "volume": self._extract_volume(x),
             "issue": self._extract_issue(x),
             "startingPage": self._extract_starting_page(x),
             "endingPage": self._extract_ending_page(x),
             "artno": x.get("biblio", {}).get("article_number", ""),
             "keywords": self._extract_keywords(x),
-            "is_oa": self._extract_is_oa(x),
-            "oa_status": self._extract_oa_status(x),
-            "is_core": self._extract_is_core(x),
-            "source_type": self._extract_source_type(x),
-            "source_version": self._extract_source_version(x),
-            "source_license": self._extract_source_license(x),
             "is_paratext": self._extract_is_paratext(x),
             "is_retracted": self._extract_is_retracted(x),
             "openalex_type": self._extract_openalex_doctype(x),
             "openalex_id": self._extract_openalex_id(x),
         }
+
+        for label, func in [
+            ("primary_location", self._extract_primary_location_info),
+            ("best_oa_location", self._extract_best_oa_location_info),
+            ("open_access", self._extract_open_access_info),
+            ("affiliation_info", self._extract_affiliation_info),
+        ]:
+            try:
+                result = func(x)
+                # self.logger.info(f"[{label}] extracted fields: {result}")
+                digest.update(result)
+            except Exception as e:
+                self.logger.warning(f"[{label}] extraction failed: {e}")
+
+        return digest
 
     def _extract_ifs3_digest_record_info(self, x):
         """
@@ -395,11 +400,113 @@ class Client(APIClient):
         """
         return x.get("is_retracted")
 
-    def _extract_oa_status(self, x):
+    def _extract_primary_location_info(self, x: dict) -> dict:
+        primary = x.get("primary_location", {}) or {}
+        source = primary.get("source", {}) or {}
+
+        return {
+            "primary_is_oa": str(primary.get("is_oa", "")),
+            "primary_version": primary.get("version", ""),
+            "primary_license": primary.get("license", ""),
+            "primary_host_org": source.get("host_organization_name", ""),
+            "primary_issn": (
+                "||".join(source.get("issn", []))
+                if isinstance(source.get("issn", []), list)
+                else source.get("issn", "")
+            ),
+            "primary_issn_l": source.get("issn_l", ""),
+            "primary_is_core": str(source.get("is_core", "")),
+            "primary_source_type": source.get("type", ""),
+            "primary_container_title": source.get("display_name", ""),
+        }
+
+    def _extract_best_oa_location_info(self, x: dict) -> dict:
+        best_oa = x.get("best_oa_location", {}) or {}
+        source = best_oa.get("source", {}) or {}
+
+        return {
+            "best_oa_is_oa": str(best_oa.get("is_oa", "")),
+            "best_oa_pdf_url": best_oa.get("pdf_url", ""),
+            "best_oa_landing_url": best_oa.get("landing_page_url", ""),
+            "best_oa_license": best_oa.get("license", ""),
+            "best_oa_version": best_oa.get("version", ""),
+            "best_oa_is_in_doaj": str(source.get("is_in_doaj", "")),
+            "best_oa_container_title": source.get("display_name", ""),
+            "best_oa_issn": (
+                "||".join(source.get("issn", []))
+                if isinstance(source.get("issn", []), list)
+                else source.get("issn", "")
+            ),
+            "best_oa_issn_l": source.get("issn_l", ""),
+            "best_oa_host_org": source.get("host_organization_name", ""),
+            "best_oa_is_core": str(source.get("is_core", "")),
+            "best_oa_source_type": source.get("type", ""),
+        }
+
+    def _extract_open_access_info(self, x: dict) -> dict:
+        oa = x.get("open_access", {}) or {}
+
+        return {
+            "oa_status": oa.get("oa_status", ""),
+            "oa_any_repository_has_fulltext": str(
+                oa.get("any_repository_has_fulltext", "")
+            ),
+            "oa_is_oa": str(oa.get("is_oa", "")),
+            "oa_url": oa.get("oa_url", ""),
+        }
+
+
+    def _extract_affiliation_info(self, x: dict) -> dict:
+        """
+        Flattens and extracts affiliation information from OpenAlex 'authorships'.
+
+        Returns:
+            dict with concatenated values (||-joined):
+                - affiliation_ids
+                - affiliation_names
+                - affiliation_rors
+                - affiliation_country_codes
+                - affiliation_raw_strings
+        """
+        ids = set()
+        names = set()
+        rors = set()
+        countries = set()
+        raw_strings = set()
+
         try:
-            return x.get("open_access", {}).get("oa_status", "") or ""
+            for authorship in x.get("authorships", []):
+                # Normalized institutions
+                for inst in authorship.get("institutions", []):
+                    if not isinstance(inst, dict):
+                        continue
+                    inst_id = inst.get("id")
+                    ror_id = inst.get("ror")
+                    if inst_id:
+                        ids.add(inst_id.split("/")[-1])
+                    if ror_id:
+                        rors.add(ror_id.split("/")[-1])
+                    if inst.get("display_name"):
+                        names.add(inst["display_name"].strip())
+                    if inst.get("country_code"):
+                        countries.add(inst["country_code"].strip())
+
+                # Raw affiliation strings (from 'affiliations')
+                for aff in authorship.get("affiliations", []):
+                    raw = aff.get("raw_affiliation_string", "")
+                    if raw:
+                        raw_strings.add(raw.strip())
+
         except Exception as e:
-            return ""
+            self.logger.warning(f"Error in _extract_affiliation_info: {e}")
+
+        return {
+            "affiliation_ids": "||".join(sorted(ids)),
+            "affiliation_names": "||".join(sorted(names)),
+            "affiliation_rors": "||".join(sorted(rors)),
+            "affiliation_country_codes": "||".join(sorted(countries)),
+            "affiliation_raw_strings": "||".join(sorted(raw_strings)),
+        }
 
     def get_dc_type_info(self, x):
         """
@@ -532,76 +639,6 @@ class Client(APIClient):
         try:
             date_parts = x.get("publication_date", "")
             return date_parts if isinstance(date_parts, str) else ""
-        except Exception as e:
-            return ""
-
-    def _extract_issn_l(self, x):
-        try:
-            issn_l = x.get("primary_location", {}).get("source", {}).get("issn_l", "")
-            return issn_l if isinstance(issn_l, str) else ""
-        except Exception as e:
-            return ""
-
-    def _extract_issn(self, x):
-        try:
-            issn = x.get("primary_location", {}).get("source", {}).get("issn", [])
-            if isinstance(issn, list):
-                return "||".join(issn)
-            elif isinstance(issn, str):
-                return issn
-            return ""
-        except Exception as e:
-            return ""
-
-    def _extract_container(self, x):
-        try:
-            return (
-                x.get("primary_location", {}).get("source", {}).get("display_name", "")
-                or ""
-            )
-        except Exception as e:
-            return ""
-
-    def _extract_is_oa(self, x):
-        try:
-            is_oa = x.get("primary_location", {}).get("is_oa")
-            return str(is_oa) if isinstance(is_oa, bool) else ""
-        except Exception as e:
-            return ""
-
-    def _extract_is_core(self, x):
-        try:
-            is_core = x.get("primary_location", {}).get("source", {}).get("is_core")
-            return str(is_core) if isinstance(is_core, bool) else ""
-        except Exception as e:
-            return ""
-
-    def _extract_publisher(self, x):
-        try:
-            return (
-                x.get("primary_location", {})
-                .get("source", {})
-                .get("host_organization_name", "")
-                or ""
-            )
-        except Exception as e:
-            return ""
-
-    def _extract_source_type(self, x):
-        try:
-            return x.get("primary_location", {}).get("source", {}).get("type", "") or ""
-        except Exception as e:
-            return ""
-
-    def _extract_source_version(self, x):
-        try:
-            return x.get("primary_location", {}).get("version", "") or ""
-        except Exception as e:
-            return ""
-
-    def _extract_source_license(self, x):
-        try:
-            return x.get("primary_location", {}).get("license", "") or ""
         except Exception as e:
             return ""
 
