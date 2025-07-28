@@ -106,7 +106,7 @@ class Client(APIClient):
         A list of IDs from OpenAlex.
         """
         param_kwargs.setdefault("email", openalex_email)
-        param_kwargs.setdefault("per_page", 50)
+        param_kwargs.setdefault("per_page", 100)
         # Curseur initial
         cursor = param_kwargs.pop("cursor", "*")
 
@@ -149,10 +149,12 @@ class Client(APIClient):
             list: Processed records in the specified format.
         """
         param_kwargs.setdefault("email", openalex_email)
-        param_kwargs.setdefault("per_page", 50)
+        param_kwargs.setdefault("per_page", 100)
         cursor = param_kwargs.pop("cursor", "*")
 
         all_records = []
+        page_count = 0
+        total_count = None
 
         while True:
             self.params = {**param_kwargs, "cursor": cursor}
@@ -166,6 +168,11 @@ class Client(APIClient):
                 parsed = self._process_record(record, format)
                 if parsed:
                     all_records.append(parsed)
+
+
+            page_count += 1
+            total_count = response.get("meta", {}).get("count", total_count)
+            self.logger.info(f"Page {page_count} harvested{' out of ' + str((total_count // param_kwargs['per_page']) + 1) if total_count else ''}.")
 
             cursor = response.get("meta", {}).get("next_cursor")
             if not cursor:
@@ -454,7 +461,6 @@ class Client(APIClient):
             "oa_is_oa": str(oa.get("is_oa", "")),
             "oa_url": oa.get("oa_url", ""),
         }
-
 
     def _extract_affiliation_info(self, x: dict) -> dict:
         """
