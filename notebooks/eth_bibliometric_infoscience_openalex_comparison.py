@@ -84,12 +84,14 @@ def _(df_raw):
 
 @app.cell
 def _(df_openalex, df_raw_filtered, pd):
-    # Fusion (gauche) pour inclure toutes les lignes du fichier openalex
-    df_augmented = pd.merge(df_openalex, df_raw_filtered, on="openalex_id", how="left")
+    # ---------------------------------------------
+    # Comparaison des deus dataframes OpenAlex et 
+    # Infoscience
+    # ---------------------------------------------
 
+    df_augmented = pd.merge(df_openalex, df_raw_filtered, on="openalex_id", how="left")
     # Ajouter une colonne pour repérer les non-matches
     df_augmented["match_found"] = df_augmented["uuid"].notna()
-
     # Aperçu
     df_augmented
     return (df_augmented,)
@@ -101,13 +103,10 @@ def _(df_augmented):
     # Publications OpenAlex non incluses dans l'extraction
     # Infoscience initiale
     # ---------------------------------------------
-    df_no_match = df_augmented[df_augmented["match_found"] == False]
-    df_no_match
-    return (df_no_match,)
+    df_no_match = df_augmented[df_augmented["match_found"] == False].copy()
+    df_no_match = df_no_match.drop(columns=["uuid", "handle"])
 
 
-@app.cell
-def _(df_augmented, df_no_match):
     # ---------------------------------------------
     # On relance une réconciliation avec Infoscience
     # pour vérifier si ces dernières existent dans 
@@ -115,134 +114,154 @@ def _(df_augmented, df_no_match):
     # ---------------------------------------------
     from data_pipeline.deduplicator import DataFrameProcessor
     from clients.dspace_client_wrapper import DSpaceClientWrapper
-
     processor = DataFrameProcessor()
-    df_nomatch = df_augmented[df_augmented["match_found"] == False].copy()
-    df_nomatch.drop(columns=["uuid", "handle"], inplace=True)
-    to_import_df, duplicates_df = processor.deduplicate_infoscience_enhanced(df_no_match)
-    return duplicates_df, to_import_df
+    df_no_match
+    return df_no_match, processor
 
 
 @app.cell
-def _(duplicates_df):
-    duplicates_df
+def _(df_no_match, processor):
+    df_notexists, df_exists = processor.deduplicate_infoscience_enhanced(df_no_match)
+    return (df_exists,)
+
+
+@app.cell
+def _(df_exists):
+    df_exists[["doi", "dc_identifier_doi"]]
     return
 
 
 @app.cell
-def _(to_import_df):
-    to_import_df
+def _(df_exists):
+    df_exists[['title', 'dc_title']]
     return
 
 
 @app.cell
-def _(duplicates_df, np, pd):
+def _(df_exists, pd):
+    from rapidfuzz.fuzz import ratio
+
+    def is_different(a, b, threshold=90, length_ratio_threshold=0.5):
+        if pd.isna(a) or pd.isna(b):
+            return False
+    
+        a_str, b_str = str(a), str(b)
+
+        similarity = ratio(a_str, b_str)
+        len_ratio = min(len(a_str), len(b_str)) / max(len(a_str), len(b_str))
+
+        return similarity < threshold or len_ratio < length_ratio_threshold
+
+    # Masque combiné : on exclut si title/dc_title sont trop différents
+    # OU si doi/dc_identifier_doi sont tous les deux présents ET trop différents
+    mask_keep = df_exists.apply(
+        lambda row: not (
+            is_different(row.get("title"), row.get("dc_title")) or
+            (
+                pd.notna(row.get("doi")) and pd.notna(row.get("dc_identifier_doi")) and
+                is_different(row.get("doi"), row.get("dc_identifier_doi"), threshold=95, length_ratio_threshold=0.8)
+            )
+        ),
+        axis=1
+    )
+
+    # Filtrer avec ce masque
+    df_exists_cleaned = df_exists[mask_keep].copy()
+    df_exists_cleaned[['doi','dc_identifier_doi','title', 'dc_title']]
+    return (df_exists_cleaned,)
+
+
+@app.cell
+def _(df_exists_cleaned, np, pd):
     # ---------------------------------------------
     # A partir des publications réconciliées avec
     # Infosicence, on identifie celles qui pourraient 
     # être candidates pour l'étude ETH
     # ---------------------------------------------
 
-    df_new = duplicates_df.copy()
+
     # 1. Nettoyage des colonnes (en minuscules pour éviter les erreurs de casse)
-    df_new["doctype"] = df_new["doctype"].fillna("").str.strip().str.lower()
-    df_new["openalex_type"] = (
-        df_new["openalex_type"].fillna("").str.strip().str.lower()
+    df_exists_cleaned["doctype"] = df_exists_cleaned["doctype"].fillna("").str.strip().str.lower()
+    df_exists_cleaned["openalex_type"] = (
+        df_exists_cleaned["openalex_type"].fillna("").str.strip().str.lower()
     )
-    df_new["primary_version"] = (
-        df_new["primary_version"].fillna("").str.strip().str.lower()
+    df_exists_cleaned["primary_version"] = (
+        df_exists_cleaned["primary_version"].fillna("").str.strip().str.lower()
     )
-    df_new["primary_source_type"] = (
-        df_new["primary_source_type"].fillna("").str.strip().str.lower()
+    df_exists_cleaned["primary_source_type"] = (
+        df_exists_cleaned["primary_source_type"].fillna("").str.strip().str.lower()
     )
-    df_new["doi"] = df_new["doi"].fillna("").str.strip()
+    df_exists_cleaned["doi"] = df_exists_cleaned["doi"].fillna("").str.strip()
 
     # 2. Extraire le prefixe DOI (avant le slash)
-    df_new["doi_prefix"] = df_new["doi"].apply(
+    df_exists_cleaned["doi_prefix"] = df_exists_cleaned["doi"].apply(
         lambda x: x.split("/")[0] if "/" in x else ""
     )
 
     # 3. Initialiser la colonne par défaut
-    df_new["publication_type"] = "unknown"
+    df_exists_cleaned["publication_type"] = "unknown"
 
     # 4. Appliquer les règles dans l’ordre donné
 
     # Rule 1: book-chapter + doi prefix == 10.1007 → conference_paper
-    mask = (df_new["doctype"] == "book-chapter") & (
-        df_new["doi_prefix"] == "10.1007"
+    mask = (df_exists_cleaned["doctype"] == "book-chapter") & (
+        df_exists_cleaned["doi_prefix"] == "10.1007"
     )
-    df_new.loc[mask, "publication_type"] = "conference_paper"
+    df_exists_cleaned.loc[mask, "publication_type"] = "conference_paper"
 
     # Rule 2: book-chapter + other prefix → book-chapter
-    mask = (df_new["doctype"] == "book-chapter") & (
-        df_new["doi_prefix"] != "10.1007"
+    mask = (df_exists_cleaned["doctype"] == "book-chapter") & (
+        df_exists_cleaned["doi_prefix"] != "10.1007"
     )
-    df_new.loc[mask, "publication_type"] = "book-chapter"
+    df_exists_cleaned.loc[mask, "publication_type"] = "book-chapter"
 
     # Rule 3: journal-article + openalex_type == review → review
-    mask = (df_new["doctype"] == "journal-article") & (
-        df_new["openalex_type"] == "review"
+    mask = (df_exists_cleaned["doctype"] == "journal-article") & (
+        df_exists_cleaned["openalex_type"] == "review"
     )
-    df_new.loc[mask, "publication_type"] = "review"
+    df_exists_cleaned.loc[mask, "publication_type"] = "review"
 
     # Rule 4: journal-article + openalex_type == article → journal_article
-    mask = (df_new["doctype"] == "journal-article") & (
-        df_new["openalex_type"] == "article"
+    mask = (df_exists_cleaned["doctype"] == "journal-article") & (
+        df_exists_cleaned["openalex_type"] == "article"
     )
-    df_new.loc[mask, "publication_type"] = "journal_article"
+    df_exists_cleaned.loc[mask, "publication_type"] = "journal_article"
 
     # Rule 5: proceedings-article → conference_paper
-    mask = df_new["doctype"] == "proceedings-article"
-    df_new.loc[mask, "publication_type"] = "conference_paper"
+    mask = df_exists_cleaned["doctype"] == "proceedings-article"
+    df_exists_cleaned.loc[mask, "publication_type"] = "conference_paper"
 
     # Rule 6: submitted version → posted-content
-    mask = df_new["primary_version"] == "submittedversion"
-    df_new.loc[mask, "publication_type"] = "posted-content"
+    mask = df_exists_cleaned["primary_version"] == "submittedversion"
+    df_exists_cleaned.loc[mask, "publication_type"] = "posted-content"
 
     # Rule 7: primary_source_type == repository → posted-content
-    mask = df_new["primary_source_type"] == "repository"
-    df_new.loc[mask, "publication_type"] = "posted-content"
+    mask = df_exists_cleaned["primary_source_type"] == "repository"
+    df_exists_cleaned.loc[mask, "publication_type"] = "posted-content"
 
     # Rule 8: primary_source_type == ebook platform → book-chapter
-    mask = df_new["primary_source_type"] == "ebook platform"
-    df_new.loc[mask, "publication_type"] = "book-chapter"
+    mask = df_exists_cleaned["primary_source_type"] == "ebook platform"
+    df_exists_cleaned.loc[mask, "publication_type"] = "book-chapter"
 
     # Rule 9: primary_source_type == conference OR book series → conference_paper
-    mask = df_new["primary_source_type"].isin(["conference", "book series"])
-    df_new.loc[mask, "publication_type"] = "conference_paper"
+    mask = df_exists_cleaned["primary_source_type"].isin(["conference", "book series"])
+    df_exists_cleaned.loc[mask, "publication_type"] = "conference_paper"
 
 
     # Nettoyer la colonne publication_type (au cas où)
-    df_new["publication_type"] = (
-        df_new["publication_type"].fillna("").astype(str).str.strip().str.lower()
+    df_exists_cleaned["publication_type"] = (
+        df_exists_cleaned["publication_type"].fillna("").astype(str).str.strip().str.lower()
     )
 
     # Définir les types bibliométriques acceptés
     bibliometric_types = ["journal_article", "conference_paper", "review"]
 
     # Mettre à True uniquement les publications correspondant à ces types
-    df_new["eth_bibliometric"] = df_new["publication_type"].isin(
+    df_exists_cleaned["eth_bibliometric"] = df_exists_cleaned["publication_type"].isin(
         bibliometric_types
     )
 
-
-    # Réorganiser les colonnes pour publication_type (2e) et eth_bibliometric (3e)
-    cols = df_new.columns.tolist()
-
-    # On les retire s’ils existent déjà dans la liste (par sécurité)
-    for col in ["publication_type", "eth_bibliometric"]:
-        if col in cols:
-            cols.remove(col)
-
-    # Réinsertion aux bons indices
-    cols = [cols[0], "publication_type", "eth_bibliometric"] + cols[1:]
-
-    # Réaffectation de l'ordre au DataFrame
-    df_new = df_new[cols]
-
     # --- Map 'best_oa_version' to 'version'
-
-
     def resolve_resource_version(row):
         version_map = {
             "http://purl.org/coar/version/c_71e4c1898caa6e32": "submittedVersion",
@@ -277,7 +296,7 @@ def _(duplicates_df, np, pd):
         return None
 
 
-    df_new["version"] = df_new.apply(resolve_resource_version, axis=1)
+    df_exists_cleaned["version"] = df_exists_cleaned.apply(resolve_resource_version, axis=1)
 
 
     # --- Normalize license strings
@@ -344,35 +363,35 @@ def _(duplicates_df, np, pd):
         return val if val in license_priority else "n/a"
 
 
-    df_new["license"] = df_new.apply(build_license_condition, axis=1)
+    df_exists_cleaned["license"] = df_exists_cleaned.apply(build_license_condition, axis=1)
 
 
     # ---------------------------------------------
     # Initialize OA columns
     # ---------------------------------------------
-    df_new["oa_status"] = "Closed"
-    df_new["oa_type"] = "Closed"
-    already_set = pd.Series(False, index=df_new.index)
+    df_exists_cleaned["oa_status"] = "Closed"
+    df_exists_cleaned["oa_type"] = "Closed"
+    already_set = pd.Series(False, index=df_exists_cleaned.index)
 
     # DIAMOND OA
     diamond_mask = (
-        (df_new["best_oa_is_oa"] == True)
-        & (df_new["oa_status"].str.lower() == "diamond")
+        (df_exists_cleaned["best_oa_is_oa"] == True)
+        & (df_exists_cleaned["oa_status"].str.lower() == "diamond")
         & (~already_set)
     )
-    df_new.loc[diamond_mask, "oa_status"] = "Open"
-    df_new.loc[diamond_mask, "oa_type"] = "Diamond"
+    df_exists_cleaned.loc[diamond_mask, "oa_status"] = "Open"
+    df_exists_cleaned.loc[diamond_mask, "oa_type"] = "Diamond"
     already_set |= diamond_mask
 
     # GOLD OA
     gold_mask = (
-        (df_new["best_oa_is_oa"] == True)
+        (df_exists_cleaned["best_oa_is_oa"] == True)
         & (
-            (df_new["oa_status"].str.lower() == "gold")
+            (df_exists_cleaned["oa_status"].str.lower() == "gold")
             | (
-                (df_new["publication_type"] == "book-chapter")
+                (df_exists_cleaned["publication_type"] == "book-chapter")
                 & (
-                    df_new["license"].isin(
+                    df_exists_cleaned["license"].isin(
                         [
                             "cc-by",
                             "cc-by-nc",
@@ -389,15 +408,15 @@ def _(duplicates_df, np, pd):
         )
         & (~already_set)
     )
-    df_new.loc[gold_mask, "oa_status"] = "Open"
-    df_new.loc[gold_mask, "oa_type"] = "Gold"
+    df_exists_cleaned.loc[gold_mask, "oa_status"] = "Open"
+    df_exists_cleaned.loc[gold_mask, "oa_type"] = "Gold"
     already_set |= gold_mask
 
     # HYBRID OA
     hybrid_mask = (
-        (df_new["best_oa_is_oa"] == True)
+        (df_exists_cleaned["best_oa_is_oa"] == True)
         & (
-            df_new["license"].isin(
+            df_exists_cleaned["license"].isin(
                 [
                     "cc-by",
                     "cc-by-nc",
@@ -410,39 +429,35 @@ def _(duplicates_df, np, pd):
                 ]
             )
         )
-        & (df_new["version"] == "publishedVersion")
-        & (~df_new["primary_source_type"].isin([None, np.nan, "NULL", "repository"]))
+        & (df_exists_cleaned["version"] == "publishedVersion")
+        & (~df_exists_cleaned["primary_source_type"].isin([None, np.nan, "NULL", "repository"]))
         & (~already_set)
     )
-    df_new.loc[hybrid_mask, "oa_status"] = "Open"
-    df_new.loc[hybrid_mask, "oa_type"] = "Hybrid"
+    df_exists_cleaned.loc[hybrid_mask, "oa_status"] = "Open"
+    df_exists_cleaned.loc[hybrid_mask, "oa_type"] = "Hybrid"
     already_set |= hybrid_mask
 
     # GREEN OA
     green_mask = (
-        (df_new["best_oa_is_oa"] == True)
-        & (df_new["primary_source_type"] == "repository")
-        & (df_new["version"].isin(["acceptedVersion", "publishedVersion"]))
+        (df_exists_cleaned["best_oa_is_oa"] == True)
+        & (df_exists_cleaned["primary_source_type"] == "repository")
+        & (df_exists_cleaned["version"].isin(["acceptedVersion", "publishedVersion"]))
         & (~already_set)
     )
-    df_new.loc[green_mask, "oa_status"] = "Open"
-    df_new.loc[green_mask, "oa_type"] = "Green"
+    df_exists_cleaned.loc[green_mask, "oa_status"] = "Open"
+    df_exists_cleaned.loc[green_mask, "oa_type"] = "Green"
     already_set |= green_mask
-
-    # Reorder OA columns at the end
-    cols = [c for c in df_new.columns if c not in ["oa_status", "oa_type"]]
-    df_new = df_new[cols + ["oa_status", "oa_type"]]
-
-    return (df_new,)
+    df_exists_cleaned
+    return
 
 
 @app.cell
-def _(df_new):
+def _(df_exists_cleaned):
     # ---------------------------------------------
     # On supprime ce qui n'est pas identifié comme 
     # peer-reviewed ou EPFL dans Infosicence
     # ---------------------------------------------
-    df_clean = df_new[~((df_new["epfl_peerreviewed"] == "NON-REVIEWED") & (df_new["epfl_writtenat"] == "OTHER"))]
+    df_clean = df_exists_cleaned[~((df_exists_cleaned["epfl_peerreviewed"] == "NON-REVIEWED") & (df_exists_cleaned["epfl_writtenat"] == "OTHER"))]
     df_clean
     return (df_clean,)
 
@@ -529,7 +544,7 @@ def _(ast, datetime, pd):
 
         # Générer le nom de fichier avec la date
         creation_date_str = datetime.today().strftime('%Y-%m-%d')
-        filename = f"./eth_bibliometric/{start_year}-{end_year}_{filename_prefix}-exceptions_{creation_date_str}.csv"
+        filename = f"./eth_bibliometric/curated_data/{start_year}-{end_year}_{filename_prefix}-exceptions_{creation_date_str}.csv"
 
         # Exporter au format CSV
         final_df.to_csv(filename, index=False)
@@ -542,6 +557,45 @@ def _(ast, datetime, pd):
 @app.cell
 def _(df_clean, export_bibliometric_dataframe):
     final_df = export_bibliometric_dataframe(df_clean, filename_prefix="eth_bibliometric_dataset_epfl_repository", start_year=2014, end_year=2023)
+    final_df
+    return
+
+
+@app.cell
+def _(pd):
+    df1 = pd.read_csv('./eth_bibliometric/curated_data/2013-2024_eth_bibliometric_dataset_epfl_repository_2025-07-31.csv')
+    df2 = pd.read_csv('./eth_bibliometric/curated_data/2014-2023_eth_bibliometric_dataset_epfl_openalex-only_2025-07-31.csv')
+    df3 = pd.read_csv('./eth_bibliometric/curated_data/2014-2023_eth_bibliometric_dataset_epfl_repository-exceptions_2025-07-31.csv')
+
+    # Liste des colonnes à utiliser pour la fusion
+    merge_cols = ['title', 'internal_id', 'doi', 'openalex_id', 'year', 'authors_all',
+                  'authors_institution', 'orcid_institution', 'journal', 'publication_type',
+                  'oa_status', 'oa_type']
+
+    # Harmoniser : ajouter colonnes manquantes et filtrer les colonnes voulues
+    dfs = []
+    for df in [df1, df2, df3]:
+        for col in merge_cols:
+            if col not in df.columns:
+                df[col] = pd.NA  # ajoute colonne manquante avec NaN
+        dfs.append(df[merge_cols])  # réorganise et filtre
+
+    # Concaténer les DataFrames
+    df_concatene = pd.concat(dfs, ignore_index=True)
+
+    # Suppression des doublons sur internal_id, doi, openalex_id — seulement si la valeur est non nulle
+    for col in ['internal_id', 'doi', 'openalex_id']:
+        df_concatene = df_concatene[~(
+            df_concatene[col].notna() &
+            df_concatene.duplicated(subset=[col], keep='first')
+        )]
+
+    # Sauvegarde
+    df_concatene.to_csv('./eth_bibliometric/curated_data/2014-2023_eth_bibliometric_dataset_epfl_final.csv', index=False)
+
+    print(f"Concaténation terminée. Nombre de lignes : {df_concatene.shape[0]}")
+
+    df_concatene
     return
 
 
