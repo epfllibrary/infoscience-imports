@@ -196,6 +196,9 @@ class Client(APIClient):
         Returns:
             dict or None: Processed metadata record, or None if not found.
         """
+        if not openalex_id or str(openalex_id).strip().lower() == "null":
+            return None
+        
         self.params = {"email": openalex_email} if openalex_email else {}
 
         # Determine endpoint based on whether it's a DOI or an OpenAlex ID
