@@ -154,6 +154,23 @@ class DataFrameProcessor:
         return filtered_df, duplicates_df
 
 
+    def deduplicate_infoscience_enhanced(self, df):
+        self.logger.info("Recherche avancée de doublons avec métadonnées...")
+        wrapper = DSpaceClientWrapper()
+
+        results = df.apply(
+            lambda row: wrapper.find_duplicate_enhanced(row), axis=1, result_type="expand"
+        )
+        df_enhanced = pd.concat([df.reset_index(drop=True), results], axis=1)
+
+        filtered_df = df_enhanced[df_enhanced["is_duplicate"] == False].drop(
+            columns=["is_duplicate"]
+        )
+        duplicates_df = df_enhanced[df_enhanced["is_duplicate"] == True].drop(
+            columns=["is_duplicate"]
+        )
+        return filtered_df, duplicates_df
+
     def generate_main_dataframes(self, df):
         # Step 1: Add an incremental row_id to the DataFrame
         df["row_id"] = range(1, len(df) + 1)
