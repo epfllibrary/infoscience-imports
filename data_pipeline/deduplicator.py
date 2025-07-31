@@ -161,14 +161,25 @@ class DataFrameProcessor:
         results = df.apply(
             lambda row: wrapper.find_duplicate_enhanced(row), axis=1, result_type="expand"
         )
-        df_enhanced = pd.concat([df.reset_index(drop=True), results], axis=1)
 
-        filtered_df = df_enhanced[df_enhanced["is_duplicate"] == False].drop(
-            columns=["is_duplicate"]
+        # S'assurer que les index sont bien alignés
+        results.index = df.index
+
+        # Fusionner proprement
+        df_enhanced = pd.concat([df, results], axis=1)
+
+        # Filtrer et retourner les deux sous-ensembles
+        filtered_df = (
+            df_enhanced[df_enhanced["is_duplicate"] == False]
+            .drop(columns=["is_duplicate"])
+            .copy()
         )
-        duplicates_df = df_enhanced[df_enhanced["is_duplicate"] == True].drop(
-            columns=["is_duplicate"]
+        duplicates_df = (
+            df_enhanced[df_enhanced["is_duplicate"] == True]
+            .drop(columns=["is_duplicate"])
+            .copy()
         )
+
         return filtered_df, duplicates_df
 
     def generate_main_dataframes(self, df):
