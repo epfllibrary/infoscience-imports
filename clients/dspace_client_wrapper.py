@@ -2,6 +2,7 @@
 
 import os
 import re
+import pandas as pd
 from dotenv import load_dotenv
 from config import logs_dir
 from dspace.dspace_rest_client.client import DSpaceClient
@@ -61,14 +62,18 @@ class DSpaceClientWrapper:
         identifier_type = x["source"]
         cleaned_title = clean_title(x["title"])
         pubyear = x["pubyear"]
-        if isinstance(pubyear, str) and pubyear.isdigit():
-            pubyear = int(pubyear)
-        elif not isinstance(pubyear, int):
+        if pd.notna(pubyear):
+            try:
+                pubyear = int(float(pubyear))
+            except (ValueError, TypeError):
+                pubyear = None
+        else:
             pubyear = None
 
         # Define previous and next years if pubyear is valid
         previous_year = pubyear - 1 if pubyear is not None else None
         next_year = pubyear + 1 if pubyear is not None else None
+
 
         # Construct the item ID based on identifier type
         handlers = {
@@ -112,7 +117,7 @@ class DSpaceClientWrapper:
         final_query_workflow = f"({final_query}) AND (search.resourcetype:(XmlWorkflowItem) OR ((search.resourcetype:(WorkspaceItem) AND submitter_authority:(4e8d183f-1309-470c-955e-c45a99c6f1b8)) OR (search.resourcetype:(WorkspaceItem) AND epfl.workflow.rejected:(true))))"
 
         # Search for duplicates using the combined query
-        self.logger.debug(
+        self.logger.info(
             f"Searching Infoscience researchoutput with query: {final_query}..."
         )
 
@@ -127,7 +132,7 @@ class DSpaceClientWrapper:
         )
         num_items_researchoutputs = len(dsos_researchoutputs)
 
-        self.logger.debug(
+        self.logger.info(
             f"Searching workflow items with query: {final_query_workflow}..."
         )
 
@@ -159,10 +164,12 @@ class DSpaceClientWrapper:
         identifier_type = x.get("source")
         cleaned_title = clean_title(x.get("title", ""))
         pubyear = x.get("pubyear")
-
-        if isinstance(pubyear, str) and pubyear.isdigit():
-            pubyear = int(pubyear)
-        elif not isinstance(pubyear, int):
+        if pd.notna(pubyear):
+            try:
+                pubyear = int(float(pubyear))
+            except (ValueError, TypeError):
+                pubyear = None
+        else:
             pubyear = None
 
         previous_year = pubyear - 1 if pubyear else None
@@ -202,7 +209,7 @@ class DSpaceClientWrapper:
         final_query = " OR ".join(query_parts)
         final_query = f"({final_query}) AND (entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
 
-        self.logger.debug(f"Searching Infoscience researchoutput with query: {final_query}")
+        self.logger.info(f"Searching Infoscience researchoutput with query: {final_query}")
 
         results = self._search_objects(
             query=final_query,
@@ -222,16 +229,18 @@ class DSpaceClientWrapper:
             dc_type_list = metadata.get("dc.type", [])
             dc_title_list = metadata.get("dc.title", [])
             dc_date_list = metadata.get("dc.date.issued", [])
+            dc_identifier_doi_list = metadata.get("dc.identifier.doi", [])
             epfl_reviewed_list = metadata.get("epfl.peerreviewed", [])
             epfl_writtenat_list = metadata.get("epfl.writtenAt", [])
 
             dc_type = dc_type_list[0]["value"] if dc_type_list else None
             dc_title = dc_title_list[0]["value"] if dc_title_list else None
             dc_date_issued = dc_date_list[0]["value"] if dc_date_list else None
+            dc_identifier_doi = dc_identifier_doi_list[0]["value"] if dc_identifier_doi_list else None
             epfl_peerreviewed = (epfl_reviewed_list[0]["value"] if epfl_reviewed_list else None)
             epfl_writtenat = (epfl_writtenat_list[0]["value"] if epfl_writtenat_list else None)
 
-            self.logger.info(f"Duplicate found for doi={doi}: uuid={uuid}, handle={handle}, title={dc_title}, type={dc_type}, date_issued={dc_date_issued}, epfl_peerreviewed={epfl_peerreviewed}, written_at={epfl_writtenat}")
+            self.logger.info(f"Duplicate found for doi={doi}: uuid={uuid}, handle={handle}, title={dc_title}, type={dc_type}, date_issued={dc_date_issued}, dc_identifier_doi={dc_identifier_doi}, epfl_peerreviewed={epfl_peerreviewed}, written_at={epfl_writtenat}")
 
             return {
                 "is_duplicate": True,
@@ -239,6 +248,7 @@ class DSpaceClientWrapper:
                 "handle": handle,
                 "dc_title": dc_title,
                 "dc_type": dc_type,
+                "dc_identifier_doi": dc_identifier_doi,
                 "dc_date_issued": dc_date_issued,
                 "epfl_peerreviewed": epfl_peerreviewed,
                 "epfl_writtenat": epfl_writtenat,
@@ -251,6 +261,7 @@ class DSpaceClientWrapper:
             "handle": None,
             "dc_title": None,
             "dc_type": None,
+            "dc_identifier_doi": None,
             "dc_date_issued": None,
             "epfl_peerreviewed": None,
             "epfl_writtenat": None,
