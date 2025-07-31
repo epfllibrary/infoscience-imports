@@ -155,6 +155,107 @@ class DSpaceClientWrapper:
         )
         return False  # No duplicates found
 
+    def find_duplicate_enhanced(self, x):
+        identifier_type = x.get("source")
+        cleaned_title = clean_title(x.get("title", ""))
+        pubyear = x.get("pubyear")
+
+        if isinstance(pubyear, str) and pubyear.isdigit():
+            pubyear = int(pubyear)
+        elif not isinstance(pubyear, int):
+            pubyear = None
+
+        previous_year = pubyear - 1 if pubyear else None
+        next_year = pubyear + 1 if pubyear else None
+
+        handlers = {
+            "wos": lambda x: str(x["internal_id"]).replace("WOS:", "").strip(),
+            "scopus": lambda x: str(x["internal_id"]).replace("SCOPUS_ID:", "").strip(),
+            "crossref": lambda x: str(x["internal_id"]).strip(),
+            "openalex+crossref": lambda x: str(x["internal_id"]).strip(),
+            "openalex": lambda x: str(x["doi"]).strip(),
+            "zenodo": lambda x: str(x["internal_id"]).strip(),
+            "datacite": lambda x: str(x["internal_id"]).strip(),
+            "orcidWorks": lambda x: None,
+        }
+
+        if identifier_type not in handlers:
+            raise ValueError(
+                f"{identifier_type} : identifier_type must be one of {list(handlers.keys())}"
+            )
+
+        item_id = handlers[identifier_type](x)
+
+        query_parts = []
+        if item_id:
+            query_parts.append(f'(itemidentifier_keyword:"{item_id}")')
+        if pubyear:
+            query_parts.append(
+                f"(title:({cleaned_title}) AND (dateIssued.year:{pubyear} OR dateIssued.year:{previous_year} OR dateIssued.year:{next_year}))"
+            )
+        else:
+            query_parts.append(f"(title:({cleaned_title}))")
+        doi = x.get("doi")
+        if isinstance(doi, str) and doi.strip():
+            query_parts.append(f'(itemidentifier_keyword:"{doi.strip()}")')
+
+        final_query = " OR ".join(query_parts)
+        final_query = f"({final_query}) AND (entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
+
+        self.logger.debug(f"Searching Infoscience researchoutput with query: {final_query}")
+
+        results = self._search_objects(
+            query=final_query,
+            page=0,
+            size=1,
+            dso_type="item",
+            configuration="researchoutputs",
+            max_pages=1,
+        )
+
+        if results:
+            result = results[0]
+            uuid = getattr(result, "uuid", None)
+            handle = getattr(result, "handle", None)
+
+            metadata = getattr(result, "metadata", {}) or {}
+            dc_type_list = metadata.get("dc.type", [])
+            dc_title_list = metadata.get("dc.title", [])
+            dc_date_list = metadata.get("dc.date.issued", [])
+            epfl_reviewed_list = metadata.get("epfl.peerreviewed", [])
+            epfl_writtenat_list = metadata.get("epfl.writtenAt", [])
+
+            dc_type = dc_type_list[0]["value"] if dc_type_list else None
+            dc_title = dc_title_list[0]["value"] if dc_title_list else None
+            dc_date_issued = dc_date_list[0]["value"] if dc_date_list else None
+            epfl_peerreviewed = (epfl_reviewed_list[0]["value"] if epfl_reviewed_list else None)
+            epfl_writtenat = (epfl_writtenat_list[0]["value"] if epfl_writtenat_list else None)
+
+            self.logger.info(f"Duplicate found for doi={doi}: uuid={uuid}, handle={handle}, title={dc_title}, type={dc_type}, date_issued={dc_date_issued}, epfl_peerreviewed={epfl_peerreviewed}, written_at={epfl_writtenat}")
+
+            return {
+                "is_duplicate": True,
+                "uuid": uuid,
+                "handle": handle,
+                "dc_title": dc_title,
+                "dc_type": dc_type,
+                "dc_date_issued": dc_date_issued,
+                "epfl_peerreviewed": epfl_peerreviewed,
+                "epfl_writtenat": epfl_writtenat,
+            }
+
+        self.logger.info("No duplicate found in research outputs.")
+        return {
+            "is_duplicate": False,
+            "uuid": None,
+            "handle": None,
+            "dc_title": None,
+            "dc_type": None,
+            "dc_date_issued": None,
+            "epfl_peerreviewed": None,
+            "epfl_writtenat": None,
+        }
+
     def find_person(self, query):
         """
         param query: format (index:value), for example (title:Scolaro A.)
@@ -242,7 +343,6 @@ class DSpaceClientWrapper:
 
     def delete_workflow(self, workflow_id):
         return self.client.delete_workflow_item(workflow_id)
-    
 
     def search_authority(
         self,
