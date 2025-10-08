@@ -41,6 +41,7 @@ class Endpoint:
     personsFirstnameLastname = "persons?firstname={firstname}&lastname={lastname}"
     accredsId = "accreds?persid={sciperID}"
     unitsId = "units/{unitID}"
+    unitsQuery = "units?query={query}"
 
 
 class Client(APIClient):
@@ -81,11 +82,17 @@ class Client(APIClient):
 
         def attempt_query(firstname, lastname):
             """Helper function to query the API and log results."""
-            result = self.get(
-                Endpoint.personsFirstnameLastname.format(
-                    firstname=firstname, lastname=lastname
-                )
+            # Construction de l'URL de base
+            url = Endpoint.personsFirstnameLastname.format(
+                firstname=firstname, lastname=lastname
             )
+
+            # Si le nom est trop court, on ajoute strict=1
+            if len(lastname) < 2:
+                url += "?strict=1"
+
+            result = self.get(url)
+
             self.logger.debug(
                 f"Received response for {firstname} {lastname} from personsFirstnameLastname: {result}"
             )
@@ -117,10 +124,18 @@ class Client(APIClient):
                     self.logger.error(f"{firstname} {lastname} caused an EPFL API error")
                     pass
             else:
-                self.logger.warning("Firstname or lastname is missing; skipping query.")
+                self.logger.info("Firstname or lastname is missing; skipping query.")
 
         # Always attempt personsQuery
         if query:
+            # Skip si lastname trop court et firstname trop court aussi
+            if lastname and len(lastname) < 2 and firstname and len(firstname) < 2:
+                self.logger.warning(
+                    f"Skipping personsQuery because lastname='{lastname}' "
+                    f"is too short and firstname='{firstname}' has only one character."
+                )
+                return None
+
             self.logger.info(f"Attempting personsQuery for {query}.")
             result_query = self.get(Endpoint.personsQuery.format(query=query))
             self.logger.debug(
@@ -201,6 +216,15 @@ class Client(APIClient):
         result = self.get(Endpoint.unitsId.format(unitID=unit_id))
         self.logger.debug(f"Received response for {unit_id}: {result}")
         return self._process_unit_record(result, unit_id, format)
+
+    @retry_decorator
+    def fetch_unit_by_query(self, query: str, format="digest"):
+        self.logger.info(
+            f"Fetching units for query: '{query}' using format: '{format}'"
+        )
+        result = self.get(Endpoint.unitsQuery.format(query=query))
+        self.logger.debug(f"Received response for {query}: {result}")
+        return self._process_unit_record(result, query, format)
 
     def _process_person_record(self, record, query, format):
         self.logger.debug(
