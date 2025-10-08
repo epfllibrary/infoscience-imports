@@ -385,14 +385,14 @@ doctypes_mapping_dict = {
         #     "collection": "",
         #     "dc.type": "text",
         # },
-        # "presentation": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference presentation",
-        # },
-        # "poster": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings",
-        # },
+        "presentation": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference presentation",
+        },
+        "poster": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings",
+        },
         # "publication/article": {
         #     "collection": "Journal articles",
         #     "dc.type": "text::journal::journal article",
@@ -425,38 +425,38 @@ doctypes_mapping_dict = {
         #     "collection": "Student works",
         #     "dc.type": "text::thesis::doctoral thesis",
         # },
-        # "image/diagram": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/drawing": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/figure": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/photo": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/plot": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/other": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
+        "image/diagram": {
+            "collection": "Images, Videos, Interactive resources, and Design",
+            "dc.type": "image",
+        },
+        "image/drawing": {
+            "collection": "Images, Videos, Interactive resources, and Design",
+            "dc.type": "image",
+        },
+        "image/figure": {
+            "collection": "Images, Videos, Interactive resources, and Design",
+            "dc.type": "image",
+        },
+        "image/photo": {
+            "collection": "Images, Videos, Interactive resources, and Design",
+            "dc.type": "image",
+        },
+        "image/plot": {
+            "collection": "Images, Videos, Interactive resources, and Design",
+            "dc.type": "image",
+        },
+        "image/other": {
+            "collection": "Images, Videos, Interactive resources, and Design",
+            "dc.type": "image",
+        },
         "software": {
             "collection": "Datasets and Code",
             "dc.type": "software",
         },
-        # "video": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "video",
-        # },
+        "video": {
+            "collection": "Images, Videos, Interactive resources, and Design",
+            "dc.type": "video",
+        },
         "model": {
             "collection": "Datasets and Code",
             "dc.type": "dataset",
