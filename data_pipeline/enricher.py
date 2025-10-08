@@ -168,7 +168,11 @@ class AuthorProcessor:
     def process_zenodo(self, text):
         if not isinstance(text, str):
             return False
-        pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
+        pattern = (
+            r"(?:EPFL"
+            r"|[Pp]olytechnique\s+[Ff].d.rale\s+de\s+Lausanne"
+            r"|[Ss]wiss\s+[Ff]ederal\s+[Ii]nstitute\s+of\s+[Tt]echnology\s+in\s+[Ll]ausanne)"
+        )
         return bool(re.search(pattern, text))
 
     def process_crossref(self, text):
@@ -407,7 +411,7 @@ class AuthorProcessor:
             query = (
                 f"cris.virtual.sciperId:({sciper_id}) "
                 f"AND (dateIssued.year:[{start_year} TO {end_year}]) "
-                f"AND (entityType:(Publication) -types:(doctoral thesis))"
+                f"AND (entityType:(Publication) NOT (types:(doctoral thesis) OR types_authority:(*student*)))"
             )
             try:
                 facet_values = dspace_wrapper.client.get_facet_values(
@@ -645,6 +649,7 @@ class AuthorProcessor:
         self.df = pd.concat([self.df, enrichment_df], axis=1)
 
         return self.df if return_df else self
+
 
 class PublicationProcessor: 
 
