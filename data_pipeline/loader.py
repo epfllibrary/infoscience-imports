@@ -49,7 +49,11 @@ class Loader:
         return None
 
     def _process_and_replace_authors(self, workspace_response, row_id, form_section):
-        """Replace and enrich dc.contributor.author."""
+        """Replace and enrich dc.contributor.author.
+
+        Skip any rows where `role` equals 'contributor' (case-insensitive).
+        All other roles — including creator, author, empty, or NaN — are processed.
+        """
         if (
             "sections" not in workspace_response
             or f"{form_section}details" not in workspace_response["sections"]
@@ -57,11 +61,23 @@ class Loader:
             logger.warning("No authors section found in workspace response.")
             return []
 
-        matching_authors = self.df_authors[self.df_authors["row_id"] == row_id]
-
-        if matching_authors.empty:
-            logger.warning(f"No matching authors found in df_authors for row_id: {row_id}.")
+        subset = self.df_authors[self.df_authors["row_id"] == row_id].copy()
+        if subset.empty:
+            logger.warning(
+                "No matching authors found in df_authors for row_id: %s.", row_id
+            )
             return []
+
+        # Drop contributors
+        if "role" in subset.columns:
+            role_series = subset["role"].astype(str).str.strip().str.lower()
+            subset = subset[~role_series.eq("contributor")]
+            if subset.empty:
+                logger.info(
+                    "All rows for row_id %s are contributors; skipping author patch.",
+                    row_id,
+                )
+                return []
 
         def create_metadata(value, display=None, confidence=-1, authority=None):
             return {
@@ -75,30 +91,30 @@ class Loader:
             value, delimiter="|", default="#PLACEHOLDER_PARENT_METADATA_VALUE#"
         ):
             """
-            Extracts the first part after the delimiter in the given string.
-            If a prefix consisting of digits followed by ':' is present, returns the part after ':'.
-            If no valid prefix is present, returns the first part as is.
-            Returns the default value if the string is NaN or empty.
+            Return the first segment of a delimited string, removing optional numeric/ROR prefixes.
+            Fallback to default if empty or NaN.
             """
-            if pd.notna(value) and value.strip():
-                first_part = value.split(delimiter, 1)[0].strip()
-                # Regex pour détecter soit :
-                #  - un préfixe 100% numérique suivi de ':'
-                #  - un identifiant ROR (2 chiffres + 7 alphanumériques) suivi de ':'
-                if re.match(r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE):
-                    return first_part.split(":", 1)[1].strip()
-                return first_part
-            else:
-                return default
+            if pd.notna(value):
+                s = str(value).strip()
+                if s:
+                    first_part = s.split(delimiter, 1)[0].strip()
+                    if re.match(
+                        r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE
+                    ):
+                        return first_part.split(":", 1)[1].strip()
+                    return first_part
+            return default
 
         authors_metadata = []
         affiliations_metadata = []
-        orgunit_metadata = []
         orcid_metadata = []
         roles_metadata = []
 
-        for _, author_row in matching_authors.iterrows():
-            authors_metadata.append(create_metadata(author_row["author"]))
+        # Build metadata blocks
+        for _, author_row in subset.iterrows():
+            authors_metadata.append(
+                create_metadata(str(author_row.get("author", "")).strip())
+            )
 
             orcid_value = author_row.get("orcid_id")
             epfl_orcid_value = author_row.get("epfl_orcid")
@@ -108,21 +124,21 @@ class Loader:
             elif pd.notna(epfl_orcid_value) and str(epfl_orcid_value).strip():
                 orcid_metadata.append(create_metadata(str(epfl_orcid_value).strip()))
             else:
-                orcid_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
+                orcid_metadata.append(
+                    create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+                )
 
-            if author_row.get("source", "").lower() != "crossref":
+            if str(author_row.get("source", "")).lower() != "crossref":
                 affiliation_name = get_first_split(author_row.get("organizations", ""))
                 affiliations_metadata.append(create_metadata(affiliation_name))
             else:
-                affiliations_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
-
-            # orgunit_name = get_first_split(author_row.get("suborganization", ""))
-            orgunit_metadata.append(
-                create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#")
-            )
+                affiliations_metadata.append(
+                    create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+                )
 
             roles_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
+        # Authority enrichment
         for i, author in enumerate(authors_metadata):
             author_name = author["value"]
             matching_epfl_author = self.df_epfl_authors[
@@ -134,20 +150,21 @@ class Loader:
                 continue
 
             for _, match in matching_epfl_author.iterrows():
-                if pd.notna(match.get("sciper_id")):
+                sciper = match.get("sciper_id")
+                if pd.notna(sciper):
                     prefix = (
                         "will be referenced::"
                         if pd.notna(match.get("dspace_uuid"))
                         else "will be generated::"
                     )
                     author.update(
-                        authority=f"{prefix}SCIPER-ID::{match['sciper_id']}",
+                        authority=f"{prefix}SCIPER-ID::{sciper}",
                         confidence=600,
                     )
 
                 if pd.notna(match.get("organizations")):
                     affiliations_metadata[i] = create_metadata(
-                        "\u00c9cole Polytechnique F\u00e9d\u00e9rale de Lausanne",
+                        "École Polytechnique Fédérale de Lausanne",
                         authority="will be referenced::ROR-ID::https://ror.org/02s376052",
                         confidence=600,
                     )
@@ -176,6 +193,149 @@ class Loader:
         ]
 
         return patch_operations
+
+    def _process_and_add_contributors(self, workspace_response, row_id, form_section):
+        """Add Zenodo/DataFrame contributors (role == 'contributor') as DSpace contributors.
+
+        Builds four ADD operations:
+        - /sections/{form_section}details/epfl.contributor.role
+        - /sections/{form_section}details/dc.contributor
+        - /sections/{form_section}details/oairecerif.contributor.affiliation
+        - /sections/{form_section}details/epfl.contributor.orcid
+
+        Keeps order from the DataFrame. Skips if there are no contributors.
+        """
+        if (
+            "sections" not in workspace_response
+            or f"{form_section}details" not in workspace_response["sections"]
+        ):
+            logger.warning("No contributors section found in workspace response.")
+            return []
+
+        subset = self.df_authors[self.df_authors["row_id"] == row_id].copy()
+        if subset.empty:
+            return []
+
+        # Keep only contributors
+        if "role" in subset.columns:
+            subset = subset[
+                subset["role"].astype(str).str.strip().str.lower().eq("contributor")
+            ]
+        if subset.empty:
+            return []
+
+        def create_metadata(value, display=None, confidence=-1, authority=None):
+            return {
+                "value": value,
+                "authority": authority,
+                "display": display or value,
+                "confidence": confidence,
+            }
+
+        def get_first_split(
+            value, delimiter="|", default="#PLACEHOLDER_PARENT_METADATA_VALUE#"
+        ):
+            """Return first segment, removing optional numeric/ROR prefix if present."""
+            if pd.notna(value):
+                s = str(value).strip()
+                if s:
+                    first_part = s.split(delimiter, 1)[0].strip()
+                    if re.match(
+                        r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE
+                    ):
+                        return first_part.split(":", 1)[1].strip()
+                    return first_part
+            return default
+
+        roles_meta = []
+        names_meta = []
+        affils_meta = []
+        orcids_meta = []
+
+        # Build blocks in order
+        for _, row in subset.iterrows():
+            name = str(row.get("author", "")).strip()
+            if not name:
+                # Skip malformed entries
+                continue
+
+            # Role label: take what’s in DF if present, else "contributor"
+            # role_label = str(row.get("role", "")).strip() or "contributor"
+            # roles_meta.append(create_metadata(role_label))
+            roles_meta.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
+
+            # ORCID: prefer orcid_id then epfl_orcid
+            orcid_val = row.get("orcid_id")
+            epfl_orcid_val = row.get("epfl_orcid")
+            if pd.notna(orcid_val) and str(orcid_val).strip():
+                orcids_meta.append(create_metadata(str(orcid_val).strip()))
+            elif pd.notna(epfl_orcid_val) and str(epfl_orcid_val).strip():
+                orcids_meta.append(create_metadata(str(epfl_orcid_val).strip()))
+            else:
+                orcids_meta.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
+
+            # Affiliation: from organizations unless source == crossref
+            if str(row.get("source", "")).lower() != "crossref":
+                aff_name = get_first_split(row.get("organizations", ""))
+                affils_meta.append(create_metadata(aff_name))
+            else:
+                affils_meta.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
+
+            # Name authority enrichment (SCIPER → authority + confidence)
+            authority = None
+            confidence = -1
+            matching_epfl = self.df_epfl_authors[
+                (self.df_epfl_authors["row_id"] == row_id)
+                & (self.df_epfl_authors["author"] == name)
+            ]
+            if not matching_epfl.empty:
+                for _, m in matching_epfl.iterrows():
+                    sciper = m.get("sciper_id")
+                    if pd.notna(sciper):
+                        prefix = (
+                            "will be referenced::"
+                            if pd.notna(m.get("dspace_uuid"))
+                            else "will be generated::"
+                        )
+                        authority = f"{prefix}SCIPER-ID::{sciper}"
+                        confidence = 600
+                        break
+
+                # If EPFL affiliation is confirmed in match, override affiliation with EPFL + ROR authority
+                if any(
+                    pd.notna(m.get("organizations")) for _, m in matching_epfl.iterrows()
+                ):
+                    affils_meta[-1] = {
+                        "value": "École Polytechnique Fédérale de Lausanne",
+                        "authority": "will be referenced::ROR-ID::https://ror.org/02s376052",
+                        "display": "École Polytechnique Fédérale de Lausanne",
+                        "confidence": 600,
+                    }
+
+            names_meta.append(
+                {
+                    "value": name,
+                    "authority": authority,
+                    "display": name,
+                    "confidence": confidence,
+                }
+            )
+
+        if not names_meta:
+            return []
+
+        base = f"/sections/{form_section}details"
+        ops = [
+            {"op": "add", "path": f"{base}/epfl.contributor.role", "value": roles_meta},
+            {"op": "add", "path": f"{base}/dc.contributor", "value": names_meta},
+            {
+                "op": "add",
+                "path": f"{base}/oairecerif.contributor.affiliation",
+                "value": affils_meta,
+            },
+            {"op": "add", "path": f"{base}/epfl.contributor.orcid", "value": orcids_meta},
+        ]
+        return ops
 
     def _patch_additional_metadata(
         self, workspace_id, row, units, ifs3_collection_id, workspace_response
@@ -232,6 +392,10 @@ class Loader:
             # Add operation to update authors
             if author_patch:
                 patch_operations.extend(author_patch)
+
+            contrib_patch = self._process_and_add_contributors(updated_workspace, row["row_id"], form_section)
+            if contrib_patch:
+                patch_operations.extend(contrib_patch)
 
             logger.debug("Patch operations: %s", patch_operations)
 
@@ -307,6 +471,9 @@ class Loader:
             "/sections/journalcontainer_details/dc.relation.journal",
             "/sections/journalcontainer_details/dc.relation.issn",
             "/sections/journalcontainer_details/oaire.citation.volume",
+            "/sections/related_works/datacite.relationType",
+            "/sections/related_works/dc.relation.title",
+            "/sections/related_works/datacite.relatedIdentifier",
         ]
 
         for path in removable_metadata_paths:
@@ -343,6 +510,9 @@ class Loader:
             operations = []
             if not conference_info:
                 return operations
+
+            # Choose section based on form_section
+            section_name = "related_event" if form_section == "dataset_" else "conference_event"
 
             conferences = conference_info.split("||")
 
@@ -400,7 +570,7 @@ class Loader:
                 operations.append(
                     {
                         "op": "add",
-                        "path": "/sections/conference_event/epfl.relation.conferenceType",
+                        "path": f"/sections/{section_name}/epfl.relation.conferenceType",
                         "value": conference_types,
                     }
                 )
@@ -408,7 +578,7 @@ class Loader:
                 operations.append(
                     {
                         "op": "add",
-                        "path": "/sections/conference_event/dc.relation.conference",
+                        "path": f"/sections/{section_name}/dc.relation.conference",
                         "value": conference_names,
                     }
                 )
@@ -416,7 +586,7 @@ class Loader:
                 operations.append(
                     {
                         "op": "add",
-                        "path": "/sections/conference_event/oaire.citation.conferencePlace",
+                        "path": f"/sections/{section_name}/oaire.citation.conferencePlace",
                         "value": conference_places,
                     }
                 )
@@ -424,7 +594,7 @@ class Loader:
                 operations.append(
                     {
                         "op": "add",
-                        "path": "/sections/conference_event/oaire.citation.conferenceDate",
+                        "path": f"/sections/{section_name}/oaire.citation.conferenceDate",
                         "value": conference_dates,
                     }
                 )
@@ -432,7 +602,7 @@ class Loader:
                 operations.append(
                     {
                         "op": "add",
-                        "path": "/sections/conference_event/oairecerif.acronym",
+                        "path": f"/sections/{section_name}/oairecerif.acronym",
                         "value": conference_acronyms,
                     }
                 )
@@ -440,7 +610,7 @@ class Loader:
                 operations.append(
                     {
                         "op": "add",
-                        "path": "/sections/conference_event/oairecerif.acronym",
+                        "path": f"/sections/{section_name}/oairecerif.acronym",
                         "value": [
                             build_value(
                                 "#PLACEHOLDER_PARENT_METADATA_VALUE#",
@@ -450,6 +620,86 @@ class Loader:
                         ],
                     }
                 )
+
+            return operations
+
+        def parse_additional_link(additional_url: str):
+            """
+            Build field pairs:
+            - /sections/additional_fields/epfl.url                → "Repository URL"
+            - /sections/additional_fields/epfl.url.description    → URL
+            """
+            ops = []
+            if not additional_url:
+                return ops
+
+            raw_entries = [e.strip() for e in str(additional_url).split("||") if e.strip()]
+            if not raw_entries:
+                return ops
+
+            labels, descriptions = [], []
+            for entry in raw_entries:
+                # enlève un éventuel préfixe 'repository url:' (insensible à la casse)
+                if entry.lower().startswith("repository url:"):
+                    url = entry.split(":", 1)[1].strip()
+                else:
+                    url = entry
+
+                if not url:
+                    continue
+
+                labels.append("Repository URL")
+                descriptions.append(url)
+
+            if not labels:
+                return ops
+
+            ops.append(self._create_op("/sections/additional_fields/epfl.url", labels))
+            ops.append(self._create_op("/sections/additional_fields/epfl.url.description", descriptions))
+
+            return ops
+
+        def parse_related_works(related_works):
+            """
+            convert 'relation::identifier||...' into 3 PATCH operations:
+            - datacite.relationType
+            - dc.relation.title (placeholder)
+            - datacite.relatedIdentifier
+            """
+            operations = []
+            logger.debug("parse_related_works IN=%r", related_works)
+            if not related_works:
+                return operations
+
+            entries = [e.strip() for e in str(related_works).split("||") if e.strip()]
+            if not entries:
+                return operations
+
+            rel_types, titles, identifiers = [], [], []
+
+            for e in entries:
+                parts = [p.strip() for p in e.split("::", 1)]
+                if len(parts) != 2:
+                    continue
+                rel, ident = parts[0], parts[1]
+                if not rel or not ident:
+                    continue
+
+                # Normalise DOI nu -> URL
+                if ident.lower().startswith("10."):
+                    ident = f"https://doi.org/{ident}"
+
+                rel_types.append(rel)
+                identifiers.append(ident)
+                titles.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+
+            if not rel_types:
+                return operations
+
+            # On utilise le helper _create_op pour rester homogène
+            operations.append(self._create_op("/sections/related_works/datacite.relationType", rel_types))
+            operations.append(self._create_op("/sections/related_works/dc.relation.title", titles))
+            operations.append(self._create_op("/sections/related_works/datacite.relatedIdentifier", identifiers))
 
             return operations
 
@@ -566,6 +816,57 @@ class Loader:
 
             return operations
 
+        def parse_access_conditions(access_conditions: str):
+            """
+            Build patch operation for /sections/itemAccessConditions/accessConditions.
+            - Ignore if empty value
+            """
+            if not access_conditions or not str(access_conditions).strip():
+                return []
+
+            return [{
+                "op": "add",
+                "path": "/sections/itemAccessConditions/accessConditions",
+                "value": [{"name": str(access_conditions).strip()}],
+            }]
+
+        def parse_language(language_code: str):
+            """
+            Add dataset language without any mapping/conversion.
+            Expects a 2-letter ISO code already prepared upstream (e.g., 'en').
+            """
+            if not language_code or not str(language_code).strip():
+                return []
+            return [{
+                "op": "add",
+                "path": "/sections/dataset_details/dc.language.iso",
+                "value": [{
+                    "value": str(language_code).strip(),
+                    "language": None,
+                    "authority": None,
+                    "confidence": -1,
+                    "place": 0
+                }]
+            }]
+
+        def parse_version(version_str: str):
+            """
+            Add dataset version as-is (no mapping).
+            """
+            if not version_str or not str(version_str).strip():
+                return []
+            return [{
+                "op": "add",
+                "path": "/sections/dataset_details/dc.description.version",
+                "value": [{
+                    "value": str(version_str).strip(),
+                    "language": None,
+                    "authority": None,
+                    "confidence": -1,
+                    "place": 0
+                }]
+            }]
+
         # Determine correct form_section and related sections
         type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_'] else 'type'}"
         dc_type = row.get("dc.type")
@@ -594,10 +895,9 @@ class Loader:
             isbn_metadata = "dc.relation.isbn"
             alter_id_section = "alternative_identifiers"
 
-        if dc_type in [
-            "text::preprint",
-
-        ]:
+        if form_section == "dataset_":
+            publisher_container = "dataset_details"
+        elif dc_type in ["text::preprint"]:
             publisher_container = "preprint_details"
         else:
             publisher_container = "bookcontainer_details"
@@ -805,10 +1105,16 @@ class Loader:
 
         if form_section not in ["dataset_"]:
             metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
-            metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
-            # Process editors
             metadata_definitions.extend(parse_editors(row.get("editors")))
+        else:
 
+            metadata_definitions.extend(parse_language(row.get("language")))
+            metadata_definitions.extend(parse_version(row.get("version")))
+            metadata_definitions.extend(parse_additional_link(row.get("additional_url")))
+            metadata_definitions.extend(parse_access_conditions(row.get("access_conditions")))
+            metadata_definitions.extend(parse_related_works(row.get("related_works")))
+
+        metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
         # Add specific patch for license/granted
         metadata_definitions.append(
             {"op": "add", "path": "/sections/license/granted", "value": "true"}
