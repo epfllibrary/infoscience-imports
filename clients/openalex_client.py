@@ -20,6 +20,21 @@ import mappings
 # Base URL for OpenAlex API
 openalex_api_base_url = "https://api.openalex.org"
 
+_DOI_RE = re.compile(r"^https?://(?:dx\.)?doi\.org/", re.IGNORECASE)
+_OA_PREFIX = "https://openalex.org/"
+
+def normalize_doi(doi: str) -> str:
+    if not isinstance(doi, str):
+        return ""
+    doi = doi.strip()
+    return _DOI_RE.sub("", doi)
+
+def normalize_openalex_id(full_id: str) -> str:
+    if not isinstance(full_id, str):
+        return ""
+    full_id = full_id.strip()
+    return full_id[len(_OA_PREFIX):] if full_id.startswith(_OA_PREFIX) else full_id
+
 # Load environment variables
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 openalex_email = os.environ.get("CONTACT_API_EMAIL")
@@ -30,20 +45,18 @@ accepted_doctypes = [
 
 # Retry decorator to handle request retries on specific status codes
 retry_decorator = tenacity.retry(
-    retry=retry_if_api_request_error(status_codes=[429]),
-    wait=tenacity.wait_exponential(multiplier=1, min=2, max=5),
-    stop=tenacity.stop_after_attempt(5),
+    retry=(retry_if_api_request_error(status_codes=[429, 502, 503, 504])),
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=30)
+    + tenacity.wait_random(0, 1),
+    stop=tenacity.stop_after_attempt(6),
     reraise=True,
 )
-
 
 @endpoint(base_url=openalex_api_base_url)
 class OpenAlexEndpoint:
     works = "works"
     work_id = "works/{openalexId}"
     doi = "works/doi:{doi}"
-
-
 class Client(APIClient):
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
@@ -62,7 +75,7 @@ class Client(APIClient):
         Returns:
         A JSON object containing search results from OpenAlex.
         """
-        param_kwargs.setdefault("email", openalex_email)
+        param_kwargs.setdefault("mailto", openalex_email)
         self.params = {**param_kwargs}
         response = self.get(OpenAlexEndpoint.works, params=self.params)
 
@@ -85,7 +98,7 @@ class Client(APIClient):
         Returns:
         The total count of results for the query.
         """
-        param_kwargs.setdefault("email", openalex_email)
+        param_kwargs.setdefault("mailto", openalex_email)
         param_kwargs.setdefault("per_page", 1)
         param_kwargs.setdefault("page", 1)
         self.params = {**param_kwargs}
@@ -107,7 +120,6 @@ class Client(APIClient):
         """
         param_kwargs.setdefault("email", openalex_email)
         param_kwargs.setdefault("per_page", 100)
-        # Curseur initial
         cursor = param_kwargs.pop("cursor", "*")
 
         all_ids: List[str] = []
@@ -122,12 +134,11 @@ class Client(APIClient):
                 break
 
             for record in results:
-                raw_doi = record.get("doi")
-                if raw_doi:
-                    doi_id = re.sub(r'^https?://(?:dx\.)?doi\.org/', '', raw_doi, flags=re.IGNORECASE)
-                    all_ids.append(doi_id)
+                doi = self.openalex_extract_doi(record)
+                if doi:
+                    all_ids.append(doi)
                 else:
-                    all_ids.append(record["id"])
+                    all_ids.append(normalize_openalex_id(record.get("id", "")))
 
             # Passage au curseur suivant
             cursor = response.get("meta", {}).get("next_cursor")
@@ -148,7 +159,7 @@ class Client(APIClient):
         Returns:
             list: Processed records in the specified format.
         """
-        param_kwargs.setdefault("email", openalex_email)
+        param_kwargs.setdefault("mailto", openalex_email)
         param_kwargs.setdefault("per_page", 100)
         cursor = param_kwargs.pop("cursor", "*")
 
@@ -168,7 +179,6 @@ class Client(APIClient):
                 parsed = self._process_record(record, format)
                 if parsed:
                     all_records.append(parsed)
-
 
             page_count += 1
             total_count = response.get("meta", {}).get("count", total_count)
@@ -198,8 +208,8 @@ class Client(APIClient):
         """
         if not openalex_id or str(openalex_id).strip().lower() == "null":
             return None
-        
-        self.params = {"email": openalex_email} if openalex_email else {}
+
+        self.params = {"mailto": openalex_email} if openalex_email else {}
 
         # Determine endpoint based on whether it's a DOI or an OpenAlex ID
         if isinstance(openalex_id, str) and openalex_id.lower().startswith("10."):
@@ -290,6 +300,10 @@ class Client(APIClient):
             ("best_oa_location", self._extract_best_oa_location_info),
             ("open_access", self._extract_open_access_info),
             ("affiliation_info", self._extract_affiliation_info),
+            (
+                "corresponding_institution_ids",
+                self._extract_corresponding_institution_ids,
+            ), 
         ]:
             try:
                 result = func(x)
@@ -297,6 +311,13 @@ class Client(APIClient):
                 digest.update(result)
             except Exception as e:
                 self.logger.warning(f"[{label}] extraction failed: {e}")
+
+        try:
+            apc_info = self._extract_apc_info(x)
+            if apc_info:
+                digest.update(apc_info)
+        except Exception as e:
+            self.logger.warning(f"[apc] extraction failed: {e}")
 
         return digest
 
@@ -336,14 +357,7 @@ class Client(APIClient):
         return ifs3_info
 
     def _extract_openalex_id(self, x):
-        try:
-            full_id = x.get("id", "")
-            if isinstance(full_id, str) and full_id.startswith("https://openalex.org/"):
-                return full_id.replace("https://openalex.org/", "")
-            return full_id if isinstance(full_id, str) else ""
-        except Exception as e:
-            self.logger.error(f"Error extracting OpenAlex ID: {e}")
-            return ""
+        return normalize_openalex_id(x.get("id", ""))
 
     def openalex_extract_doi(self, x):
         """
@@ -355,12 +369,7 @@ class Client(APIClient):
         Returns:
             str: DOI without the 'https://doi.org/' prefix, or an empty string if DOI is None.
         """
-        doi = x.get("doi", "")
-        if isinstance(doi, str) and doi.startswith("https://doi.org/"):
-            return doi[len("https://doi.org/") :]  # Remove the DOI prefix
-        return (
-            doi.lower() if isinstance(doi, str) else ""
-        )
+        return normalize_doi(x.get("doi", ""))
 
     def _extract_first_doctype(self, x):
         """
@@ -613,9 +622,10 @@ class Client(APIClient):
                 authors.append(
                     {
                         "author": formatted_name,
-                        "internal_author_id": author["author"]["id"],
+                        "internal_author_id": (author.get("author") or {}).get("id"),
                         "orcid_id": self._extract_author_orcid(author["author"]),
                         "organizations": institutions,
+                        "is_corresponding": author.get("is_corresponding", False),
                     }
                 )
         except KeyError:
@@ -685,6 +695,42 @@ class Client(APIClient):
             )
         except Exception as e:
             return ""
+
+    def _extract_apc_info(self, x: dict) -> dict:
+        """
+        Extrait apc_list et apc_paid sous forme de champs textuels plats.
+        Exemple : apc_list_value, apc_list_currency, apc_list_value_usd, etc.
+        """
+        out = {}
+
+        def flatten(field: str):
+            obj = x.get(field) or {}
+            if not isinstance(obj, dict):
+                return
+            for k in ("value", "currency", "value_usd"):
+                if k in obj and obj[k] is not None:
+                    out[f"{field}_{k}"] = str(obj[k])
+
+        flatten("apc_list")
+        flatten("apc_paid")
+
+        return out
+
+    def _extract_corresponding_institution_ids(self, x: dict) -> dict:
+        """
+        Extrait la liste des corresponding_institution_ids au format texte,
+        concaténée par '||' et normalisée (IDs OpenAlex sans préfixe URL).
+        """
+        try:
+            raw_list = x.get("corresponding_institution_ids") or []
+            if not isinstance(raw_list, list):
+                return {"corresponding_institution_ids": ""}
+            ids = [normalize_openalex_id(s) for s in raw_list if isinstance(s, str)]
+            ids = [i for i in ids if i]  # supprime les vides
+            return {"corresponding_institution_ids": "||".join(sorted(set(ids)))}
+        except Exception as e:
+            self.logger.warning(f"Error in _extract_corresponding_institution_ids: {e}")
+            return {"corresponding_institution_ids": ""}
 
     @staticmethod
     def _format_authorname(raw: str) -> str:
