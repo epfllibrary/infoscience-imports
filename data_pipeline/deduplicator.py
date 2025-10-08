@@ -153,7 +153,6 @@ class DataFrameProcessor:
         duplicates_df = df[df["is_duplicate"] == True].drop(columns=["is_duplicate"])
         return filtered_df, duplicates_df
 
-
     def deduplicate_infoscience_enhanced(self, df):
         self.logger.info("Recherche avancée de doublons avec métadonnées...")
         wrapper = DSpaceClientWrapper()
@@ -200,6 +199,9 @@ class DataFrameProcessor:
                     "source": source,
                     "year": year,
                     "role": author_data.get("role", None),
+                    "openalex_is_corresponding": author_data.get(
+                        "is_corresponding", None
+                    ),
                     "author": author_data.get("author", None),
                     "orcid_id": author_data.get("orcid_id", None),
                     "internal_author_id": author_data.get("internal_author_id", None),
