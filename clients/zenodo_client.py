@@ -534,7 +534,7 @@ class Client(APIClient):
         url = custom.get("code:codeRepository")
 
         if isinstance(url, str) and url.strip():
-            return f"Code Repository URL:{url.strip()}"
+            return f"Code Repository URL::{url.strip()}"
         return ""
 
     def _extract_access_right(self, x: dict) -> str:
