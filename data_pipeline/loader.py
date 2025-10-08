@@ -625,9 +625,9 @@ class Loader:
 
         def parse_additional_link(additional_url: str):
             """
-            Build field pairs:
-            - /sections/additional_fields/epfl.url                → "Repository URL"
-            - /sections/additional_fields/epfl.url.description    → URL
+            Parse 'label::url[||label::url...]' into two field lists:
+            - /sections/additional_fields/epfl.url             → labels
+            - /sections/additional_fields/epfl.url.description → urls
             """
             ops = []
             if not additional_url:
@@ -639,16 +639,20 @@ class Loader:
 
             labels, descriptions = [], []
             for entry in raw_entries:
-                # enlève un éventuel préfixe 'repository url:' (insensible à la casse)
-                if entry.lower().startswith("repository url:"):
-                    url = entry.split(":", 1)[1].strip()
+                # Expect "label::url"
+                parts = [p.strip() for p in entry.split("::", 1)]
+                if len(parts) != 2:
+                    # Fallback: treat whole entry as URL with a generic label
+                    label, url = "Additional Link", entry
                 else:
-                    url = entry
+                    label, url = parts[0], parts[1]
 
                 if not url:
                     continue
+                if not label:
+                    label = "Additional Link"
 
-                labels.append("Repository URL")
+                labels.append(label)
                 descriptions.append(url)
 
             if not labels:
@@ -656,7 +660,6 @@ class Loader:
 
             ops.append(self._create_op("/sections/additional_fields/epfl.url", labels))
             ops.append(self._create_op("/sections/additional_fields/epfl.url.description", descriptions))
-
             return ops
 
         def parse_related_works(related_works):
