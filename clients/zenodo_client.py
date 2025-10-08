@@ -1,7 +1,10 @@
 """Zenodo client for Infoscience imports"""
 
 import os
-from typing import List
+import re
+import dateparser
+from datetime import datetime
+from typing import List, Dict, Tuple, Any, Optional
 import tenacity
 from apiclient import (
     APIClient,
@@ -136,7 +139,7 @@ class Client(APIClient):
         page is set to 1
 
         Args
-        format: digest|digest-ifs3ifs3|wos
+        format: digest|digest-ifs3|ifs3|zenodo
 
         Usage 1
         ZenodoClient.fetch_records(q="epfl")
@@ -243,6 +246,13 @@ class Client(APIClient):
         # Add dc.type and dc.type_authority to the record
         record["dc.type"] = dc_type_info["dc.type"]
         record["dc.type_authority"] = dc_type_info["dc.type_authority"]
+        record["publisher"] = self._extract_publisher(x)
+        record["related_works"] = self._extract_related_identifiers(x)
+        record["additional_url"] = self._extract_additional_url(x)
+        record["access_conditions"] = self._extract_access_right(x)
+        record["language"], record["version"] = self._extract_language_and_version(x)
+        record["conference_info"] = self._extract_conference_info(x)
+
         return record
 
     def _extract_ifs3_record_info(self, record):
@@ -341,51 +351,64 @@ class Client(APIClient):
             return {"value": "N/A", "display": "N/A (Copyrighted)"}
 
     def _extract_ifs3_authors(self, x):
-        # Initialize result list
+        """
+        Extract authors from a Zenodo record, preserving the original order.
+
+        The function combines:
+        1) `metadata.creators`  → role = "creator"
+        2) `metadata.contributors` → role = "contributor"
+
+        The order is preserved exactly as provided by the source.
+        Each entry is returned as a dict with the following keys:
+        - author (str): Person's name
+        - internal_author_id (None): Placeholder for internal reconciliation
+        - orcid_id (str|None): ORCID identifier if present
+        - organizations (str|None): Affiliation text
+        - role ("creator" | "contributor"): Role based on source array
+        - contributor_type (str|None): Contributor type from Zenodo, only for contributors
+        """
         result = []
 
         try:
-            # Ensure the input is a dictionary
             if not isinstance(x, dict):
-                self.logger.error(f"Input data must be a dictionary.")
-                return result  # Return an empty result
+                self.logger.error("Input data must be a dict.")
+                return result
 
-            # Ensure required keys are present in the input
-            if "creators" not in x["metadata"]:
-                self.logger.error(f"Input data must contain a 'creators' key.")
-                return result  # Return an empty result
+            md = x.get("metadata") or {}
+            creators = md.get("creators") or []
+            contributors = md.get("contributors") or []
 
-            # Process authors
-            for author in x["metadata"]["creators"]:
-                try:
-                    # Check if required keys are present in the author
-                    if "name" not in author:
-                        self.logger.error(
-                            "Each 'author' item must contain a 'name' key."
-                        )
-                        continue  # Skip this author and continue
+            def _push(person: dict, role_label: str):
+                """Append a structured person entry to the result list."""
+                if not isinstance(person, dict):
+                    return
+                name = person.get("name")
+                if not name:
+                    return
 
-                    # Extract author details
-                    author_name = author.get("name", None)
-                    orcid_id = author.get("orcid", None)
-                    affiliation = author.get("affiliation", None)
+                entry = {
+                    "author": name,
+                    "internal_author_id": None,
+                    "orcid_id": person.get("orcid"),
+                    "organizations": person.get("affiliation"),
+                    "role": role_label,
+                }
 
-                    # Add to result list
-                    result.append(
-                        {
-                            "author": author_name,
-                            "internal_author_id": None,
-                            "orcid_id": orcid_id,
-                            "organizations": affiliation,
-                        }
-                    )
+                # Keep contributor type if present
+                if role_label == "contributor":
+                    entry["contributor_type"] = person.get("type")
 
-                except KeyError as e:
-                    self.logger.error(f"Skipping author due to missing key: {e}")
-                    continue  # Skip this author and continue
+                result.append(entry)
+
+            # Preserve ordering: creators first, contributors second
+            for author in creators:
+                _push(author, "author")
+
+            for contrib in contributors:
+                _push(contrib, "contributor")
 
         except Exception as e:
-            self.logger.error(f"An error occurred during processing: {e}")
+            self.logger.error(f"An error occurred during _extract_ifs3_authors: {e}")
 
         return result
 
@@ -401,6 +424,353 @@ class Client(APIClient):
         version_creation_time = sorted([rec["created"] for rec in versions])[0]
 
         return version_creation_time
+
+    def _extract_publisher(self, x: Dict[str, Any]) -> str:
+        md = x.get("metadata", {}) or {}
+        # Sur Zenodo, c’est souvent "Zenodo" ou vide
+        return md.get("publisher") or "Zenodo"
+
+
+    def _extract_related_identifiers(self, x: dict) -> str:
+        """
+        Return string 'relation::identifier' separated by '||'.
+
+        - Supports 'related_identifiers' (Zenodo v3) and 'relatedIdentifiers' (variant).
+        - Accepts 'relation' | 'relation_type' | 'relationType' for the relation.
+        - Normalizes identifiers by scheme (case-insensitive):
+            * DOI        -> https://doi.org/<doi>
+            * ArXiv      -> https://arxiv.org/abs/<id>
+            * Handle/HDL -> https://hdl.handle.net/<id>
+            * PMID       -> https://pubmed.ncbi.nlm.nih.gov/<id>/
+            * Already http(s)               -> kept as is.
+        - Also appends 'IsVersionOf::<concept_doi_url>' if a concept DOI exists and
+        the same relation (case-insensitive) with the same normalized identifier
+        is not already present.
+        """
+        md = x.get("metadata", {}) or {}
+        rels = md.get("related_identifiers") or md.get("relatedIdentifiers") or []
+        out, seen_display = [], set()  # for exact string dedupe in output
+        seen_norm = set()  # for logical dedupe: (relation_lower, url_lower)
+
+        doi_url_re = re.compile(r"^https?://(?:doi\.org|dx\.doi\.org)/", re.I)
+        http_re = re.compile(r"^https?://", re.I)
+
+        def _norm_identifier(scheme: str, identifier: str) -> str:
+            """Normalize an identifier to a resolvable URL when possible."""
+            scheme_up = (scheme or "").strip().upper()
+            ident = (identifier or "").strip()
+            if not ident:
+                return ""
+
+            if http_re.match(ident):
+                return ident
+            if scheme_up == "DOI":
+                return ident if doi_url_re.match(ident) else f"https://doi.org/{ident}"
+            if scheme_up == "ARXIV":
+                id_norm = re.sub(r"^arxiv:", "", ident, flags=re.I)
+                return f"https://arxiv.org/abs/{id_norm}"
+            if scheme_up in ("HANDLE", "HDL"):
+                id_norm = re.sub(r"^(?:handle|hdl):", "", ident, flags=re.I)
+                return f"https://hdl.handle.net/{id_norm}"
+            if scheme_up == "PMID":
+                id_norm = re.sub(r"^pmid:\s*", "", ident, flags=re.I)
+                return f"https://pubmed.ncbi.nlm.nih.gov/{id_norm}/"
+            # Fallback
+            return ident
+
+        # Collect existing related identifiers
+        for r in rels:
+            if not isinstance(r, dict):
+                continue
+
+            reltype = (
+                r.get("relation") or r.get("relation_type") or r.get("relationType") or ""
+            ).strip()
+            if not reltype:
+                continue
+
+            scheme = (r.get("scheme") or r.get("identifierType") or "").strip()
+            identifier = (r.get("identifier") or "").strip()
+            if not identifier:
+                continue
+
+            norm = _norm_identifier(scheme, identifier)
+            if not norm:
+                continue
+
+            entry = f"{reltype}::{norm}"
+            if entry not in seen_display:
+                seen_display.add(entry)
+                out.append(entry)
+
+            # also track normalized tuple for robust duplicate detection
+            seen_norm.add((reltype.lower(), norm.lower()))
+
+        # Consider adding IsVersionOf::<conceptdoi>
+        concept_doi = (x.get("conceptdoi") or md.get("conceptdoi") or "").strip()
+        if concept_doi:
+            concept_norm = (
+                concept_doi
+                if doi_url_re.match(concept_doi)
+                else f"https://doi.org/{concept_doi}"
+            )
+            key = ("isversionof", concept_norm.lower())
+            if key not in seen_norm:
+                concept_entry = f"IsVersionOf::{concept_norm}"
+                # keep exact-string dedupe as well (defensive)
+                if concept_entry not in seen_display:
+                    seen_display.add(concept_entry)
+                    out.append(concept_entry)
+
+        return "||".join(out)
+
+    def _extract_additional_url(self, x: dict) -> str:
+        """
+        Extract 'additional_url' if x['metadata.custom']['code:codeRepository'] is present.
+        Returns 'repository url:<URL>' or empty string otherwise.
+        """
+        md = x.get("metadata", {}) or {}
+        custom = md.get("custom") or {}
+        url = custom.get("code:codeRepository")
+
+        if isinstance(url, str) and url.strip():
+            return f"Code Repository URL:{url.strip()}"
+        return ""
+
+    def _extract_access_right(self, x: dict) -> str:
+        """
+        Extract and map Zenodo access level to local values:
+        - 'open'       → 'openaccess'
+        - 'restricted' → 'restricted'
+        """
+        md = x.get("metadata", {}) or {}
+        value = md.get("access_right", "")
+        if not isinstance(value, str):
+            return ""
+        value = value.strip().lower()
+        mapping = {
+            "open": "openaccess",
+            "restricted": "restricted",
+        }
+        return mapping.get(value, value)
+
+    def _extract_language_and_version(self, x: dict) -> tuple[str | None, str | None]:
+        """
+        Extract language (mapped to ISO 639-1) and version from a Zenodo record.
+
+        Example input:
+            "language": "eng"
+            "version": "1.0"
+
+        Returns:
+            (language_iso2, version)
+            e.g. ('en', '1.0')
+        """
+        md = x.get("metadata", {}) or {}
+        lang = md.get("language")
+        version = md.get("version")
+
+        # Map 3-letter → 2-letter ISO codes (extend as needed)
+        lang_map = {
+            "eng": "en",
+            "fre": "fr",
+            "fra": "fr",
+            "ger": "de",
+            "deu": "de",
+            "ita": "it",
+            "spa": "es",
+            "por": "pt",
+            "nld": "nl",
+            "dut": "nl",
+            "swe": "sv",
+            "nor": "no",
+            "dan": "da",
+            "fin": "fi",
+            "rus": "ru",
+            "chi": "zh",
+            "zho": "zh",
+            "jpn": "ja",
+        }
+
+        lang_iso2 = None
+        if isinstance(lang, str):
+            lang_code = lang.strip().lower()
+            lang_iso2 = lang_map.get(lang_code[:3], None) or lang_code[:2]
+
+            # Handle accidental 3-letter codes that are not in map but look valid
+            if len(lang_iso2) > 2:
+                lang_iso2 = lang_iso2[:2]
+
+        version_str = (
+            str(version).strip() if isinstance(version, (str, int, float)) else None
+        )
+        return lang_iso2, version_str
+
+    def _extract_conference_info(self, x: dict) -> str:
+        """
+        Extract conference information from a Zenodo record and format it as:
+            'conference_title::conference_location::conference_startdate::conference_enddate::conference_acronym'
+
+        Zenodo exposes meeting data under:
+            record["metadata"]["meeting"] = {
+                "title": "...",
+                "acronym": "...",
+                "dates": "11 to 15 January 2021",  # free text
+                "place": "City, Country",          # optional
+                "url": "...",
+                "session": "..."
+            }
+
+        Notes:
+        - Location is read from 'meeting.place' when present; otherwise an empty string is used.
+        - Dates are parsed from common textual ranges and returned as ISO 'YYYY-MM-DD'.
+        If parsing fails, empty strings are returned for dates.
+
+        Args:
+            x (dict): Zenodo record.
+
+        Returns:
+            str: 'title::location::start_date::end_date::acronym' or '' if nothing found.
+        """
+        md = x.get("metadata", {}) or {}
+        meeting = md.get("meeting") or {}
+        if not isinstance(meeting, dict) or not meeting:
+            return ""
+
+        title = (meeting.get("title") or "").strip()
+        acronym = (meeting.get("acronym") or "").strip()
+        dates_raw = (meeting.get("dates") or "").strip()
+        # Take 'place' if provided (e.g., "Virtual Conference", "Lausanne, Switzerland")
+        location = (meeting.get("place") or "").strip()
+
+        start_date, end_date = self._parse_zenodo_meeting_dates(dates_raw)
+
+        # If nothing meaningful, return empty string
+        if not any([title, location, start_date, end_date, acronym]):
+            return ""
+
+        return f"{title}::{location}::{start_date}::{end_date}::{acronym}"
+
+    # def _parse_zenodo_meeting_dates(self, s: str) -> tuple[str, str]:
+    #     if not s:
+    #         return "", ""
+
+    #     parts = re.split(r"\s*(?:to|-|–|—)\s*", s)
+    #     parsed = [dateparser.parse(p, languages=["en"]) for p in parts if p.strip()]
+    #     dates = [d.strftime("%Y-%m-%d") for d in parsed if d]
+
+    #     if len(dates) == 1:
+    #         return dates[0], dates[0]
+    #     elif len(dates) >= 2:
+    #         return dates[0], dates[1]
+    #     return "", ""
+
+    def _parse_zenodo_meeting_dates(self, s: str) -> tuple[str, str]:
+        """
+        Parse common date string patterns from Zenodo 'meeting.dates' into (start, end) ISO dates.
+        Supported examples:
+        - "4-7 May, 2025"
+        - "11 to 15 January 2021"
+        - "Jan 11–15, 2021"
+        - "30 Dec 2020 – 2 Jan 2021"
+        - "22–27 August 2020"
+        - "15 January 2021" (single day)
+        Returns empty strings if parsing fails.
+        """
+        if not s:
+            return "", ""
+
+        s_norm = " ".join(s.split())
+        month_map = {
+            "january": "01",
+            "jan": "01",
+            "february": "02",
+            "feb": "02",
+            "march": "03",
+            "mar": "03",
+            "april": "04",
+            "apr": "04",
+            "may": "05",
+            "june": "06",
+            "jun": "06",
+            "july": "07",
+            "jul": "07",
+            "august": "08",
+            "aug": "08",
+            "september": "09",
+            "sep": "09",
+            "sept": "09",
+            "october": "10",
+            "oct": "10",
+            "november": "11",
+            "nov": "11",
+            "december": "12",
+            "dec": "12",
+        }
+
+        def iso(y: str, m: str, d: str) -> str:
+            try:
+                yy, mm, dd = int(y), int(m), int(d)
+                if 1 <= mm <= 12 and 1 <= dd <= 31:
+                    return f"{yy:04d}-{mm:02d}-{dd:02d}"
+            except Exception:
+                pass
+            return ""
+
+        def m2num(m: str):
+            return month_map.get(m.lower())
+
+        # Pattern A: "30 Dec 2020 – 2 Jan 2021"
+        m = re.search(
+            r"(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})\s*(?:to|-|–|—)\s*(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})",
+            s_norm,
+        )
+        if m:
+            d1, M1, y1, d2, M2, y2 = m.groups()
+            m1, m2 = m2num(M1), m2num(M2)
+            return iso(y1, m1 or "", d1), iso(y2, m2 or "", d2)
+
+        # Pattern B: "4-7 May, 2025" / "4–7 May 2025"
+        m = re.search(
+            r"(\d{1,2})\s*(?:to|-|–|—)\s*(\d{1,2})\s+([A-Za-z]{3,}),?\s*(\d{4})", s_norm
+        )
+        if m:
+            d1, d2, M, y = m.groups()
+            mm = m2num(M)
+            return iso(y, mm or "", d1), iso(y, mm or "", d2)
+
+        # Pattern C: "11 to 15 January 2021"
+        m = re.search(
+            r"(\d{1,2})\s*(?:to|-|–|—)\s*(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})", s_norm
+        )
+        if m:
+            d1, d2, M, y = m.groups()
+            mm = m2num(M)
+            return iso(y, mm or "", d1), iso(y, mm or "", d2)
+
+        # Pattern D: "Jan 11–15, 2021"
+        m = re.search(
+            r"([A-Za-z]{3,})\s+(\d{1,2})\s*(?:to|-|–|—)\s*(\d{1,2}),?\s*(\d{4})", s_norm
+        )
+        if m:
+            M, d1, d2, y = m.groups()
+            mm = m2num(M)
+            return iso(y, mm or "", d1), iso(y, mm or "", d2)
+
+        # Pattern E: single date "15 January 2021" or "January 15, 2021"
+        m = re.search(r"(\d{1,2})\s+([A-Za-z]{3,}),?\s*(\d{4})", s_norm)
+        if not m:
+            m = re.search(r"([A-Za-z]{3,})\s+(\d{1,2}),?\s*(\d{4})", s_norm)
+            if m:
+                M, d, y = m.groups()
+                mm = m2num(M)
+                return iso(y, mm or "", d), iso(y, mm or "", d)
+        else:
+            d, M, y = m.groups()
+            mm = m2num(M)
+            return iso(y, mm or "", d), iso(y, mm or "", d)
+
+        return "", ""
 
 
 ZenodoClient = Client(
