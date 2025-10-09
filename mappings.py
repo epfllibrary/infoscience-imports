@@ -426,36 +426,36 @@ doctypes_mapping_dict = {
         #     "dc.type": "text::thesis::doctoral thesis",
         # },
         "image/diagram": {
-            "collection": "Images, Videos, Interactive resources, and Design",
-            "dc.type": "image",
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
         },
         "image/drawing": {
-            "collection": "Images, Videos, Interactive resources, and Design",
-            "dc.type": "image",
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
         },
         "image/figure": {
-            "collection": "Images, Videos, Interactive resources, and Design",
-            "dc.type": "image",
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
         },
         "image/photo": {
-            "collection": "Images, Videos, Interactive resources, and Design",
-            "dc.type": "image",
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
         },
         "image/plot": {
-            "collection": "Images, Videos, Interactive resources, and Design",
-            "dc.type": "image",
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
         },
         "image/other": {
-            "collection": "Images, Videos, Interactive resources, and Design",
-            "dc.type": "image",
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
         },
         "software": {
             "collection": "Datasets and Code",
             "dc.type": "software",
         },
         "video": {
-            "collection": "Images, Videos, Interactive resources, and Design",
-            "dc.type": "video",
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
         },
         "model": {
             "collection": "Datasets and Code",

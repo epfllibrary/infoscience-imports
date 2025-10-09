@@ -2,6 +2,7 @@
 
 import os
 import re
+import math
 from pathlib import Path
 import pandas as pd
 from clients.dspace_client_wrapper import DSpaceClientWrapper
@@ -16,8 +17,72 @@ script_dir = Path(__file__).resolve().parent
 project_root = script_dir.parent
 pdf_dir = project_root / "data" / "pdfs"
 
-
 dspace_wrapper = DSpaceClientWrapper()
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _is_nan_like(x) -> bool:
+    """Return True if x behaves like a NaN (float('nan'), numpy.nan, pandas NA)."""
+    try:
+        # NaN != NaN, while None == None
+        return x != x
+    except Exception:
+        return False
+
+
+def _sanitize_value(v):
+    """
+    Recursively sanitize any JSON-like payload:
+    - Replace NaN/Inf with None
+    - Strip strings
+    - Keep dict/list structure intact
+    """
+    if v is None:
+        return None
+    if _is_nan_like(v):
+        return None
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    if isinstance(v, list):
+        return [_sanitize_value(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _sanitize_value(val) for k, val in v.items()}
+    return v
+
+
+def _sanitize_ops(ops):
+    """Sanitize a list of JSON-PATCH operations so json.dumps never sees NaN/Inf."""
+    if not isinstance(ops, list):
+        return ops
+    out = []
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        sanitized = {
+            "op": op.get("op"),
+            "path": op.get("path"),
+            "value": _sanitize_value(op.get("value")),
+        }
+        out.append(sanitized)
+    return out
+
+
+def _normalize_ws_response(resp, fallback=None):
+    """
+    Ensure we always deal with a dict for workspace responses.
+    Some environments/wrappers may return True/False/None when there is no JSON body.
+    """
+    if isinstance(resp, dict):
+        return resp
+    return fallback if isinstance(fallback, dict) else (fallback or {})
 
 
 class Loader:
@@ -187,7 +252,7 @@ class Loader:
             },
             {
                 "op": "add",
-                "path": f"/sections/{form_section}details/epfl.contributor.role",
+                "path": f"/sections/{form_section}details/epfl.author.role",
                 "value": roles_metadata,
             },
         ]
@@ -259,9 +324,7 @@ class Loader:
                 # Skip malformed entries
                 continue
 
-            # Role label: take what’s in DF if present, else "contributor"
-            # role_label = str(row.get("role", "")).strip() or "contributor"
-            # roles_meta.append(create_metadata(role_label))
+            # For now we keep a placeholder for contributor role value
             roles_meta.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
             # ORCID: prefer orcid_id then epfl_orcid
@@ -352,64 +415,76 @@ class Loader:
             return
 
         try:
-            # Construct remove operations
+            # 1) REMOVE operations for pre-existing metadata
             remove_operations = self._construct_remove_operations(
                 workspace_response, form_section
             )
-            # logger.debug(f"remove_operations: {remove_operations}")
 
             if remove_operations:
                 try:
-                    updated_workspace = dspace_wrapper.update_workspace(
-                        workspace_id, remove_operations
+                    _resp = dspace_wrapper.update_workspace(
+                        workspace_id, _sanitize_ops(remove_operations)
                     )
+                    updated_workspace = _normalize_ws_response(_resp, workspace_response)
                 except Exception as e:
                     logger.error(f"Failed to execute remove operations: {e}")
+                    updated_workspace = workspace_response
             else:
-                # If remove_operations is empty, set updated_workspace to workspace_response
                 updated_workspace = workspace_response
 
             required_paths = []
-            if "errors" in updated_workspace:
-                for error in updated_workspace["errors"]:
-                    if error.get("message") == "error.validation.required":
-                        required_paths.extend(error.get("paths", []))
-                    elif error.get("message") == "error.validation.license.required":
-                        required_paths.extend(error.get("paths", []))
+            if isinstance(updated_workspace, dict) and "errors" in updated_workspace:
+                for error in updated_workspace.get("errors", []):
+                    try:
+                        msg = error.get("message")
+                        if msg in ("error.validation.required", "error.validation.license.required"):
+                            required_paths.extend(error.get("paths", []))
+                    except Exception:
+                        # Defensive: ignore malformed error entries
+                        pass
 
             logger.debug(f"Required paths to update: {required_paths}")
 
+            # 2) BUILD patch operations (ADD/REPLACE)
             patch_operations = self._construct_patch_operations(
                 row, units, form_section, updated_workspace
             )
 
-            # Replace authors using the updated function
+            # Authors
             author_patch = self._process_and_replace_authors(
                 updated_workspace, row["row_id"], form_section
             )
-            logger.debug("Patch author_patch: %s", author_patch)
-
-            # Add operation to update authors
             if author_patch:
                 patch_operations.extend(author_patch)
 
-            contrib_patch = self._process_and_add_contributors(updated_workspace, row["row_id"], form_section)
+            # Contributors
+            contrib_patch = self._process_and_add_contributors(
+                updated_workspace, row["row_id"], form_section
+            )
             if contrib_patch:
                 patch_operations.extend(contrib_patch)
 
-            logger.debug("Patch operations: %s", patch_operations)
+            logger.debug("Patch operations (pre-sanitize): %s", patch_operations)
 
-            # Apply patch operations
+            # Sanitize JSON payload to avoid NaN/Inf issues
+            patch_operations = _sanitize_ops(patch_operations)
+
+            # 3) APPLY patch operations
             try:
-                response = dspace_wrapper.update_workspace(
+                _resp = dspace_wrapper.update_workspace(
                     workspace_id, patch_operations
                 )
+                response = _normalize_ws_response(_resp, {})
             except Exception as e:
                 logger.error("Failed to execute patch operations: %s", e)
                 return
 
-            # Handle errors in the response
-            for error in response.get("errors", []):
+            # Handle any reported errors
+            if not isinstance(response, dict):
+                logger.warning("Non-dict response after patch; cannot inspect errors.")
+                return
+
+            for error in response.get("errors", []) or []:
                 error_message = error.get("message", "No message provided")
                 error_paths = ", ".join(error.get("paths", [])) or "No paths provided"
                 logger.error(f"Error message: {error_message}")
@@ -422,7 +497,10 @@ class Loader:
 
     def _metadata_exists(self, path, workspace_response):
         """Check if the metadata exists in the workspace response."""
-        sections = workspace_response.get("sections", {})
+        if not isinstance(workspace_response, dict):
+            return False
+
+        sections = workspace_response.get("sections", {}) or {}
         keys = path.split("/")[2:]  # Remove "/sections/" from path
         current = sections
 
@@ -464,9 +542,9 @@ class Loader:
             f"/sections/{form_section}details/dc.title",
             f"/sections/{form_section}details/dc.contributor.author",
             f"/sections/{form_section}details/oairecerif.author.affiliation",
-            f"/sections/{form_section}details/oairecerif.affiliation.orgunit",
             f"/sections/{form_section}details/person.identifier.orcid",
-            f"/sections/{form_section}details/epfl.contributor.role",
+            f"/sections/{form_section}details/epfl.author.role",
+            f"/sections/{form_section}details/epfl.author.orcid",    
             "/sections/bookcontainer_details/dc.relation.ispartof",
             "/sections/journalcontainer_details/dc.relation.journal",
             "/sections/journalcontainer_details/dc.relation.issn",
@@ -486,7 +564,7 @@ class Loader:
         """Construct PATCH operations for metadata updates with optimized error handling."""
 
         def build_value(value, authority=None, language=None, confidence=-1, place=0):
-            """Helper function to build a metadata value structure."""
+            """Helper to build a metadata value structure (skip blank strings/None)."""
             if value is None or (isinstance(value, str) and not value.strip()):
                 logger.debug(f"Invalid value provided: {value}")
                 return None
@@ -500,13 +578,13 @@ class Loader:
             }
 
         def determine_operation(path, is_repeatable):
-            """Determine if the operation should be replace or add."""
+            """Return 'replace' for non-repeatable when exists, else 'add'."""
             if not is_repeatable and self._metadata_exists(path, workspace_response):
                 return "replace"
             return "add"
 
         def parse_conference_info(conference_info):
-            """Parses the conference_info string into structured metadata."""
+            """Parse 'confName::place::start::end::acronym[||...]' into structured metadata."""
             operations = []
             if not conference_info:
                 return operations
@@ -664,7 +742,7 @@ class Loader:
 
         def parse_related_works(related_works):
             """
-            convert 'relation::identifier||...' into 3 PATCH operations:
+            Convert 'relation::identifier||...' into 3 PATCH operations:
             - datacite.relationType
             - dc.relation.title (placeholder)
             - datacite.relatedIdentifier
@@ -688,7 +766,7 @@ class Loader:
                 if not rel or not ident:
                     continue
 
-                # Normalise DOI nu -> URL
+                # Normalize bare DOI into https URL if needed
                 if ident.lower().startswith("10."):
                     ident = f"https://doi.org/{ident}"
 
@@ -699,7 +777,6 @@ class Loader:
             if not rel_types:
                 return operations
 
-            # On utilise le helper _create_op pour rester homogène
             operations.append(self._create_op("/sections/related_works/datacite.relationType", rel_types))
             operations.append(self._create_op("/sections/related_works/dc.relation.title", titles))
             operations.append(self._create_op("/sections/related_works/datacite.relatedIdentifier", identifiers))
@@ -707,93 +784,50 @@ class Loader:
             return operations
 
         def parse_funding_info(funding_info):
-            """Parses the funding_info string into structured metadata with additional fields, handling missing data properly.
-
-            Args:
-                funding_info (str): A string containing the funding information, separated by '||' for multiple entries.
-
-            Returns:
-                list: A list of operations to add the parsed funding information in a structured format, or None if no funder information is present.
-            """
-
-            # Initialize lists for funders, funding names, grant numbers, and award URIs
+            """Parse 'Funder::GrantNo[||...]' into grants-related fields."""
             funders, funding_names, grant_nos, award_uris = [], [], [], []
 
-            # Split input string into individual grants
+            if not funding_info:
+                return []
+
             grants = funding_info.split("||")
 
             for grant in grants:
-                # Split the grant info by "::" into funder and grant number (if available)
                 parts = grant.split("::", 1)
-                funder = parts[0].strip() if parts[0].strip() else None
-                grantno = (
-                    parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
-                )
+                funder = parts[0].strip() if parts and parts[0].strip() else None
+                grantno = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
 
-                # Only process entries with a non-empty funder
                 if funder:
                     funders.append(funder)
-                    grant_nos.append(
-                        grantno if grantno else "#PLACEHOLDER_PARENT_METADATA_VALUE#"
-                    )
+                    grant_nos.append(grantno if grantno else "#PLACEHOLDER_PARENT_METADATA_VALUE#")
                     funding_names.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
                     award_uris.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
 
-            # Create the operations for each section if funders list is not empty
             operations = []
             if funders:
-                operations.append(
-                    self._create_op("/sections/grants/oairecerif.funder", funders)
-                )
+                operations.append(self._create_op("/sections/grants/oairecerif.funder", funders))
                 if funding_names:
-                    operations.append(
-                        self._create_op(
-                            "/sections/grants/dc.relation.funding", funding_names
-                        )
-                    )
+                    operations.append(self._create_op("/sections/grants/dc.relation.funding", funding_names))
                 if grant_nos:
-                    operations.append(
-                        self._create_op(
-                            "/sections/grants/dc.relation.grantno", grant_nos
-                        )
-                    )
+                    operations.append(self._create_op("/sections/grants/dc.relation.grantno", grant_nos))
                 if award_uris:
-                    operations.append(
-                        self._create_op(
-                            "/sections/grants/crisfund.award.uri", award_uris
-                        )
-                    )
+                    operations.append(self._create_op("/sections/grants/crisfund.award.uri", award_uris))
 
             return operations
 
         def parse_editors(editors):
-            """Parses the editors field into structured metadata, handling missing data properly.
+            """Parse editors string 'A||B||...' into editor, affiliation, orcid placeholders."""
+            if not editors:
+                return []
 
-            Args:
-                editors (str): A string containing the editor information, separated by '||' for multiple entries.
-
-            Returns:
-                list: A list of operations to add the parsed editor information in a structured format, or None if no valid editor names are present.
-            """
-
-            # Initialize lists for editors, affiliations, and ORCIDs
             editors_list, affiliations, orcids = [], [], []
-
-            # Split input string into individual editors
-            editors_split = editors.split("||")
-
-            for editor in editors_split:
-                # Process each editor (name)
+            for editor in editors.split("||"):
                 editor_name = editor.strip()
-
-                # Only process entries with a non-empty editor_name
                 if editor_name:
                     editors_list.append(editor_name)
-                    # Add placeholders for affiliations and ORCIDs (same for all editors)
                     affiliations.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
                     orcids.append("#PLACEHOLDER_PARENT_METADATA_VALUE#")
 
-            # Create the operations for each section (editors, affiliations, ORCIDs) if editors_list is not empty
             operations = []
             if editors_list:
                 operations.append(
@@ -802,21 +836,18 @@ class Loader:
                         editors_list,
                     )
                 )
-                if affiliations:
-                    operations.append(
-                        self._create_op(
-                            "/sections/bookcontainer_details/oairecerif.scientificeditor.affiliation",
-                            affiliations,
-                        )
+                operations.append(
+                    self._create_op(
+                        "/sections/bookcontainer_details/oairecerif.scientificeditor.affiliation",
+                        affiliations,
                     )
-                if orcids:
-                    operations.append(
-                        self._create_op(
-                            "/sections/bookcontainer_details/epfl.scientificeditor.orcid",
-                            orcids,
-                        )
+                )
+                operations.append(
+                    self._create_op(
+                        "/sections/bookcontainer_details/epfl.scientificeditor.orcid",
+                        orcids,
                     )
-
+                )
             return operations
 
         def parse_access_conditions(access_conditions: str):
@@ -1110,7 +1141,6 @@ class Loader:
             metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
             metadata_definitions.extend(parse_editors(row.get("editors")))
         else:
-
             metadata_definitions.extend(parse_language(row.get("language")))
             metadata_definitions.extend(parse_version(row.get("version")))
             metadata_definitions.extend(parse_additional_link(row.get("additional_url")))
@@ -1118,17 +1148,14 @@ class Loader:
             metadata_definitions.extend(parse_related_works(row.get("related_works")))
 
         metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
-        # Add specific patch for license/granted
+
+        # Add specific patch for license/granted (as string "true" per your payload examples)
         metadata_definitions.append(
-            {"op": "add", "path": "/sections/license/granted", "value": "true"}
+            {"op": "add", "path": "/sections/license/granted", "value": True}
         )
 
-        # logger.debug(f"metadata_definitions : {metadata_definitions}")
-
         if not metadata_definitions:
-            logger.warning(
-                "No operations constructed; required paths might be missing."
-            )
+            logger.warning("No operations constructed; required paths might be missing.")
 
         return metadata_definitions
 
@@ -1198,7 +1225,10 @@ class Loader:
                 "value": [{"name": "openaccess"}],
             },
         ]
-        return dspace_wrapper.update_workspace(workspace_id, patch_operations)
+        # Sanitize before sending
+        patch_operations = _sanitize_ops(patch_operations)
+        _resp = dspace_wrapper.update_workspace(workspace_id, patch_operations)
+        return _normalize_ws_response(_resp, {})
 
     def _add_file(self, workspace_id, file_path):
         return dspace_wrapper.upload_file_to_workspace(workspace_id, file_path)
@@ -1245,17 +1275,17 @@ class Loader:
             )
 
             valid_pdf = row.get("upw_valid_pdf", "")
-            # Si valid_pdf est déjà un chemin absolu, on ne modifie pas
+            # If valid_pdf is already an absolute path, keep it as-is
             file_path = (
                 pdf_dir / valid_pdf
-                if pd.notna(valid_pdf) and valid_pdf.strip()
+                if pd.notna(valid_pdf) and str(valid_pdf).strip()
                 else None
             )
             logger.debug(
                 f"Path to PDF file : {file_path} - Exists: {file_path.exists() if file_path else 'None'}"
             )
 
-            if workspace_response and "id" in workspace_response:
+            if workspace_response and isinstance(workspace_response, dict) and "id" in workspace_response:
                 workspace_id = workspace_response["id"]
                 logger.info(f"Successfully pushed publication with ID: {workspace_id}")
                 df_items_imported.at[index, "workspace_id"] = workspace_id
@@ -1282,7 +1312,7 @@ class Loader:
                     )
                     if file_path and os.path.exists(file_path):
                         file_response = self._add_file(workspace_id, file_path)
-                        if file_response.status_code in [200, 201]:
+                        if hasattr(file_response, "status_code") and file_response.status_code in [200, 201]:
                             logger.info(
                                 f"File added successfully to workspace item {workspace_id}"
                             )
@@ -1293,7 +1323,8 @@ class Loader:
                             )
                         else:
                             logger.warning(
-                                f"Failed to add file to workspace item {workspace_id}. Status: {file_response.status_code}."
+                                f"Failed to add file to workspace item {workspace_id}. "
+                                f"Status: {getattr(file_response, 'status_code', 'unknown')}."
                             )
                     else:
                         logger.warning(
@@ -1303,7 +1334,7 @@ class Loader:
                     workflow_response = dspace_wrapper.create_workflowitem(
                         workspace_id
                     )
-                    if workflow_response and "id" in workflow_response:
+                    if workflow_response and isinstance(workflow_response, dict) and "id" in workflow_response:
                         workflow_id = workflow_response["id"]
                         logger.info(
                             f"Successfully created workflow item with ID: {workflow_id}"
@@ -1318,7 +1349,8 @@ class Loader:
                     )
             else:
                 logger.error(
-                    f"Failed to push publication with source: {row['source']}, internal_id: {row['internal_id']}, and collection_id: {row['ifs3_collection_id']}"
+                    f"Failed to push publication with source: {row.get('source')}, "
+                    f"internal_id: {row.get('internal_id')}, and collection_id: {row.get('ifs3_collection_id')}"
                 )
 
         return df_items_imported
