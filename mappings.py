@@ -461,10 +461,10 @@ doctypes_mapping_dict = {
             "collection": "Datasets and Code",
             "dc.type": "dataset",
         },
-        "other": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
+        # "other": {
+        #     "collection": "Datasets and Code",
+        #     "dc.type": "dataset",
+        # },
     },
 }
 

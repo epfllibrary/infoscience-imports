@@ -171,7 +171,7 @@ def run_pipeline(
             return pd.DataFrame()
 
     harvesters = {
-        # "wos": lambda: WosHarvester(start_date, end_date, queries["wos"]).harvest(),
+        "wos": lambda: WosHarvester(start_date, end_date, queries["wos"]).harvest(),
         "scopus": lambda: ScopusHarvester(
             start_date, end_date, queries["scopus"]
         ).harvest(),

@@ -252,7 +252,7 @@ class Loader:
             },
             {
                 "op": "add",
-                "path": f"/sections/{form_section}details/epfl.author.role",
+                "path": f"/sections/{form_section}details/epfl.contributor.role",
                 "value": roles_metadata,
             },
         ]
@@ -543,7 +543,7 @@ class Loader:
             f"/sections/{form_section}details/dc.contributor.author",
             f"/sections/{form_section}details/oairecerif.author.affiliation",
             f"/sections/{form_section}details/person.identifier.orcid",
-            f"/sections/{form_section}details/epfl.author.role",
+            f"/sections/{form_section}details/epfl.contributor.role",
             f"/sections/{form_section}details/epfl.author.orcid",    
             "/sections/bookcontainer_details/dc.relation.ispartof",
             "/sections/journalcontainer_details/dc.relation.journal",
@@ -704,8 +704,8 @@ class Loader:
         def parse_additional_link(additional_url: str):
             """
             Parse 'label::url[||label::url...]' into two field lists:
-            - /sections/additional_fields/epfl.url             → labels
-            - /sections/additional_fields/epfl.url.description → urls
+            - /sections/additional_fields/epfl.url             → url
+            - /sections/additional_fields/epfl.url.description → label
             """
             ops = []
             if not additional_url:
@@ -715,7 +715,7 @@ class Loader:
             if not raw_entries:
                 return ops
 
-            labels, descriptions = [], []
+            labels, urls = [], []
             for entry in raw_entries:
                 # Expect "label::url"
                 parts = [p.strip() for p in entry.split("::", 1)]
@@ -731,13 +731,13 @@ class Loader:
                     label = "Additional Link"
 
                 labels.append(label)
-                descriptions.append(url)
+                urls.append(url)
 
             if not labels:
                 return ops
 
-            ops.append(self._create_op("/sections/additional_fields/epfl.url", labels))
-            ops.append(self._create_op("/sections/additional_fields/epfl.url.description", descriptions))
+            ops.append(self._create_op("/sections/additional_fields/epfl.url", ))
+            ops.append(self._create_op("/sections/additional_fields/epfl.url.description", labels))
             return ops
 
         def parse_related_works(related_works):
