@@ -8,7 +8,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -44,6 +44,8 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data"
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex", "zenodo")
 
 
 # -----------------------------------------------------------------------------
@@ -96,12 +98,43 @@ def parse_author_ids(arg: Optional[str]) -> List[str]:
     return [x.strip() for x in raw if x.strip()]
 
 
+def parse_sources(
+    arg: Optional[str], logger: Optional[logging.Logger] = None
+) -> List[str]:
+    """
+    Parse a comma-separated list of sources. If None or 'all', return all supported.
+    Unknown sources are ignored with a warning.
+    """
+    if not arg or arg.strip().lower() == "all":
+        return list(SUPPORTED_SOURCES)
+
+    raw = [s.strip().lower() for s in arg.split(",") if s.strip()]
+    valid = [s for s in raw if s in SUPPORTED_SOURCES]
+    invalid = [s for s in raw if s not in SUPPORTED_SOURCES]
+
+    if invalid and logger:
+        logger.warning(
+            f"Ignoring unknown sources: {', '.join(invalid)}. "
+            f"Supported: {', '.join(SUPPORTED_SOURCES)}"
+        )
+
+    if not valid:
+        if logger:
+            logger.error(
+                "No valid sources provided after filtering. "
+                f"Supported: {', '.join(SUPPORTED_SOURCES)}"
+            )
+        # Fail closed: return empty to let caller decide (will error out)
+        return []
+    return valid
+
+
 def ensure_queries(override: Optional[Dict[str, str]]) -> Dict[str, str]:
     merged = dict(default_queries)
     if override:
         merged.update({k.lower(): v for k, v in override.items()})
     # make sure all expected keys exist
-    for k in ("wos", "scopus", "crossref", "openalex", "zenodo"):
+    for k in SUPPORTED_SOURCES:
         merged.setdefault(k, "")
     return merged
 
@@ -124,7 +157,7 @@ def save_csv(
 
 def date_range_from_window(
     window_days: int, end_date: Optional[str] = None
-) -> (str, str):
+) -> Tuple[str, str]:
     """Compute [start,end] ISO dates for a sliding window (inclusive)."""
     if end_date:
         end = datetime.fromisoformat(end_date).date()
@@ -146,13 +179,19 @@ def run_pipeline(
     output_dir: Path,
     dry_run: bool = False,
     no_email: bool = False,
+    sources: Optional[List[str]] = None,
 ) -> Dict[str, pd.DataFrame | str | None]:
     """
     Harvest, deduplicate, enrich, and (optionally) load data into DSpace.
     Returns dict of dataframes and report path.
     """
+    active_sources = sources or list(SUPPORTED_SOURCES)
+    if not active_sources:
+        raise ValueError("No sources selected. Use --sources to specify at least one.")
+
     logger.info(
-        f"=== Pipeline start | window: {start_date} → {end_date} | dry_run={dry_run} ==="
+        f"=== Pipeline start | window: {start_date} → {end_date} | "
+        f"dry_run={dry_run} | sources={','.join(active_sources)} ==="
     )
 
     # Timestamped export dir
@@ -170,7 +209,8 @@ def run_pipeline(
             logger.exception(f"[Harvest] {name} failed: {e}")
             return pd.DataFrame()
 
-    harvesters = {
+    # full registry
+    registry = {
         "wos": lambda: WosHarvester(start_date, end_date, queries["wos"]).harvest(),
         "scopus": lambda: ScopusHarvester(
             start_date, end_date, queries["scopus"]
@@ -189,6 +229,9 @@ def run_pipeline(
         ).harvest(),
     }
 
+    # keep only selected
+    harvesters = {k: v for k, v in registry.items() if k in active_sources}
+
     publications: Dict[str, pd.DataFrame] = {
         name: safe_harvest(name, fn) for name, fn in harvesters.items()
     }
@@ -199,7 +242,7 @@ def run_pipeline(
     # -------------------- Deduplication
     non_empty = [df for df in publications.values() if not df.empty]
     if not non_empty:
-        logger.warning("No harvested data from any source; nothing to process.")
+        logger.warning("No harvested data from selected sources; nothing to process.")
         return {
             "df_metadata": pd.DataFrame(),
             "df_authors": pd.DataFrame(),
@@ -269,7 +312,7 @@ def run_pipeline(
         df_rejected = pd.DataFrame()
     elif (
         "row_id" in df_oa_metadata.columns
-        and "row_id" in df_loaded.columns
+        and "row_id" in getattr(df_loaded, "columns", [])
         and not df_loaded.empty
     ):
         df_rejected = df_oa_metadata[
@@ -369,6 +412,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Comma-separated list OR path to file (one per line).",
     )
 
+    # Source selection
+    p.add_argument(
+        "--sources",
+        type=str,
+        default="all",
+        help=(
+            "Comma-separated subset of sources to harvest "
+            f"(supported: {', '.join(SUPPORTED_SOURCES)}). Default: all"
+        ),
+    )
+
     # Output & mode
     p.add_argument(
         "--output-dir",
@@ -432,6 +486,12 @@ def main():
 
     output_dir = Path(args.output_dir).resolve()
     author_ids = parse_author_ids(args.author_ids)
+    selected_sources = parse_sources(args.sources, logger=logger)
+    if not selected_sources:
+        parser.error(
+            "No valid sources selected. Use --sources with one or more of: "
+            + ", ".join(SUPPORTED_SOURCES)
+        )
 
     try:
         run_pipeline(
@@ -443,6 +503,7 @@ def main():
             output_dir=output_dir,
             dry_run=args.dry_run,
             no_email=args.no_email,
+            sources=selected_sources,
         )
         sys.exit(0)
     except Exception as e:
