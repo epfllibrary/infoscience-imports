@@ -412,24 +412,39 @@ class Client(APIClient):
 
         return result
 
+    @retry_request
     def _extract_first_version_creation(self, x):
         """
-        Extracts the recordID and creation date of the first version of the object
+        Extracts the creation date of the first version of the object.
+        Optimized:
+        - use server-side sort to get only the oldest version (1 request)
+        - handle missing fields safely
         """
-        version_url = x["links"]["versions"]
+        try:
+            versions_url = x.get("links", {}).get("versions")
+            if not versions_url:
+                return x.get("created")
 
-        versions = self.get(version_url)["hits"]["hits"]
+            # ask the API for the oldest version directly (no need to sort client-side)
+            resp = self.get(f"{versions_url}?sort=oldest&size=1&page=1") or {}
+            hits = (resp.get("hits") or {}).get("hits") or []
 
-        version_ids = sorted([rec["id"] for rec in versions])[0]
-        version_creation_time = sorted([rec["created"] for rec in versions])[0]
+            if hits:
+                first = hits[0].get("created")
+                if first:
+                    return first
 
-        return version_creation_time
+            # fallback: use current record creation
+            return x.get("created")
+
+        except Exception as e:
+            self.logger.warning(f"_extract_first_version_creation failed: {e}")
+            return x.get("created")
 
     def _extract_publisher(self, x: Dict[str, Any]) -> str:
         md = x.get("metadata", {}) or {}
         # Sur Zenodo, c’est souvent "Zenodo" ou vide
         return md.get("publisher") or "Zenodo"
-
 
     def _extract_related_identifiers(self, x: dict) -> str:
         """
