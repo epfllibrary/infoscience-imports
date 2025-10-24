@@ -38,6 +38,8 @@ def normalize_openalex_id(full_id: str) -> str:
 # Load environment variables
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 openalex_email = os.environ.get("CONTACT_API_EMAIL")
+openalex_data_version = os.environ.get("OPENALEX_DATA_VERSION", "2")
+
 
 accepted_doctypes = [
     key for key in mappings.doctypes_mapping_dict["source_crossref"].keys()
@@ -61,27 +63,37 @@ class Client(APIClient):
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Paramètres appliqués à TOUTES les requêtes
+        self.default_params = {}
+        if openalex_email:
+            self.default_params["mailto"] = openalex_email
+        # Active la nouvelle version de données OpenAlex
+        # (surchageable avec OPENALEX_DATA_VERSION)
+        if openalex_data_version:
+            self.default_params["data-version"] = str(openalex_data_version)
+
+        self.last_response = None
+
+    def _merge_params(self, extra: dict | None = None) -> dict:
+        """Merge des paramètres en respectant les défauts globaux."""
+        base = dict(self.default_params)
+        if extra:
+            base.update({k: v for k, v in extra.items() if v is not None})
+        return base
+
     @retry_request
     def search_query(self, **param_kwargs):
         """
         Basic search query in the OpenAlex API.
 
-        Example request:
+        Example:
         https://api.openalex.org/works?filter=title.search:cadmium&per_page=5&page=1
-
-        Usage:
-        OpenAlexClient.search_query(filter="title.search:cadmium", per_page=5, page=1)
-
-        Returns:
-        A JSON object containing search results from OpenAlex.
         """
-        param_kwargs.setdefault("mailto", openalex_email)
-        self.params = {**param_kwargs}
+        self.params = self._merge_params(param_kwargs)
         response = self.get(OpenAlexEndpoint.works, params=self.params)
-
-        # 🟢 Stocke la dernière réponse ici
-        self.last_response = response
-
+        self.last_response = response  # stocke la dernière réponse
         return response
 
     @retry_request
@@ -98,10 +110,9 @@ class Client(APIClient):
         Returns:
         The total count of results for the query.
         """
-        param_kwargs.setdefault("mailto", openalex_email)
         param_kwargs.setdefault("per_page", 1)
         param_kwargs.setdefault("page", 1)
-        self.params = {**param_kwargs}
+        self.params = self._merge_params(param_kwargs)
         return self.search_query(**self.params)["meta"]["count"]
 
     @retry_decorator
@@ -118,7 +129,6 @@ class Client(APIClient):
         Returns:
         A list of IDs from OpenAlex.
         """
-        param_kwargs.setdefault("email", openalex_email)
         param_kwargs.setdefault("per_page", 100)
         cursor = param_kwargs.pop("cursor", "*")
 
@@ -126,7 +136,7 @@ class Client(APIClient):
 
         while True:
             # On inclut le curseur à chaque requête
-            self.params = {**param_kwargs, "cursor": cursor}
+            self.params = self._merge_params({**param_kwargs, "cursor": cursor})
             response = self.search_query(**self.params)
 
             results = response.get("results", [])
@@ -159,7 +169,6 @@ class Client(APIClient):
         Returns:
             list: Processed records in the specified format.
         """
-        param_kwargs.setdefault("mailto", openalex_email)
         param_kwargs.setdefault("per_page", 100)
         cursor = param_kwargs.pop("cursor", "*")
 
@@ -168,7 +177,7 @@ class Client(APIClient):
         total_count = None
 
         while True:
-            self.params = {**param_kwargs, "cursor": cursor}
+            self.params = self._merge_params({**param_kwargs, "cursor": cursor})
             response = self.search_query(**self.params)
 
             results = response.get("results", [])
@@ -209,7 +218,7 @@ class Client(APIClient):
         if not openalex_id or str(openalex_id).strip().lower() == "null":
             return None
 
-        self.params = {"mailto": openalex_email} if openalex_email else {}
+        self.params = self._merge_params()
 
         # Determine endpoint based on whether it's a DOI or an OpenAlex ID
         if isinstance(openalex_id, str) and openalex_id.lower().startswith("10."):
@@ -237,6 +246,8 @@ class Client(APIClient):
         Returns:
             list: Processed records in the requested format.
         """
+        self.params = self._merge_params(self.params if isinstance(self.params, dict) else {})
+
         if format == "digest":
             return [
                 self._extract_digest_record_info(record)
@@ -293,6 +304,8 @@ class Client(APIClient):
             "is_retracted": self._extract_is_retracted(x),
             "openalex_type": self._extract_openalex_doctype(x),
             "openalex_id": self._extract_openalex_id(x),
+            "referenced_works_count": self._extract_referenced_works_count(x),
+            "cited_by_count": self._extract_cited_by_count(x),
         }
 
         for label, func in [
@@ -418,6 +431,30 @@ class Client(APIClient):
             str: Document type extracted from the record.
         """
         return x.get("is_retracted")
+
+    def _extract_referenced_works_count(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("referenced_works_count")
+
+    def _extract_cited_by_count(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("cited_by_count")
 
     def _extract_primary_location_info(self, x: dict) -> dict:
         primary = x.get("primary_location", {}) or {}
