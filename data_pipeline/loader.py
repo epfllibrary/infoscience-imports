@@ -736,7 +736,7 @@ class Loader:
             if not labels:
                 return ops
 
-            ops.append(self._create_op("/sections/additional_fields/epfl.url", ))
+            ops.append(self._create_op("/sections/additional_fields/epfl.url", urls))
             ops.append(self._create_op("/sections/additional_fields/epfl.url.description", labels))
             return ops
 
@@ -1112,20 +1112,24 @@ class Loader:
                 f"/sections/{form_section}details/epfl.peerreviewed",
                 [build_value(refereed)],
                 False,
-            ),
-            (
-                "/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
-                [
-                    build_value(
-                        licenses_mapping.get(row.get("license"), {}).get("value")
-                        or row.get("license")
-                    )
-                ],
-                False,
-            ),
+            )
         ]
-        logger.debug(f"Constructed initial metadata fields: {fields}")
 
+        # --- Add ctb.oaireXXlicenseCondition (Zenodo only) ---
+        raw_license = row.get("license")
+        mapped = licenses_mapping.get(raw_license, {}) if raw_license is not None else {}
+        license_val = (mapped.get("value") or raw_license) if raw_license is not None else None
+        has_license = isinstance(license_val, str) and license_val.strip() != ""
+        if str(row.get("source", "")).strip().lower() == "zenodo" and has_license:
+            fields.append(
+                (
+                    "/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
+                    [build_value(license_val)],
+                    False,
+                )
+            )       
+        logger.debug(f"Constructed initial metadata fields: {fields}")
+        # Application des fields (add/replace selon repeatability)
         for path, value, is_repeatable in fields:
             if value and not all(
                 v is None for v in value if isinstance(value, list)
@@ -1138,7 +1142,6 @@ class Loader:
                 metadata_definitions.append({"op": op, "path": path, "value": value})
 
         if form_section not in ["dataset_"]:
-            metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
             metadata_definitions.extend(parse_editors(row.get("editors")))
         else:
             metadata_definitions.extend(parse_language(row.get("language")))
@@ -1146,8 +1149,8 @@ class Loader:
             metadata_definitions.extend(parse_additional_link(row.get("additional_url")))
             metadata_definitions.extend(parse_access_conditions(row.get("access_conditions")))
             metadata_definitions.extend(parse_related_works(row.get("related_works")))
-
-        metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
+            metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
+            metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
 
         # Add specific patch for license/granted (as string "true" per your payload examples)
         metadata_definitions.append(
