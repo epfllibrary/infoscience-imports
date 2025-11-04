@@ -93,7 +93,7 @@ class WosHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
-
+        self.logger.info("Fetching records from WOS with query: %s", self.query)
         createdTimeSpan = f"{self.start_date}+{self.end_date}"
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
@@ -175,6 +175,7 @@ class ScopusHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
+        self.logger.info("Fetching records from Scopus with query: %s", self.query)
         # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(query=updated_query)
@@ -248,7 +249,7 @@ class ZenodoHarvester(Harvester):
             - `organizations`
             - `suborganization`
         """
-
+        self.logger.info("Fetching records from Zenodo with query: %s", self.query)
         columns = (
             "source",
             "internal_id",
@@ -323,7 +324,7 @@ class OpenAlexHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary.
         """
-
+        self.logger.info("Fetching records from OpenAlex with query: %s", self.query)
         # Formulate the filter for the query
         filters = (
             f"from_publication_date:{self.start_date},"
@@ -407,6 +408,7 @@ class CrossrefHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors as dictionaries.
         """
+        self.logger.info("Fetching records from Crossref with query: %s", self.query)
         # Build the parameter dictionary for targeted queries.
         params = {}
         if isinstance(self.query, dict):
@@ -488,7 +490,7 @@ class OpenAlexCrossrefHarvester(Harvester):
         2. Enrich each DOI with Crossref metadata (title, type, etc.).
         3. Merge and return a normalized DataFrame.
         """
-        self.logger.info("Fetching records from OpenAlex...")
+        self.logger.info("Fetching records from OpenAlex with query: %s", self.query)
 
         filters = (
             f"from_publication_date:{self.start_date},"

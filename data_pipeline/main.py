@@ -124,7 +124,6 @@ def parse_sources(
                 "No valid sources provided after filtering. "
                 f"Supported: {', '.join(SUPPORTED_SOURCES)}"
             )
-        # Fail closed: return empty to let caller decide (will error out)
         return []
     return valid
 
@@ -165,6 +164,67 @@ def date_range_from_window(
         end = datetime.now().date()
     start = end - timedelta(days=max(1, window_days) - 1)
     return start.isoformat(), end.isoformat()
+
+
+# ---------- New helpers for ID-based harvesting --------------------------------
+def build_id_queries(
+    scopus_ids: List[str],
+    wos_ids: List[str],
+    orcids: List[str],
+    openalex_ids: List[str] = [],
+) -> Dict[str, str]:
+    """
+    Build per-source query strings targeting author identifiers.
+    NOTE: Adapte au besoin selon la syntaxe attendue par tes harvesters.
+    """
+    id_queries: Dict[str, str] = {}
+
+    # SCOPUS
+    scopus_bits: List[str] = []
+    if scopus_ids:
+        scopus_bits += [f"AU-ID({aid})" for aid in scopus_ids]
+    if orcids:
+        scopus_bits += [f"ORCID({o})" for o in orcids]
+    if scopus_bits:
+        id_queries["scopus"] = " OR ".join(scopus_bits)
+
+    wos_bits: List[str] = []
+    # WOS: AI=() 
+    if wos_ids:
+        wos_bits += wos_ids
+    if orcids:
+        wos_bits += orcids
+    if wos_bits:
+        # Exemple: AI=(R-1234-2017 OR 0000-0002-1825-0097)
+        id_queries["wos"] = f"AI=({ ' OR '.join(wos_bits) })"
+
+    # CROSSREF: le harvester utilise field_queries; ici on encode une "pseudo" query.
+    # Option 1 (souvent OK): filter orcid côté harvester en parsant ce motif.
+    # Exemple valeur: FILTER_ORCID:0000-0001-...,0000-0002-...
+    # if orcids:
+    #     id_queries["crossref"] = "FILTER_ORCID:" + ",".join(orcids)
+
+    # OPENALEX
+    openalex_bits: List[str] = []
+    if openalex_ids:
+        openalex_bits += [f"authorships.author.id:{oid}" for oid in openalex_ids]   
+    elif orcids:
+        openalex_bits += [f"authorships.author.orcid:{o}" for o in orcids]
+    if openalex_bits:
+        id_queries["openalex"] = "|".join(openalex_bits)
+    # ZENODO: pas de recherche par auteur-id standard → ne change rien par défaut
+    return id_queries
+
+
+def merge_unique(*lists: List[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for lst in lists:
+        for x in lst or []:
+            if x and x not in seen:
+                seen.add(x)
+                out.append(x)
+    return out
 
 
 # -----------------------------------------------------------------------------
@@ -404,13 +464,39 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--query-openalex", type=str, default=None)
     p.add_argument("--query-zenodo", type=str, default=None)
 
-    # Authors
+    # Authors (legacy, kept)
     p.add_argument(
         "--author-ids",
         type=str,
         default=None,
-        help="Comma-separated list OR path to file (one per line).",
+        help="Comma-separated list OR path to file (one per line). Used by AuthorProcessor.author_ids_to_check.",
     )
+
+    # ---------- New: ID-based harvesting options ----------
+    p.add_argument(
+        "--scopus-ids",
+        type=str,
+        default=None,
+        help="Scopus Author IDs (comma-separated or file path). Triggers ID-based harvesting for Scopus.",
+    )
+    p.add_argument(
+        "--wos-ids",
+        type=str,
+        default=None,
+        help="Web of Science ResearcherIDs (comma-separated or file path). Triggers ID-based harvesting for WoS.",
+    )
+    p.add_argument(
+        "--orcid-ids",
+        type=str,
+        default=None,
+        help="ORCID iDs (comma-separated or file path). Triggers ID-based harvesting for Crossref/OpenAlex (+Scopus/WoS where supported).",
+    )
+    p.add_argument(
+        "--openalex-ids",
+        type=str,
+        default=None,
+        help="OpenAlex Author IDs (comma-separated or file path). Triggers ID-based harvesting for OpenAlex.",
+    )   
 
     # Source selection
     p.add_argument(
@@ -470,6 +556,12 @@ def main():
     else:
         start_date, end_date = date_range_from_window(args.window_days)
 
+    # Parse IDs for ID-based harvesting
+    scopus_ids = parse_author_ids(args.scopus_ids)
+    wos_ids = parse_author_ids(args.wos_ids)
+    orcid_ids = parse_author_ids(args.orcid_ids)
+    openalex_ids = parse_author_ids(args.openalex_ids)
+
     # Build query overrides
     override = {
         k: v
@@ -482,10 +574,26 @@ def main():
         }.items()
         if v is not None
     }
+
+    # Si des IDs sont fournis, on fabrique des queries par identifiant
+    if scopus_ids or wos_ids or orcid_ids or openalex_ids:
+        id_q = build_id_queries(scopus_ids, wos_ids, orcid_ids, openalex_ids)
+        # Remplace uniquement les sources concernées
+        override.update(id_q)
+        logger.info(
+            "ID-based harvesting active for: "
+            + ", ".join(sorted(id_q.keys()))  # ex: scopus,wos,crossref,openalex
+        )
+
     queries = ensure_queries(override)
 
     output_dir = Path(args.output_dir).resolve()
-    author_ids = parse_author_ids(args.author_ids)
+
+    # Fusion des IDs pour AuthorProcessor.author_ids_to_check (legacy + nouveaux)
+    author_ids_for_enrichment = merge_unique(
+        parse_author_ids(args.author_ids), scopus_ids, wos_ids, orcid_ids, openalex_ids
+    )
+
     selected_sources = parse_sources(args.sources, logger=logger)
     if not selected_sources:
         parser.error(
@@ -499,7 +607,7 @@ def main():
             start_date=start_date,
             end_date=end_date,
             queries=queries,
-            author_ids=author_ids,
+            author_ids=author_ids_for_enrichment,
             output_dir=output_dir,
             dry_run=args.dry_run,
             no_email=args.no_email,

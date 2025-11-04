@@ -1148,10 +1148,10 @@ class Loader:
             metadata_definitions.extend(parse_version(row.get("version")))
             metadata_definitions.extend(parse_additional_link(row.get("additional_url")))
             metadata_definitions.extend(parse_access_conditions(row.get("access_conditions")))
-            metadata_definitions.extend(parse_related_works(row.get("related_works")))
-            metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
-            metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
 
+        metadata_definitions.extend(parse_related_works(row.get("related_works")))
+        metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
+        metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
         # Add specific patch for license/granted (as string "true" per your payload examples)
         metadata_definitions.append(
             {"op": "add", "path": "/sections/license/granted", "value": True}
