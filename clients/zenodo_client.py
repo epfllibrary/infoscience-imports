@@ -60,7 +60,7 @@ class Client(APIClient):
         none
 
         Usage
-        ZenodoClient.search_query(query="gene",count=5,start=1)
+        ZenodoClient.search_query(q="gene",size=5,page=1)
 
         Returns
         A JSON array of Zenodo records
@@ -87,7 +87,7 @@ class Client(APIClient):
         Returns
         Number of records found by the query
         """
-        param_kwargs.setdefault("size", 100)
+        param_kwargs.setdefault("size", 25)
         param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
@@ -97,7 +97,7 @@ class Client(APIClient):
     def fetch_ids(self, **param_kwargs) -> List[str]:
         """
         Base request example
-        https://zenodo.org/api/?q=epfl&size=100&page=1
+        https://zenodo.org/api/?q=epfl&size=25&page=1
 
         Default args (can be orverwritten)
         size (number of returned records) is set to 10
@@ -110,7 +110,7 @@ class Client(APIClient):
         Usage 2
         naive_epfl_query = "epfl OR \"Ecole Polytechnique Fédérale de Lausanne\""
         total = ZenodoClient.count_results(q=naive_epfl_query, size=1, page=1)
-        count = 100
+        count = 25
         ids = []
         for i in range(1, int(total), int(count)):
             ids.extend(ZenodoClient.fetch_ids(q=naive_epfl_query,
@@ -121,7 +121,7 @@ class Client(APIClient):
         A list of Zenodo ids
         """
 
-        param_kwargs.setdefault("size", 100)
+        param_kwargs.setdefault("size", 25)
         param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}
@@ -160,7 +160,7 @@ class Client(APIClient):
             zenodo_id, title, DOI, doctype, pubyear, authors,
             ifs3_collection, ifs3_collection_id
         """
-        param_kwargs.setdefault("size", 2)
+        param_kwargs.setdefault("size", 25)
         param_kwargs.setdefault("page", 1)
 
         self.params = {**param_kwargs}

@@ -245,7 +245,7 @@ class ZenodoHarvester(Harvester):
         - `authors`: list of creators, each represented as a dict containing:
             - `author`
             - `orcid_id`
-            - `internal_author_id` (empty for Zenoodo)
+            - `internal_author_id` (empty for Zenodo)
             - `organizations`
             - `suborganization`
         """
@@ -262,33 +262,47 @@ class ZenodoHarvester(Harvester):
             "authors",
             "first_creation",
         )
-        empty_data = {}
-        for c in columns:
-            empty_data[c] = []
+        empty_data = {c: [] for c in columns}
 
         updated_query = " AND ".join(
             [self.query, f"created:[{self.start_date} TO {self.end_date}]"]
         )
 
-        total = ZenodoClient.count_results(q=updated_query)
+        total = int(ZenodoClient.count_results(q=updated_query))
         self.logger.info("- Number of objects found in Zenodo: %s", total)
+
         if total == 0:
             self.logger.warning("No object found. Returning an empty DataFrame.")
-            return pd.DataFrame()
-        size = 50
-        recs = []
-        for i in range(0, 1 + int(total) // size):
+            return pd.DataFrame(columns=columns)
+
+        size = 25
+        recs: list[dict] = []
+
+        # nombre de pages = ceil(total / size)
+        num_pages = (total + size - 1) // size
+
+        for page in range(1, num_pages + 1):
+            start_idx = (page - 1) * size + 1
+            end_idx = min(page * size, total)
             self.logger.info(
-                "Harvest objects %d to %d out of %d", i * size + 1, min((i + 1) * size, total), total
+                "Harvest objects %d to %d out of %d",
+                start_idx,
+                end_idx,
+                total,
             )
+
             h_recs = ZenodoClient.fetch_records(
-                format=self.format, q=updated_query, size=size, page=i + 1
+                format=self.format,
+                q=updated_query,
+                size=size,
+                page=page,
             )
-            if h_recs is not None:
+            if h_recs:
                 recs.extend(h_recs)
+
             time.sleep(30)
+
         # Keep only valid ifs3 doctypes, filter out unknown_doctype
-        # print(recs)
         df = (
             pd.DataFrame(recs)
             .query('ifs3_collection != "unknown"')
@@ -297,7 +311,6 @@ class ZenodoHarvester(Harvester):
         )
 
         return df
-
 
 class OpenAlexHarvester(Harvester):
     """
