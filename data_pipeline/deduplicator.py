@@ -212,13 +212,46 @@ class DataFrameProcessor:
 
         df_authors = pd.DataFrame(new_rows)
 
-        # Keep row_id as first column in df_authors
+        # --- Normalisation des organizations UNIQUEMENT pour la dédup ---
+        def normalize_orgs(orgs):
+            if pd.isna(orgs) or orgs is None:
+                return None
+            parts = [p.strip() for p in str(orgs).split("|") if p.strip()]
+            if not parts:
+                return None
+            parts = sorted(set(parts))  # enlève doublons + trie
+            return "|".join(parts)
+
+        df_authors["organizations_norm"] = df_authors["organizations"].apply(normalize_orgs)
+
+        # Définition de ce qui constitue un doublon d’auteur pour une même publication
+        subset_cols = [
+            "row_id",
+            "author",
+            "orcid_id",
+            "internal_author_id",
+            "role",
+            "openalex_is_corresponding",
+            "organizations_norm",
+        ]
+
+        df_authors = (
+            df_authors
+            .drop_duplicates(subset=subset_cols, keep="first")
+            .reset_index(drop=True)
+        )
+
+        # On enlève la colonne technique, les données originales restent inchangées
+        df_authors = df_authors.drop(columns=["organizations_norm"])
+
+        # Garder row_id en première colonne
         author_cols = ["row_id"] + [col for col in df_authors.columns if col != "row_id"]
         df_authors = df_authors[author_cols]
 
-        # Remove 'authors' column and ensure row_id is first in df_metadata
+        # DataFrame des métadonnées (sans la liste 'authors')
         df_metadata = df.drop(columns=["authors"])
         metadata_cols = ["row_id"] + [col for col in df_metadata.columns if col != "row_id"]
         df_metadata = df_metadata[metadata_cols]
 
         return df_metadata, df_authors
+
