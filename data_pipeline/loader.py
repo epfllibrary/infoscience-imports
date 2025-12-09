@@ -420,6 +420,8 @@ class Loader:
                 workspace_response, form_section
             )
 
+            logger.debug("Remove operations (pre-sanitize): %s", remove_operations)
+
             if remove_operations:
                 try:
                     _resp = dspace_wrapper.update_workspace(
@@ -537,14 +539,22 @@ class Loader:
 
         metadata_definitions = []
 
-        # Check for existing metadata and add remove operations if needed
+        # 1) Cas particulier : dc.subject → toujours reset à []
+        subject_path = f"/sections/{form_section}details/dc.subject"
+        metadata_definitions.append({
+            "op": "add",
+            "path": subject_path,
+            "value": []  # reset subjects keywords to empty list
+        })
+
+        # 2) Les autres métadonnées : remove seulement si présentes
         removable_metadata_paths = [
             f"/sections/{form_section}details/dc.title",
             f"/sections/{form_section}details/dc.contributor.author",
             f"/sections/{form_section}details/oairecerif.author.affiliation",
             f"/sections/{form_section}details/person.identifier.orcid",
             f"/sections/{form_section}details/epfl.contributor.role",
-            f"/sections/{form_section}details/epfl.author.orcid",    
+            f"/sections/{form_section}details/epfl.author.orcid",
             "/sections/bookcontainer_details/dc.relation.ispartof",
             "/sections/journalcontainer_details/dc.relation.journal",
             "/sections/journalcontainer_details/dc.relation.issn",
@@ -556,9 +566,13 @@ class Loader:
 
         for path in removable_metadata_paths:
             if self._metadata_exists(path, workspace_response):
-                metadata_definitions.append({"op": "remove", "path": path})
+                metadata_definitions.append({
+                    "op": "remove",
+                    "path": path
+                })
 
         return metadata_definitions
+
 
     def _construct_patch_operations(self, row, units, form_section, workspace_response):
         """Construct PATCH operations for metadata updates with optimized error handling."""
@@ -1153,9 +1167,9 @@ class Loader:
         metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
         metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
         # Add specific patch for license/granted (as string "true" per your payload examples)
-        metadata_definitions.append(
-            {"op": "add", "path": "/sections/license/granted", "value": True}
-        )
+        # metadata_definitions.append(
+        #     {"op": "add", "path": "/sections/license/granted", "value": "true"}
+        # )
 
         if not metadata_definitions:
             logger.warning("No operations constructed; required paths might be missing.")
@@ -1306,13 +1320,6 @@ class Loader:
                 logger.debug(f"Found units: {unique_units}")
 
                 if unique_units:
-                    self._patch_additional_metadata(
-                        workspace_id,
-                        row,
-                        unique_units,
-                        collection_id,
-                        workspace_response,
-                    )
                     if file_path and os.path.exists(file_path):
                         file_response = self._add_file(workspace_id, file_path)
                         if hasattr(file_response, "status_code") and file_response.status_code in [200, 201]:
@@ -1334,6 +1341,13 @@ class Loader:
                             f"File {file_path} does not exist. Skipping file upload."
                         )
 
+                    self._patch_additional_metadata(
+                        workspace_id,
+                        row,
+                        unique_units,
+                        collection_id,
+                        workspace_response,
+                    )
                     workflow_response = dspace_wrapper.create_workflowitem(
                         workspace_id
                     )
