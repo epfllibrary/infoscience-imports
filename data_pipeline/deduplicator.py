@@ -231,8 +231,8 @@ class DataFrameProcessor:
             "orcid_id",
             "internal_author_id",
             "role",
-            "openalex_is_corresponding",
-            "organizations_norm",
+            # "openalex_is_corresponding",
+            # "organizations_norm",
         ]
 
         df_authors = (
