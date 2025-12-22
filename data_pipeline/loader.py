@@ -1167,9 +1167,9 @@ class Loader:
         metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
         metadata_definitions.extend(parse_conference_info(row.get("conference_info")))
         # Add specific patch for license/granted (as string "true" per your payload examples)
-        # metadata_definitions.append(
-        #     {"op": "add", "path": "/sections/license/granted", "value": "true"}
-        # )
+        metadata_definitions.append(
+            {"op":"add", "path":"/sections/license/granted", "value":"true"}
+        )
 
         if not metadata_definitions:
             logger.warning("No operations constructed; required paths might be missing.")
