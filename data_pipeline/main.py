@@ -205,13 +205,10 @@ def build_id_queries(
     #     id_queries["crossref"] = "FILTER_ORCID:" + ",".join(orcids)
 
     # OPENALEX
-    openalex_bits: List[str] = []
     if openalex_ids:
-        openalex_bits += [f"authorships.author.id:{oid}" for oid in openalex_ids]   
+        id_queries["openalex"] = "authorships.author.id:" + "|".join(openalex_ids)
     elif orcids:
-        openalex_bits += [f"authorships.author.orcid:{o}" for o in orcids]
-    if openalex_bits:
-        id_queries["openalex"] = "|".join(openalex_bits)
+        id_queries["openalex"] = "authorships.author.orcid:" + "|".join(orcids)
     # ZENODO: pas de recherche par auteur-id standard → ne change rien par défaut
     return id_queries
 
