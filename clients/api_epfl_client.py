@@ -41,13 +41,17 @@ class Endpoint:
     personsFirstnameLastname = "persons?firstname={firstname}&lastname={lastname}"
     accredsId = "accreds?persid={sciperID}"
     unitsId = "units/{unitID}"
-    unitsQuery = "units?query={query}"
+    unitsQuery = "units?query={query}" 
 
 
 class Client(APIClient):
 
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._unit_type_cache = {}  # Cache for unit types to minimize API calls
 
     @retry_decorator
     def query_person(
@@ -88,8 +92,9 @@ class Client(APIClient):
             )
 
             # Si le nom est trop court, on ajoute strict=1
-            if len(lastname) < 2:
-                url += "?strict=1"
+            if lastname and len(lastname) < 2:
+                sep = "&" if "?" in url else "?"
+                url += f"{sep}strict=1"
 
             result = self.get(url)
 
@@ -311,15 +316,35 @@ class Client(APIClient):
         return record
 
     def _extract_accred_units_info(self, x, parent_order=None):
-        self.logger.info("Extracting units information from the accred record.")
-        unit_type = self.fetch_unit_by_unique_id(str(x["unit"]["id"]))
+        self.logger.debug("Extracting units information from the accred record.")
+
+        unit = x.get("unit", {})
+        unit_id = unit.get("id")
+        unit_path = unit.get("path")  # ex: "EPFL IC IINFCOM NAL"
+
+        if unit_id is not None:
+            cache_key = str(unit_id)
+            if cache_key not in self._unit_type_cache:
+                self._unit_type_cache[cache_key] = self.fetch_unit_by_unique_id(
+                    cache_key
+                )
+            unit_type = self._unit_type_cache[cache_key]
+        else:
+            unit_type = None
+
         record = {
-            "unit_id": str(x["unit"]["id"]),
-            "unit_name": x["unit"]["name"],
-            "unit_label": x["unit"]["labelen"],
+            "unit_id": str(unit_id) if unit_id is not None else None,
+            "unit_name": unit.get("name"),
+            "unit_label": unit.get("labelen"),
+            "unit_cf": unit.get("cf"),
+            "unit_path": unit_path,
             "unit_type": unit_type,
             "unit_order": parent_order,
         }
+
+        # ✅ derived fields from unit_path
+        record.update(self._extract_acronym_levels_from_path(unit_path))
+
         self.logger.debug(f"Extracted units from accred record: {record}")
         return record
 
@@ -378,6 +403,72 @@ class Client(APIClient):
                 return best_candidate
 
         return None
+    
+    def _extract_acronym_levels_from_path(self, unit_path):
+        """
+        Level rules:
+          - position 0 = institution (EPFL)
+          - position 1 = unit_level_2
+          - position 2 = unit_level_3
+        """
+        toks = self._split_unit_path(unit_path)
+        return {
+            "unit_level_2": toks[1] if len(toks) >= 2 else None,
+            "unit_level_3": toks[2] if len(toks) >= 3 else None,
+        }
+    
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _as_int_or_none(self, v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _split_unit_path(self, unit_path):
+        """
+        Split a unit_path like "EPFL IC IINFCOM NAL" into tokens.
+        Robust to None / extra spaces.
+        """
+        if unit_path is None:
+            return []
+        s = str(unit_path).strip()
+        if not s:
+            return []
+        return [tok for tok in s.split() if tok]
+
+    def _extract_acronym_levels_from_path(self, unit_path):
+        """
+        Level rules:
+          - position 0 = institution (EPFL)
+          - position 1 = unit_level_2
+          - position 2 = unit_level_3
+        """
+        toks = self._split_unit_path(unit_path)
+        return {
+            "unit_level_2": toks[1] if len(toks) >= 2 else None,
+            "unit_level_3": toks[2] if len(toks) >= 3 else None,
+        }
+
+    def _clean_value(self,formatted_name):
+        formatted_name = formatted_name.lower()
+
+        # Replace dash-like characters between initials or names with space
+        formatted_name = re.sub(r"[-‐‑‒–—―⁃﹘﹣－]", " ", formatted_name)
+
+        # Separate joined initials (e.g., J.-L. → J L)
+        formatted_name = re.sub(r"\b([A-Z])\.\-?([A-Z])\.\b", r"\1 \2", formatted_name)
+
+        # Remove remaining periods (e.g., J. → J)
+        formatted_name = formatted_name.replace(".", " ")
+
+        # Remove any leftover punctuation
+        formatted_name = formatted_name.translate(str.maketrans("", "", string.punctuation))
+        # Normalize whitespace
+        formatted_name = re.sub(r"\s+", " ", formatted_name).strip()
+
+        return formatted_name
 
 
 ApiEpflClient = Client(
