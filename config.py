@@ -14,6 +14,7 @@ default_queries = {
     "openalex": "authorships.institutions.lineage:i5124864|i4210122261|i4210129591,is_retracted:false,is_paratext:false",
     "zenodo": 'parent.communities.entries.id:"3c1383da-d7ab-4167-8f12-4d8aa0cc637f"',
     "crossref": '{"query.affiliation": "EPFL"}',
+    "epo": '(pa all "ECOLE POLYTECHNIQUE FED LAUSANNE EPFL" AND pd >20231231) NOT cl any "US"',
 }
 
 # Define the order of the sources during the deduplication process
