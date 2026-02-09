@@ -537,7 +537,7 @@ class AuthorProcessor:
             3. Retrieves unit information from EPFL API (current accreditation).
             4. Infers the most likely unit of affiliation at the time of publication using DSpace facet data.
             5. Compares both units (API vs guessed) to determine concordance.
-            6. Chooses the most reliable unit as final_mainunit (priority: guessed over API).
+            6. Chooses the most reliable unit as final_mainunit (priority: EPFL API over Infoscience guessed).
 
             Args:
                 row (pd.Series): A row from the DataFrame representing one author/publication entry.
