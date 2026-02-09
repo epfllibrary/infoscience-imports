@@ -24,6 +24,7 @@ zenodo_api_base_url = "https://zenodo.org/api/"
 # env var
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 zenodo_api_key = os.environ.get("ZENODO_API_KEY")
+user_agent = os.environ.get("USER_AGENT", "EPFL-Institutional-Repository - Infoscience-imports/1.0 (https://github.com/epfllibrary/infoscience-imports)")
 
 accepted_doctypes = mappings.doctypes_mapping_dict["source_zenodo"].keys()
 
@@ -47,6 +48,15 @@ class Endpoint:
 class Client(APIClient):
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Variante 1 : attribut default_headers (si supporté par la lib)
+        self.default_headers = {
+            "User-Agent": user_agent,
+            "Accept": "application/json",
+        }
 
     @retry_request
     def search_query(self, **param_kwargs):
