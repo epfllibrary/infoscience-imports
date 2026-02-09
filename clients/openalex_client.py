@@ -39,6 +39,8 @@ def normalize_openalex_id(full_id: str) -> str:
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 openalex_email = os.environ.get("CONTACT_API_EMAIL")
 openalex_data_version = os.environ.get("OPENALEX_DATA_VERSION", "2")
+openalex_token = os.environ.get("OPENALEX_API_KEY")
+user_agent = os.environ.get("USER_AGENT", "EPFL-Institutional-Repository - Infoscience-imports/1.0 (https://github.com/epfllibrary/infoscience-imports)")
 
 
 accepted_doctypes = [
@@ -73,6 +75,15 @@ class Client(APIClient):
         # (surchageable avec OPENALEX_DATA_VERSION)
         if openalex_data_version:
             self.default_params["data-version"] = str(openalex_data_version)
+        # OpenAlex API token (query param)
+        if openalex_token:
+            self.default_params["api_key"] = openalex_token
+        # User-Agent header
+        if user_agent:
+            self.default_headers = {
+                "User-Agent": user_agent,
+                "Accept": "application/json",
+            }
 
         self.last_response = None
 
