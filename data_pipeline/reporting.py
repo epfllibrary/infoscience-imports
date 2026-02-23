@@ -7,6 +7,7 @@ import smtplib
 import datetime
 from email.message import EmailMessage
 import pandas as pd
+from typing import List, Optional
 from config import logs_dir
 from utils import manage_logger
 
@@ -26,6 +27,39 @@ class GenerateReports:
                 self.df["upw_is_oa"].fillna(False).infer_objects(copy=False).astype(bool)
             )
 
+    # -------------------------
+    # Helpers
+    # -------------------------
+    def _has_cols(self, df: pd.DataFrame, cols: List[str]) -> bool:
+        return all(c in df.columns for c in cols)
+
+    def _empty_result(self, cols: Optional[List[str]] = None) -> pd.DataFrame:
+        return pd.DataFrame(columns=cols or [])
+
+    def _safe_groupby_count(
+        self, df: pd.DataFrame, by: List[str], count_name: str = "count"
+    ):
+        """
+        Return (grouped_counts_df, df_used). If required columns are missing, returns (empty, empty).
+        """
+        if df is None or df.empty:
+            return self._empty_result(by + [count_name]), self._empty_result()
+        if not self._has_cols(df, by):
+            return self._empty_result(by + [count_name]), self._empty_result()
+        g = df.groupby(by).size().reset_index(name=count_name)
+        return g, df
+
+    def _safe_filter(self, df: pd.DataFrame, required_cols: List[str], predicate):
+        """
+        Apply predicate(df) only if required_cols exist; otherwise return empty df.
+        """
+        if df is None or df.empty:
+            return self._empty_result(), self._empty_result()
+        if not self._has_cols(df, required_cols):
+            return self._empty_result(), self._empty_result()
+        out = predicate(df)
+        return out, out
+
     def total_publications_found(self):
         """Return the total number of unique publications found."""
         return self.df["row_id"].nunique(), self.df
@@ -35,31 +69,28 @@ class GenerateReports:
         return self.df.groupby("source").size().reset_index(name="count"), self.df
 
     def publications_by_collection(self):
-        """Return the number of publications grouped by collection."""
-        return (
-            self.df.groupby("dc.type").size().reset_index(name="count"),
-            self.df.groupby("dc.type").size().reset_index(name="count"),
-        )
+        """Return number of publications grouped by collection/type."""
+        g, _ = self._safe_groupby_count(self.df, by=["dc.type"])
+        return g, g
 
     def open_access_publications(self):
-        """Return the number of open access publications grouped by license and OA status."""
-        df_oa = self.df[self.df["upw_is_oa"]]
-        return (
-            df_oa.groupby(["upw_license", "upw_oa_status"])
-            .size()
-            .reset_index(name="count"),
-            df_oa,
-        )
+        """Return OA publications grouped by license and OA status (when available)."""
+
+        def _pred(df):
+            return df[df["upw_is_oa"]]
+
+        df_oa, df_oa_used = self._safe_filter(self.df, ["upw_is_oa"], _pred)
+        # group only if license + status exist
+        return self._safe_groupby_count(df_oa, by=["upw_license", "upw_oa_status"])
 
     def open_access_with_pdf(self):
-        """Return the number of open access publications with a valid PDF available."""
-        df_oa_pdf = self.df[self.df["upw_is_oa"] & self.df["upw_valid_pdf"].notna()]
-        return (
-            df_oa_pdf.groupby(["upw_license", "upw_oa_status"])
-            .size()
-            .reset_index(name="count"),
-            df_oa_pdf,
-        )
+        """Return OA publications with valid PDF available (when available)."""
+
+        def _pred(df):
+            return df[df["upw_is_oa"] & df["upw_valid_pdf"].notna()]
+
+        df_oa_pdf, _ = self._safe_filter(self.df, ["upw_is_oa", "upw_valid_pdf"], _pred)
+        return self._safe_groupby_count(df_oa_pdf, by=["upw_license", "upw_oa_status"])
 
     def duplicated_publications_count(self):
         """Return the number of rejected publications due to duplication."""
@@ -83,31 +114,63 @@ class GenerateReports:
         return df_reconciled_unit["row_id"].nunique(), df_reconciled_unit
 
     def imported_publications_workspace(self):
-        """Return the number of imported publications in workspace (drafts)."""
+        """Imported publications in workspace (drafts)."""
+        if (
+            self.df_loaded is None
+            or self.df_loaded.empty
+            or "workspace_id" not in self.df_loaded.columns
+        ):
+            return 0, self._empty_result()
         df_workspace = self.df_loaded[self.df_loaded["workspace_id"].notna()]
         return df_workspace.shape[0], df_workspace
 
     def imported_publications_workflow(self):
-        """Return the number of imported publications in workflow."""
+        """Imported publications in workflow."""
+        if (
+            self.df_loaded is None
+            or self.df_loaded.empty
+            or "workflow_id" not in self.df_loaded.columns
+        ):
+            return 0, self._empty_result()
         df_workflow = self.df_loaded[self.df_loaded["workflow_id"].notna()]
         return df_workflow.shape[0], df_workflow
 
     def imported_publications_by_journal(self):
-        """Return the number of imported publications grouped by journal title."""
-        df_workflow = self.df_loaded[self.df_loaded["workflow_id"].notna()]
-        return df_workflow.groupby("journalTitle").size().reset_index(
-            name="count"
-        ), df_workflow.groupby("journalTitle").size().reset_index(name="count")
+        """Return number of imported publications grouped by journal title (when available)."""
+        df_workflow = self.df_loaded
+        if df_workflow is None or df_workflow.empty:
+            return self._empty_result(["journalTitle", "count"]), self._empty_result()
+
+        # workflow filter only if column exists
+        if "workflow_id" in df_workflow.columns:
+            df_workflow = df_workflow[df_workflow["workflow_id"].notna()]
+
+        # if journalTitle doesn't exist (e.g., patents), return empty indicator gracefully
+        return self._safe_groupby_count(df_workflow, by=["journalTitle"])
 
     def failed_imports(self):
-        """Return the number of publications where import failed and list affected items."""
+        """Publications where import failed."""
+        if self.df_loaded is None or self.df_loaded.empty:
+            return 0, self._empty_result()
+
+        # if both ids missing as columns, can't compute
+        if (
+            "workspace_id" not in self.df_loaded.columns
+            or "workflow_id" not in self.df_loaded.columns
+        ):
+            return 0, self._empty_result()
+
         df_failed = self.df_loaded[
             self.df_loaded["workspace_id"].isna() & self.df_loaded["workflow_id"].isna()
         ]
         return df_failed.shape[0], df_failed
 
     def excluded_publications_count(self):
-        """Return the number of publications that were excluded (present in df_metadata but not in df_loaded)."""
+        """Excluded publications (present in df but not in df_loaded)."""
+        if not self._has_cols(self.df, ["row_id"]) or not self._has_cols(
+            self.df_loaded, ["row_id"]
+        ):
+            return 0, self._empty_result()
         df_excluded = self.df[~self.df["row_id"].isin(self.df_loaded["row_id"])]
         return len(df_excluded), df_excluded
 
