@@ -19,6 +19,7 @@ from lxml import etree
 
 from config import logs_dir
 from utils import manage_logger
+import mappings
 
 
 # ----------------------------
@@ -38,6 +39,10 @@ DEFAULT_ACRONYMS: Set[str] = {
     "mit",
 }
 
+accepted_doctypes = [
+    key for key in mappings.doctypes_mapping_dict["source_epo"].keys()
+]
+
 _WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
 _WS_RE = re.compile(r"\s+")
 
@@ -46,6 +51,7 @@ IdLike = Union[str, IdDict]  # accept epodoc string OR dict
 IdOut = IdDict  # fetch_ids returns dicts only
 
 def normalize_pub_number(value: str) -> str:
+    """Normalize publication numbers by stripping whitespace and converting to uppercase. Non-string inputs return empty string."""
     if not isinstance(value, str):
         return ""
     return _WS_RE.sub("", value.strip()).upper()
@@ -66,7 +72,6 @@ def _is_retryable_exception(exc: Exception) -> bool:
         "too many requests",
     )
     return any(t in msg for t in transient)
-
 
 retry_decorator = tenacity.retry(
     retry=tenacity.retry_if_exception(_is_retryable_exception),
@@ -244,6 +249,7 @@ class EPOClient:
         constituents: Optional[List[str]] = None,
         group_by_family: bool = False,
     ) -> List[Dict[str, Any]]:
+        """ Fetch full records for a given CQL query, with pagination and optional max_records limit. """
         ids: List[IdOut] = self.fetch_ids(
             cql=cql,
             per_page=per_page,
@@ -257,6 +263,7 @@ class EPOClient:
     def fetch_records_by_ids(
         self, pub_ids: List[IdLike], format: str = "digest"
     ) -> List[Dict[str, Any]]:
+        """ Fetch full records for a list of publication identifiers. """
         out: List[Dict[str, Any]] = []
 
         for pid in pub_ids:
@@ -286,6 +293,7 @@ class EPOClient:
     # ----------------------------
     @retry_decorator
     def fetch_record_by_unique_id(self, pub_id: IdLike, format: str = "digest") -> Optional[Dict[str, Any]]:
+        """Fetch a single record by its unique identifier (Epodoc or DocDB)."""
         if pub_id is None:
             return None
 
@@ -355,6 +363,88 @@ class EPOClient:
         if last_err:
             self.logger.warning(f"[OPS] No published record found for pub_id={pub_id} (last error: {last_err})")
         return None
+
+    def _authors_from_inventors(self, inventors: str) -> List[Dict[str, str]]:
+        """Convert inventors string into a list of dicts with 'author' keys, deduplicated."""
+        if not inventors:
+            return []
+        parts = [p.strip() for p in str(inventors).split("||") if p and p.strip()]
+        seen = set()
+        out = []
+        for p in parts:
+            if p in seen:
+                continue
+            seen.add(p)
+            out.append({"author": p})
+        return out
+
+    def _extract_first_doctype(self, root: etree._Element) -> str:
+        """
+        Extract first kind code (e.g., A1, B2) from publication-reference/docdb.
+        Returns "unknown" if not found.
+        """
+        doctype = self._text(
+            root,
+            ".//ex:publication-reference/ex:document-id[@document-id-type='docdb']/ex:kind",
+        )
+        if doctype:
+            return doctype.strip().upper()
+
+        # fallback (rare): sometimes kind appears elsewhere depending on payload
+        doctype = self._text(
+            root,
+            ".//ex:exchange-document/ex:bibliographic-data//ex:publication-reference/"
+            "ex:document-id[@document-id-type='docdb']/ex:kind",
+        )
+        if doctype:
+            return doctype.strip().upper()
+
+        return "unknown"
+
+    def get_dc_type_info(self, root: etree._Element) -> Dict[str, str]:
+        """ Get dc.type and dc.type_authority based on the document type extracted from the record and predefined mappings. """
+        data_doctype = self._extract_first_doctype(root)
+
+        doctype_mapping = mappings.doctypes_mapping_dict.get("source_epo", {})
+        document_info = doctype_mapping.get(data_doctype)
+
+        dc_type = document_info.get("dc.type") if isinstance(document_info, dict) else "patent"
+        dc_type_authority = mappings.types_authority_mapping.get(dc_type, "patent")
+
+        return {"dc.type": dc_type, "dc.type_authority": dc_type_authority}
+
+    def _extract_ifs3_collection(self, root: etree._Element) -> str:
+        """
+        extract the IFS3 collection from the record, based on the document type and predefined mappings.
+        """
+        # Extract the document type
+        data_doctype = self._extract_first_doctype(root)
+        # Check if the document type is accepted
+        if data_doctype in accepted_doctypes:
+            mapped_value = mappings.doctypes_mapping_dict["source_epo"].get(
+                data_doctype
+            )
+
+            if mapped_value is not None:
+                # Return the mapped collection value
+                return mapped_value.get("collection", "unknown")
+            else:
+                # Log or handle the case where the mapping is missing
+                self.logger.warning(
+                    f"Mapping not found for data_doctype: {data_doctype}"
+                )
+                return "unknown"  # or any other default value
+        return "unknown"  # or any other default value
+
+    def _extract_ifs3_collection_id(self, root: etree._Element) -> str:
+        ifs3_collection = self._extract_ifs3_collection(root)
+        # Check if the collection is not "unknown"
+        if ifs3_collection != "unknown":
+            # Assume ifs3_collection is a string and access mappings accordingly
+            collection_info = mappings.collections_mapping.get(ifs3_collection, None)
+            if collection_info:
+                return collection_info["id"]
+        return "unknown"
 
     # ----------------------------
     # Processing
@@ -432,6 +522,7 @@ class EPOClient:
         inventors_original = self._texts_join(
             root,
             ".//ex:parties/ex:inventors/ex:inventor[@data-format='original']//ex:name",
+            cleaner=self._clean_person_name,
         )
         inventors_epodoc = self._texts_join(
             root,
@@ -487,6 +578,7 @@ class EPOClient:
         return {
             "source": "epo",
             "internal_id": pub_id,
+            "doi": None,
             "docdb_country": docdb_country,
             "docdb_number": docdb_number,
             "docdb_kind": docdb_kind,
@@ -506,9 +598,10 @@ class EPOClient:
             "abstract_de": abstracts.get("de", ""),
             "abstract_it": abstracts.get("it", ""),
             "abstract_und": abstracts.get("und", ""),
-            "doctype": "Patent",
+            "doctype": self._extract_first_doctype(root),
             "applicants": smart_title_capitalize(applicants),
             "inventors": inventors,
+            "authors": self._authors_from_inventors(inventors),
             # "ipc_ipcr": ipcr,
             # "cpc_codes": cpc,
             "application_docdb": " ".join(
@@ -529,7 +622,13 @@ class EPOClient:
         self, root: etree._Element, pub_id: str
     ) -> Dict[str, Any]:
         d = self._extract_digest_record_info(root, pub_id)
-        # d["cpc_structured"] = self._collect_cpc_structured(root)
+        d["ifs3_collection"] = self._extract_ifs3_collection(root)
+        d["ifs3_collection_id"] = self._extract_ifs3_collection_id(root)
+        # Get dc.type and dc.type_authority for the document type
+        dc_type_info = self.get_dc_type_info(root)
+        # Add dc.type and dc.type_authority to the record
+        d["dc.type"] = dc_type_info["dc.type"]
+        d["dc.type_authority"] = dc_type_info["dc.type_authority"]
         return d
 
     # ----------------------------
@@ -780,8 +879,8 @@ class EPOClient:
                 )
 
             # replace internal_id: the family record becomes the family itself (or keep latest internal_id)
-            # choose one (I keep latest internal_id + add family_internal_id)
-            agg["family_internal_id"] = fid
+            # choose one (I keep latest internal_id + add family_id)
+            agg["family_id"] = fid
 
             # aggregated multi fields
             agg["publications"] = publications
@@ -1012,3 +1111,19 @@ class EPOClient:
             else:
                 out.append((part.strip(), ""))
         return out
+
+    def _clean_person_name(self,name: str) -> str:
+        """
+        Clean OPS person names:
+        - remove trailing commas and trailing spaces
+        - preserve internal comma between surname and given name
+        """
+        if not isinstance(name, str):
+            return ""
+
+        s = name.strip()
+
+        # remove trailing commas (one or multiple) + whitespace
+        s = re.sub(r",\s*$", "", s)
+
+        return s
