@@ -84,6 +84,7 @@ class DSpaceClientWrapper:
             "openalex": lambda x: str(x["doi"]).strip(),
             "zenodo": lambda x: x["internal_id"].strip(),
             "datacite": lambda x: str(x["internal_id"]).strip(),
+            "epo": lambda x: str(x["family_id"]).strip(),
             "orcidWorks": lambda x: None,
         }
 
@@ -183,6 +184,7 @@ class DSpaceClientWrapper:
             "openalex": lambda x: str(x["doi"]).strip(),
             "zenodo": lambda x: str(x["internal_id"]).strip(),
             "datacite": lambda x: str(x["internal_id"]).strip(),
+            "epo": lambda x: str(x["family_id"]).strip(),
             "orcidWorks": lambda x: None,
         }
 
