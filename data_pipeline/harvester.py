@@ -14,6 +14,7 @@ from clients.zenodo_client import ZenodoClient
 from clients.openalex_client import OpenAlexClient
 from clients.crossref_client import CrossrefClient
 from clients.datacite_client import DataCiteClient
+from clients.epo_ops_client import EPOClient
 from utils import manage_logger
 from config import logs_dir
 
@@ -730,3 +731,111 @@ class DataCiteHarvester(Harvester):
                     doi_keep = cand["internal_id"].iloc[0]
                 keep.add(doi_keep)
         return df[df["internal_id"].isin(keep)].drop(columns=["registered_dt"]).copy()
+
+class EPOHarvester(Harvester):
+    """
+    EPO OPS (Espacenet) Harvester.
+    """
+
+    def __init__(
+        self,
+        start_date: str,
+        end_date: str,
+        query: str,
+        format: str = "ifs3",
+        constituents: list[str] | None = None,
+        per_page: int = 25,
+        max_records: int | None = None,
+        group_by_family: bool = True,
+    ):
+        super().__init__("EPO", start_date, end_date, query, format)
+        self.constituents = constituents  # ex: ["biblio"] (optionnel)
+        self.per_page = per_page
+        self.max_records = max_records
+        self.group_by_family = group_by_family
+
+        # client instance (OPS uses env credentials)
+        self.client = EPOClient()
+
+    @staticmethod
+    def _yyyymmdd(date_str: str) -> str:
+        # expected input "YYYY-MM-DD" (as used elsewhere in your pipeline)
+        return (date_str or "").replace("-", "").strip()
+
+
+    def _build_cql(self) -> str:
+        """
+        Build an EPO OPS CQL query using:
+        pd within "YYYYMMDD,YYYYMMDD"
+        """
+        q = (self.query or "").strip()
+        if not q:
+            raise ValueError("EPOHarvester.query is empty; provide a CQL fragment.")
+
+        sd = self._yyyymmdd(self.start_date)
+        ed = self._yyyymmdd(self.end_date)
+
+        parts = [f"({q})"]
+
+        if len(sd) == 8 and sd.isdigit() and len(ed) == 8 and ed.isdigit():
+            parts.append(f'pd within "{sd},{ed}"')
+        else:
+            # Defensive: don't silently harvest everything if dates are malformed
+            raise ValueError(
+                f"Invalid date range for OPS 'pd within': start_date={self.start_date} end_date={self.end_date}"
+            )
+
+        return " AND ".join(parts)
+
+    def fetch_and_parse_publications(self) -> pd.DataFrame:
+        """
+        Returns a pandas DataFrame containing patent publications harvested from EPO OPS.
+
+        Output columns depend on your EPOClient format, but you should end up with at least:
+        - source, internal_id, title, doctype, pubyear
+        and any extra patent-specific fields (family_id, applicants, inventors, issueDate, etc.).
+        """
+        cql = self._build_cql()
+        self.logger.info("Fetching records from EPO OPS with CQL: %s", cql)
+
+        try:
+            # Optional: quick count for logging (can be slow on OPS; keep if useful)
+            total = self.client.count_results(cql=cql)
+            self.logger.info("Total publications found in EPO OPS: %s", total)
+        except Exception as e:
+            self.logger.warning("Could not count EPO OPS results (continuing): %s", e)
+            total = None
+
+        try:
+            recs = self.client.fetch_records(
+                cql=cql,
+                format=self.format,
+                per_page=self.per_page,
+                max_records=self.max_records,
+                constituents=self.constituents,
+                group_by_family=self.group_by_family,
+            )
+        except Exception as e:
+            self.logger.error("Failed to fetch records from EPO OPS: %s", e)
+            return pd.DataFrame()
+
+        if not recs:
+            self.logger.warning(
+                "No records returned by EPO OPS. Returning empty DataFrame."
+            )
+            return pd.DataFrame()
+
+        df = pd.DataFrame(recs).reset_index(drop=True)
+
+        # Harmonisation minimale attendue downstream
+        if "source" not in df.columns:
+            df["source"] = "epo"
+
+        # Ta sortie EPO a déjà doctype="Patent" et pubyear, donc rien à filtrer ici.
+        # Si tu veux protéger le pipeline contre des records incomplets:
+        needed = ["internal_id", "title", "doctype"]
+        missing = [c for c in needed if c not in df.columns]
+        if missing:
+            self.logger.warning("EPO dataframe missing expected columns: %s", missing)
+
+        return df
