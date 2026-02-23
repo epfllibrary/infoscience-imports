@@ -28,6 +28,7 @@ from data_pipeline.harvester import (
     CrossrefHarvester,
     OpenAlexCrossrefHarvester,
     ZenodoHarvester,
+    EPOHarvester,
 )
 
 # -----------------------------------------------------------------------------
@@ -45,7 +46,7 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data"
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex", "zenodo")
+SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex", "zenodo", "epo")
 
 
 # -----------------------------------------------------------------------------
@@ -284,6 +285,9 @@ def run_pipeline(
         "zenodo": lambda: ZenodoHarvester(
             start_date, end_date, queries["zenodo"]
         ).harvest(),
+        "epo": lambda: EPOHarvester(
+            start_date, end_date, queries["epo"]
+        ).harvest(),
     }
 
     # keep only selected
@@ -460,6 +464,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--query-crossref", type=str, default=None)
     p.add_argument("--query-openalex", type=str, default=None)
     p.add_argument("--query-zenodo", type=str, default=None)
+    p.add_argument("--query-epo", type=str, default=None)
 
     # Authors (legacy, kept)
     p.add_argument(
@@ -568,6 +573,7 @@ def main():
             "crossref": args.query_crossref,
             "openalex": args.query_openalex,
             "zenodo": args.query_zenodo,
+            "epo": args.query_epo,
         }.items()
         if v is not None
     }
