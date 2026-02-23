@@ -24,3 +24,4 @@ marimo
 lxml
 bs4
 dateparser
+python-epo-ops-client
