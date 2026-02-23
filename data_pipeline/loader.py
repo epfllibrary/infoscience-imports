@@ -113,17 +113,30 @@ class Loader:
         logger.error(f"No section found for collection ID: {ifs3_collection_id}")
         return None
 
-    def _process_and_replace_authors(self, workspace_response, row_id, form_section):
+    def _get_workspace_section_base(self, row, ifs3_collection_id):
+        """
+        Return the workspace section base for metadata patching.
+        - For EPO patents: use '/sections/patent'
+        - Otherwise: use inferred form section ('/sections/<form_section>details')
+        """
+        if str(row.get("source", "")).lower() == "epo":
+            return "/sections/patent"
+
+        form_section = self._get_form_section(ifs3_collection_id)
+        if not form_section:
+            return None
+        return f"/sections/{form_section}details"
+
+    def _process_and_replace_authors(
+        self, workspace_response, row_id, base, form_section=None
+    ):
         """Replace and enrich dc.contributor.author.
 
         Skip any rows where `role` equals 'contributor' (case-insensitive).
         All other roles — including creator, author, empty, or NaN — are processed.
         """
-        if (
-            "sections" not in workspace_response
-            or f"{form_section}details" not in workspace_response["sections"]
-        ):
-            logger.warning("No authors section found in workspace response.")
+        if "sections" not in workspace_response:
+            logger.warning("No sections found in workspace response.")
             return []
 
         subset = self.df_authors[self.df_authors["row_id"] == row_id].copy()
@@ -237,29 +250,26 @@ class Loader:
         patch_operations = [
             {
                 "op": "add",
-                "path": f"/sections/{form_section}details/dc.contributor.author",
+                "path": f"{base}/dc.contributor.author",
                 "value": authors_metadata,
             },
             {
                 "op": "add",
-                "path": f"/sections/{form_section}details/oairecerif.author.affiliation",
+                "path": f"{base}/oairecerif.author.affiliation",
                 "value": affiliations_metadata,
             },
             {
                 "op": "add",
-                "path": f"/sections/{form_section}details/epfl.author.orcid",
+                "path": f"{base}/epfl.author.orcid",
                 "value": orcid_metadata,
-            },
-            {
-                "op": "add",
-                "path": f"/sections/{form_section}details/epfl.contributor.role",
-                "value": roles_metadata,
             },
         ]
 
         return patch_operations
 
-    def _process_and_add_contributors(self, workspace_response, row_id, form_section):
+    def _process_and_add_contributors(
+        self, workspace_response, row_id, base, form_section=None
+    ):
         """Add Zenodo/DataFrame contributors (role == 'contributor') as DSpace contributors.
 
         Builds four ADD operations:
@@ -270,11 +280,8 @@ class Loader:
 
         Keeps order from the DataFrame. Skips if there are no contributors.
         """
-        if (
-            "sections" not in workspace_response
-            or f"{form_section}details" not in workspace_response["sections"]
-        ):
-            logger.warning("No contributors section found in workspace response.")
+        if "sections" not in workspace_response:
+            logger.warning("No sections found in workspace response.")
             return []
 
         subset = self.df_authors[self.df_authors["row_id"] == row_id].copy()
@@ -387,7 +394,6 @@ class Loader:
         if not names_meta:
             return []
 
-        base = f"/sections/{form_section}details"
         ops = [
             {"op": "add", "path": f"{base}/epfl.contributor.role", "value": roles_meta},
             {"op": "add", "path": f"{base}/dc.contributor", "value": names_meta},
@@ -404,20 +410,35 @@ class Loader:
         self, workspace_id, row, units, ifs3_collection_id, workspace_response
     ):
         """Update only necessary fields based on errors returned in workspace_response."""
-        form_section = self._get_form_section(ifs3_collection_id)
+        base = self._get_workspace_section_base(row, ifs3_collection_id)
         logger.debug(
-            f"Collection ID: '{ifs3_collection_id}' and section name: '{form_section}'."
+            f"Collection ID: '{ifs3_collection_id}' and section base: '{base}'."
         )
-        if not form_section:
-            logger.error(
-                f"Invalid collection ID: {ifs3_collection_id}. Unable to determine form section."
-            )
+        if not base:
+            logger.error(f"Unable to determine workspace section base for collection: {ifs3_collection_id}")
             return
+
+        is_epo = str(row.get("source", "")).lower() == "epo"
+
+        # keep form_section for non-epo paths that depend on it (conference/book/dataset)
+        form_section = None
+        if not is_epo:
+            form_section = self._get_form_section(ifs3_collection_id)
+            logger.debug(
+                f"Collection ID: '{ifs3_collection_id}' and section name: '{form_section}'."
+            )
+            if not form_section:
+                logger.error(
+                    f"Invalid collection ID: {ifs3_collection_id}. Unable to determine form section."
+                )
+                return
+        else:
+            logger.debug("EPO item: skipping form_section lookup; using /sections/patent.")
 
         try:
             # 1) REMOVE operations for pre-existing metadata
             remove_operations = self._construct_remove_operations(
-                workspace_response, form_section
+                workspace_response, base, form_section=form_section
             )
 
             logger.debug("Remove operations (pre-sanitize): %s", remove_operations)
@@ -449,19 +470,19 @@ class Loader:
 
             # 2) BUILD patch operations (ADD/REPLACE)
             patch_operations = self._construct_patch_operations(
-                row, units, form_section, updated_workspace
+                row, units, base, form_section, updated_workspace
             )
 
             # Authors
             author_patch = self._process_and_replace_authors(
-                updated_workspace, row["row_id"], form_section
+                updated_workspace, row["row_id"], base, form_section=form_section
             )
             if author_patch:
                 patch_operations.extend(author_patch)
 
             # Contributors
             contrib_patch = self._process_and_add_contributors(
-                updated_workspace, row["row_id"], form_section
+                updated_workspace, row["row_id"], base, form_section=form_section
             )
             if contrib_patch:
                 patch_operations.extend(contrib_patch)
@@ -535,12 +556,12 @@ class Loader:
             ],
         }
 
-    def _construct_remove_operations(self, workspace_response, form_section):
+    def _construct_remove_operations(self, workspace_response, base, form_section=None):
 
         metadata_definitions = []
 
         # 1) Cas particulier : dc.subject → toujours reset à []
-        subject_path = f"/sections/{form_section}details/dc.subject"
+        subject_path = f"{base}/dc.subject"
         metadata_definitions.append({
             "op": "add",
             "path": subject_path,
@@ -549,12 +570,12 @@ class Loader:
 
         # 2) Les autres métadonnées : remove seulement si présentes
         removable_metadata_paths = [
-            f"/sections/{form_section}details/dc.title",
-            f"/sections/{form_section}details/dc.contributor.author",
-            f"/sections/{form_section}details/oairecerif.author.affiliation",
-            f"/sections/{form_section}details/person.identifier.orcid",
-            f"/sections/{form_section}details/epfl.contributor.role",
-            f"/sections/{form_section}details/epfl.author.orcid",
+            f"{base}/dc.title",
+            f"{base}/dc.contributor.author",
+            f"{base}/oairecerif.author.affiliation",
+            f"{base}/person.identifier.orcid",
+            f"{base}/epfl.contributor.role",
+            f"{base}/epfl.author.orcid",
             "/sections/bookcontainer_details/dc.relation.ispartof",
             "/sections/journalcontainer_details/dc.relation.journal",
             "/sections/journalcontainer_details/dc.relation.issn",
@@ -573,8 +594,9 @@ class Loader:
 
         return metadata_definitions
 
-
-    def _construct_patch_operations(self, row, units, form_section, workspace_response):
+    def _construct_patch_operations(
+        self, row, units, base, form_section, workspace_response
+    ):
         """Construct PATCH operations for metadata updates with optimized error handling."""
 
         def build_value(value, authority=None, language=None, confidence=-1, place=0):
@@ -919,7 +941,7 @@ class Loader:
         type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_'] else 'type'}"
         dc_type = row.get("dc.type")
 
-        refereed = None if form_section in ("preprint_", "dataset_") else "REVIEWED"
+        refereed = None if form_section in ("preprint_", "dataset_", "patent") else "REVIEWED"
 
         if dc_type in [
             "text::book/monograph::book part or chapter",
@@ -959,6 +981,10 @@ class Loader:
         acronyms = [unit.get("acro") for unit in units if unit.get("acro")]
         if len(acronyms) > 1 and "EPFL" in acronyms:
             acronyms = [acro for acro in acronyms if acro != "EPFL"]
+
+        is_epo = str(row.get("source","")).lower() == "epo"
+        if is_epo:
+            return self._construct_patent_patch_ops(row, units, base, workspace_response)
 
         fields = [
             (
@@ -1176,6 +1202,268 @@ class Loader:
 
         return metadata_definitions
 
+    def _construct_patent_patch_ops(self, row, units, base, workspace_response):
+        def build_value(
+            value, authority=None, language=None, confidence=-1, place=0, securityLevel=0
+        ):
+            if value is None:
+                return None
+            if isinstance(value, str) and not value.strip():
+                return None
+            return {
+                "value": value,
+                "language": language,
+                "authority": authority,
+                "confidence": confidence,
+                "place": place,
+                "securityLevel": securityLevel,
+            }
+
+        def split_pairs(value: str, pair_sep="||", kv_sep="::"):
+            """
+            Returns list of (a,b,...) depending on record encoding.
+            """
+            value = (value or "").strip()
+            if not value:
+                return []
+            return [p.strip() for p in value.split(pair_sep) if p.strip()]
+        
+        def split_multi(value: str, sep="||"):
+            value = (value or "").strip()
+            if not value:
+                return []
+            return [v.strip() for v in value.split(sep) if v.strip()]
+
+        def looks_like_epfl(applicant: str) -> bool:
+            """
+            Match large: variations sans accents, acronymes, parenthèses, etc.
+            """
+            if not applicant:
+                return False
+            s = applicant.strip().lower()
+
+            # normalise un peu (espaces/parenthèses)
+            s = re.sub(r"\s+", " ", s)
+            s = s.replace("é", "e").replace("è", "e").replace("ê", "e").replace("à", "a").replace("ç", "c")
+
+            patterns = [
+                r"ecole polytechnique federale de lausanne",
+                r"\bepfl\b",
+                r"e\.?p\.?f\.?l\.?",
+            ]
+            return any(re.search(p, s) for p in patterns)
+
+        def add_grouped_ops(ops, path, values):
+            # values already built dicts
+            values = [v for v in values if v is not None]
+            if values:
+                ops.append({"op": "add", "path": path, "value": values})
+
+        ops = []
+
+        # --- dc.type (authority already in df)
+        v = build_value(
+            row.get("dc.type"),
+            authority=row.get("dc.type_authority"),
+            confidence=600,
+            place=0,
+        )
+        if v:
+            ops.append({"op": "add", "path": f"{base}/dc.type", "value": [v]})
+
+        # --- title / alt / abstract (as before)
+        title = build_value(row.get("title"), language="en")
+        if title:
+            ops.append({"op": "add", "path": f"{base}/dc.title", "value": [title]})
+
+        alt_fr = build_value(row.get("title_fr"), language="fr")
+        if alt_fr:
+            ops.append(
+                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_fr]}
+            )
+        alt_de= build_value(row.get("title_de"), language="de")
+        if alt_de:
+            ops.append(
+                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_de]}
+            )
+        alt_it = build_value(row.get("title_it"), language="it")
+        if alt_it:
+            ops.append(
+                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_it]}
+            )
+        abst = build_value(row.get("abstract"))
+        if abst:
+            ops.append(
+                {"op": "add", "path": f"{base}/dc.description.abstract", "value": [abst]}
+            )
+
+        # ------------------------------------------------------------------
+        # RIGHT HOLDER from applicants (multi-valued)
+        # - If any applicant looks like EPFL, add the EPFL rightHolder with ROR authority
+        # - Otherwise, add applicants as plain rightHolder values
+        # - Keep other applicants too (as plain text), but ensure EPFL is normalized
+        # ------------------------------------------------------------------
+        applicants = split_multi(row.get("applicants"))
+
+        right_holders = []
+        seen = set()
+        epfl_added = False
+        place = 0
+
+        for a in applicants:
+            if looks_like_epfl(a):
+                if not epfl_added:
+                    right_holders.append({
+                        "value": "École Polytechnique Fédérale de Lausanne",
+                        "language": None,
+                        "authority": "will be referenced::ROR-ID::https://ror.org/02s376052",
+                        "confidence": 600,
+                        "place": place,
+                        "securityLevel": 0,
+                    })
+                    seen.add("EPFL_ROR")
+                    epfl_added = True
+                    place += 1
+                continue
+
+            # keep other applicants as-is
+            key = a.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            right_holders.append(build_value(a, place=place, securityLevel=0))
+            place += 1
+
+        # Fallback if empty: keep placeholder (optional)
+        if not right_holders:
+            # either skip entirely OR add a placeholder.
+            # I would skip to avoid junk, unless field is required by validation.
+            pass
+        else:
+            ops.append({"op": "add", "path": f"{base}/dcterms.rightHolder", "value": right_holders})
+
+
+        # ------------------------------------------------------------------
+        # GROUPED FIELDS FROM "publications" (epodoc::country::kind::date)
+        # publications example: "WO2025252699::WO::A1::2025-12-11||EP4628063::EP::A2::2025-10-08"
+        # ------------------------------------------------------------------
+        pubs_raw = split_pairs(row.get("publications"))
+        patentnos = []
+        countries = []
+        kindcodes = []
+        pat_dates = []
+
+        for i, rec in enumerate(pubs_raw):
+            parts = [p.strip() for p in rec.split("::")]
+            epodoc = parts[0] if len(parts) > 0 else ""
+            country = parts[1] if len(parts) > 1 else ""
+            kind = parts[2] if len(parts) > 2 else ""
+            date = parts[3] if len(parts) > 3 else ""
+
+            # IMPORTANT: keep alignment by place
+            patentnos.append(
+                build_value(epodoc or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i)
+            )
+            countries.append(
+                build_value(country or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i)
+            )
+            kindcodes.append(
+                build_value(kind or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i)
+            )
+            pat_dates.append(
+                build_value(date or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i)
+            )
+
+        add_grouped_ops(ops, f"{base}/dc.identifier.patentno", patentnos)
+        add_grouped_ops(ops, f"{base}/oairecerif.patent.country", countries)
+        add_grouped_ops(ops, f"{base}/epfl.patent.kindcode", kindcodes)
+        add_grouped_ops(ops, f"{base}/epfl.patent.date", pat_dates)
+
+        # family id stays single (if you want it)
+        fam = build_value(row.get("family_id"))
+        if fam:
+            ops.append({"op": "add", "path": f"{base}/dc.identifier.epo", "value": [fam]})
+
+        # ------------------------------------------------------------------
+        # GROUPED FIELDS FROM "applications" (application_number::date)
+        # applications example: "WO2025EP65273::2025-06-03||EP20250193257::2017-09-11"
+        # ------------------------------------------------------------------
+        apps_raw = split_pairs(row.get("applications"))
+        appnos = []
+        sub_dates = []
+
+        for i, rec in enumerate(apps_raw):
+            parts = [p.strip() for p in rec.split("::", 1)]
+            appno = parts[0] if len(parts) > 0 else ""
+            dt = parts[1] if len(parts) > 1 else ""
+
+            appnos.append(
+                build_value(
+                    appno or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i, securityLevel=0
+                )
+            )
+            sub_dates.append(
+                build_value(
+                    dt or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i, securityLevel=0
+                )
+            )
+
+        add_grouped_ops(ops, f"{base}/dc.identifier.applicationnumber", appnos)
+        add_grouped_ops(ops, f"{base}/dcterms.dateSubmitted", sub_dates)
+
+        # ------------------------------------------------------------------
+        # GROUPED FIELDS FROM "priority" (priority_number::date)
+        # priority example: "EP20240180668::2024-06-07||WO2017IB55463::2017-09-11"
+        # ------------------------------------------------------------------
+        pr_raw = split_pairs(row.get("priority"))
+        pr_nos = []
+        acc_dates = []
+
+        for i, rec in enumerate(pr_raw):
+            parts = [p.strip() for p in rec.split("::", 1)]
+            prno = parts[0] if len(parts) > 0 else ""
+            dt = parts[1] if len(parts) > 1 else ""
+
+            pr_nos.append(
+                build_value(prno or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i)
+            )
+            acc_dates.append(
+                build_value(dt or "#PLACEHOLDER_PARENT_METADATA_VALUE#", place=i)
+            )
+
+        add_grouped_ops(ops, f"{base}/dc.identifier.prioritynumber", pr_nos)
+        add_grouped_ops(ops, f"{base}/dcterms.dateAccepted", acc_dates)
+
+        # ------------------------------------------------------------------
+        # Sponsorship from units (+ AVP-R-TTO), writtenAt, license granted
+        # ------------------------------------------------------------------
+        acronyms = [u.get("acro") for u in units if u.get("acro")]
+        acronyms = [a for a in acronyms if a if a != "EPFL"]
+        if "AVP-R-TTO" not in acronyms:
+            acronyms.append("AVP-R-TTO")
+
+        spons = [
+            build_value(
+                a,
+                authority=f"will be referenced::ACRONYM::{a}",
+                confidence=600,
+                place=i,
+                securityLevel=0,
+            )
+            for i, a in enumerate(acronyms)
+            if a
+        ]
+        add_grouped_ops(ops, f"{base}/dc.description.sponsorship", spons)
+
+        ops.append(
+            {"op": "add", "path": f"{base}/epfl.writtenAt", "value": [build_value("EPFL")]}
+        )
+        ops.append({"op": "add", "path": "/sections/license/granted", "value": "true"})
+
+        # final cleanup: remove ops whose value list is empty
+        ops = [op for op in ops if op.get("value") not in (None, [], [None])]
+        return ops
+
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
         """Patch metadata for file."""
         license_metadata = licenses_mapping.get(upw_license)
@@ -1286,6 +1574,12 @@ class Loader:
                 source = "crossref"
             elif source == "zenodo":
                 source = "datacite"
+            if str(source).lower() == "epo":
+                internalid = str(row.get("internal_id", "")).strip()
+                if not internalid:
+                    logger.error("EPO item without internal_id: cannot build source_id epodoc:<id>.")
+                    continue
+                source_id = f"epodoc:{internalid}"         
 
             workspace_response = dspace_wrapper.push_publication(
                 source, source_id, collection_id
