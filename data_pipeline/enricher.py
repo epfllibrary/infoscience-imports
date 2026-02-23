@@ -89,7 +89,11 @@ class AuthorProcessor:
                                 else (
                                     self.process_datacite(row["organizations"])
                                     if row["source"] == "datacite"
-                                    else False
+                                    else (
+                                        True   # ✅ EPO patents: try to match ALL inventors (no affiliation propagation)
+                                        if row["source"] == "epo"
+                                        else False
+                                    )
                                 )
                             )
                         )
