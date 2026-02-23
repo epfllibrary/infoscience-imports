@@ -466,6 +466,64 @@ doctypes_mapping_dict = {
         #     "dc.type": "dataset",
         # },
     },
+    "source_epo": {
+        "patent": {
+            "collection": "Patents",
+            "dc.type": "patent",
+        },
+        "A": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "A1": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "A2": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "B1": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "B2": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "P": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P1": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P2": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P3": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P4": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P9": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "S": {
+            "collection": "Patents",
+            "dc.type": "patent::design patent",
+        },
+        "S1": {
+            "collection": "Patents",
+            "dc.type": "patent::design patent",
+        },
+    },
 }
 
 types_authority_mapping = {
