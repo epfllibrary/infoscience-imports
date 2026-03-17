@@ -273,7 +273,7 @@ class Loader:
         """Add Zenodo/DataFrame contributors (role == 'contributor') as DSpace contributors.
 
         Builds four ADD operations:
-        - /sections/{form_section}details/epfl.contributor.role
+        - /sections/{form_section}details/epfl.author.corresponding
         - /sections/{form_section}details/dc.contributor
         - /sections/{form_section}details/oairecerif.contributor.affiliation
         - /sections/{form_section}details/epfl.contributor.orcid
@@ -574,7 +574,7 @@ class Loader:
             f"{base}/dc.contributor.author",
             f"{base}/oairecerif.author.affiliation",
             f"{base}/person.identifier.orcid",
-            f"{base}/epfl.contributor.role",
+            f"{base}/epfl.author.corresponding",
             f"{base}/epfl.author.orcid",
             "/sections/bookcontainer_details/dc.relation.ispartof",
             "/sections/journalcontainer_details/dc.relation.journal",
