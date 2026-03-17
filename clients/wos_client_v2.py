@@ -603,7 +603,7 @@ class Client(APIClient):
             ),
             None,
         )
-        return normalize_title(raw_title) if raw_title else None
+        return raw_title if raw_title else None
 
     def _extract_first_doctype(self, x):
         """
