@@ -1,5 +1,5 @@
 api-client
-fuzzywuzzy
+rapidfuzz
 ipywidgets
 ipykernel
 itables
@@ -9,7 +9,6 @@ numpy
 pyarrow
 plotly
 python-dotenv
-python-Levenshtein
 requests
 pylint
 flake8
@@ -19,6 +18,7 @@ tenacity
 pycountry
 openpyxl
 xlsxwriter
+duckdb
 flask
 marimo
 lxml
