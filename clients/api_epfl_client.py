@@ -12,8 +12,7 @@ from apiclient import (
 from apiclient.retrying import retry_if_api_request_error
 from apiclient.error_handlers import ErrorHandler
 from dotenv import load_dotenv
-from utils import manage_logger, clean_value
-from config import logs_dir
+from utils import get_pipeline_logger, clean_value
 
 
 api_epfl_base_url = "https://api.epfl.ch/v1"
@@ -46,8 +45,7 @@ class Endpoint:
 
 class Client(APIClient):
 
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('api_epfl')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

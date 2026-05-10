@@ -4,9 +4,8 @@ import os
 import re
 import pandas as pd
 from dotenv import load_dotenv
-from config import logs_dir
 from dspace.dspace_rest_client.client import DSpaceClient
-from utils import manage_logger
+from utils import get_pipeline_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
@@ -14,8 +13,7 @@ ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 class DSpaceClientWrapper:
     """Wrapper for Dspace client"""
     def __init__(self):
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = get_pipeline_logger(self.__class__.__name__.lower())
 
         self.client = DSpaceClient()
 

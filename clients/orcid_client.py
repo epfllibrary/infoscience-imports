@@ -13,11 +13,9 @@ from apiclient.retrying import retry_if_api_request_error
 from apiclient.request_formatters import BaseRequestFormatter
 from apiclient.utils.typing import OptionalJsonType, OptionalStr
 from dotenv import load_dotenv
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 
-log_file_path = os.path.join(logs_dir, "logging.log")
-logger = manage_logger(log_file_path)
+logger = get_pipeline_logger('orcid_client')
 
 orcid_prod_public_base_url = "https://pub.orcid.org/v3.0"
 # env var

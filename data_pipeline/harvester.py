@@ -15,8 +15,7 @@ from clients.openalex_client import OpenAlexClient
 from clients.crossref_client import CrossrefClient
 from clients.datacite_client import DataCiteClient
 from clients.epo_ops_client import EPOClient
-from utils import manage_logger
-from config import logs_dir
+from utils import get_pipeline_logger
 
 
 class Harvester(abc.ABC):
@@ -41,8 +40,7 @@ class Harvester(abc.ABC):
         self.query = query
         self.format = format
         # Create a logger
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = get_pipeline_logger(self.__class__.__name__.lower())
 
     @abc.abstractmethod
     def fetch_and_parse_publications(self) -> pd.DataFrame:

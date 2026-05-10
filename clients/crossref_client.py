@@ -17,8 +17,7 @@ from clients.openalex_client import OpenAlexClient
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 import mappings
 
 # Base URL for Crossref API
@@ -50,8 +49,7 @@ class CrossrefEndpoint:
 
 
 class Client(APIClient):
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('crossref')
 
     @retry_request
     def search_query(self, **param_kwargs):

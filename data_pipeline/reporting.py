@@ -8,14 +8,12 @@ import datetime
 from email.message import EmailMessage
 import pandas as pd
 from typing import List, Optional
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 
 class GenerateReports:
     def __init__(self, dataframe, df_unloaded, df_epfl_authors, df_loaded):
         """Initialize the GenerateReports with given DataFrames."""
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = get_pipeline_logger(self.__class__.__name__.lower())
 
         self.df = dataframe.copy()
         self.df_unloaded = df_unloaded.copy()

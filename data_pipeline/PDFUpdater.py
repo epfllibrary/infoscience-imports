@@ -3,11 +3,9 @@ from pathlib import Path
 import pandas as pd
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from mappings import licenses_mapping, versions_mapping
-from utils import manage_logger
-from config import logs_dir
+from utils import get_pipeline_logger
 
-log_file_path = os.path.join(logs_dir, "pdf_updater.log")
-logger = manage_logger(log_file_path)
+logger = get_pipeline_logger('pdfupdater')
 
 script_dir = Path(__file__).resolve().parent
 project_root = script_dir.parent
