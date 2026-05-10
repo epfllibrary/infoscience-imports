@@ -6,18 +6,11 @@ import math
 from pathlib import Path
 import pandas as pd
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-from mappings import licenses_mapping, versions_mapping, collections_mapping
-from utils import manage_logger
-from config import logs_dir
+from mappings import licenses_mapping, versions_mapping, collections_mapping, get_version_mapping
+from utils import get_pipeline_logger
 
-log_file_path = os.path.join(logs_dir, "logging.log")
-logger = manage_logger(log_file_path)
+logger = get_pipeline_logger("loader")
 
-script_dir = Path(__file__).resolve().parent
-project_root = script_dir.parent
-pdf_dir = project_root / "data" / "pdfs"
-
-dspace_wrapper = DSpaceClientWrapper()
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -85,17 +78,79 @@ def _normalize_ws_response(resp, fallback=None):
     return fallback if isinstance(fallback, dict) else (fallback or {})
 
 
+# ---------------------------------------------------------------------------
+# Module-level helpers shared by multiple Loader methods
+# (previously duplicated as inner functions in _process_and_replace_authors,
+#  _process_and_add_contributors, and _construct_patch_operations)
+# ---------------------------------------------------------------------------
+
+def _build_metadata_value(
+    value,
+    display=None,
+    authority=None,
+    confidence: int = -1,
+    language=None,
+    place: int = 0,
+) -> dict | None:
+    """Build a DSpace metadata value dict.
+
+    Returns None when value is blank/None so callers can filter with a simple
+    ``if v`` check instead of repeating the same guard everywhere.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return {
+        "value": value,
+        "language": language,
+        "authority": authority,
+        "display": display if display is not None else value,
+        "confidence": confidence,
+        "place": place,
+    }
+
+
+def _get_first_segment(
+    value,
+    delimiter: str = "|",
+    default: str = "#PLACEHOLDER_PARENT_METADATA_VALUE#",
+) -> str:
+    """Return the first segment of a pipe-delimited string.
+
+    Strips optional numeric or ROR-style prefixes (e.g. '60028186:EPFL' → 'EPFL').
+    Falls back to *default* when the value is empty or NaN.
+    """
+    if pd.notna(value):
+        s = str(value).strip()
+        if s:
+            first_part = s.split(delimiter, 1)[0].strip()
+            if re.match(r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE):
+                return first_part.split(":", 1)[1].strip()
+            return first_part
+    return default
+
+
 class Loader:
     """Load items into DSpace using workflow."""
 
-    def __init__(self, df_metadata, df_epfl_authors, df_authors):
+    def __init__(self, df_metadata, df_epfl_authors, df_authors, dspace_client: DSpaceClientWrapper = None):
         self.df_metadata = df_metadata
         self.df_epfl_authors = df_epfl_authors
         self.df_authors = df_authors
 
-        script_dir = Path(__file__).resolve().parent
-        project_root = script_dir.parent
-        self.pdf_dir = (project_root / "data" / "pdfs").resolve()
+        _project_root = Path(__file__).resolve().parent.parent
+        # Single, resolved pdf_dir — avoids the previous split between a module-level
+        # (unresolved) variable and self.pdf_dir (resolved) which could diverge on
+        # systems with symlinks.
+        self.pdf_dir = (_project_root / "data" / "pdfs").resolve()
+
+        # Allow injection for testing; create lazily if not provided.
+        self._dspace_wrapper = dspace_client
+
+    @property
+    def dspace_wrapper(self) -> DSpaceClientWrapper:
+        if self._dspace_wrapper is None:
+            self._dspace_wrapper = DSpaceClientWrapper()
+        return self._dspace_wrapper
 
     def _is_valid_uuid(self, value):
         """Check if the value is a valid UUID using regex."""
@@ -157,31 +212,10 @@ class Loader:
                 )
                 return []
 
-        def create_metadata(value, display=None, confidence=-1, authority=None):
-            return {
-                "value": value,
-                "authority": authority,
-                "display": display or value,
-                "confidence": confidence,
-            }
-
-        def get_first_split(
-            value, delimiter="|", default="#PLACEHOLDER_PARENT_METADATA_VALUE#"
-        ):
-            """
-            Return the first segment of a delimited string, removing optional numeric/ROR prefixes.
-            Fallback to default if empty or NaN.
-            """
-            if pd.notna(value):
-                s = str(value).strip()
-                if s:
-                    first_part = s.split(delimiter, 1)[0].strip()
-                    if re.match(
-                        r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE
-                    ):
-                        return first_part.split(":", 1)[1].strip()
-                    return first_part
-            return default
+        # Use module-level helpers _build_metadata_value and _get_first_segment
+        # instead of locally-defined create_metadata / get_first_split.
+        create_metadata = _build_metadata_value
+        get_first_split = _get_first_segment
 
         authors_metadata = []
         affiliations_metadata = []
@@ -296,28 +330,9 @@ class Loader:
         if subset.empty:
             return []
 
-        def create_metadata(value, display=None, confidence=-1, authority=None):
-            return {
-                "value": value,
-                "authority": authority,
-                "display": display or value,
-                "confidence": confidence,
-            }
-
-        def get_first_split(
-            value, delimiter="|", default="#PLACEHOLDER_PARENT_METADATA_VALUE#"
-        ):
-            """Return first segment, removing optional numeric/ROR prefix if present."""
-            if pd.notna(value):
-                s = str(value).strip()
-                if s:
-                    first_part = s.split(delimiter, 1)[0].strip()
-                    if re.match(
-                        r"^(?:\d+|[0-9]{2}[a-z0-9]{7}):", first_part, re.IGNORECASE
-                    ):
-                        return first_part.split(":", 1)[1].strip()
-                    return first_part
-            return default
+        # Use module-level helpers
+        create_metadata = _build_metadata_value
+        get_first_split = _get_first_segment
 
         roles_meta = []
         names_meta = []
@@ -445,7 +460,7 @@ class Loader:
 
             if remove_operations:
                 try:
-                    _resp = dspace_wrapper.update_workspace(
+                    _resp = self.dspace_wrapper.update_workspace(
                         workspace_id, _sanitize_ops(remove_operations)
                     )
                     updated_workspace = _normalize_ws_response(_resp, workspace_response)
@@ -455,18 +470,18 @@ class Loader:
             else:
                 updated_workspace = workspace_response
 
-            required_paths = []
+            # Collect DSpace validation errors for logging.
+            # TODO: pass required_paths to _construct_patch_operations to enable
+            # field-level targeted patching (currently all fields are patched regardless).
             if isinstance(updated_workspace, dict) and "errors" in updated_workspace:
-                for error in updated_workspace.get("errors", []):
+                for error in updated_workspace.get("errors", []) or []:
                     try:
-                        msg = error.get("message")
+                        msg = error.get("message", "")
+                        paths = ", ".join(error.get("paths", [])) or "—"
                         if msg in ("error.validation.required", "error.validation.license.required"):
-                            required_paths.extend(error.get("paths", []))
+                            logger.debug("DSpace validation required: %s → %s", msg, paths)
                     except Exception:
-                        # Defensive: ignore malformed error entries
                         pass
-
-            logger.debug(f"Required paths to update: {required_paths}")
 
             # 2) BUILD patch operations (ADD/REPLACE)
             patch_operations = self._construct_patch_operations(
@@ -494,7 +509,7 @@ class Loader:
 
             # 3) APPLY patch operations
             try:
-                _resp = dspace_wrapper.update_workspace(
+                _resp = self.dspace_wrapper.update_workspace(
                     workspace_id, patch_operations
                 )
                 response = _normalize_ws_response(_resp, {})
@@ -1467,13 +1482,11 @@ class Loader:
     def _patch_file_metadata(self, workspace_id, upw_license, upw_version):
         """Patch metadata for file."""
         license_metadata = licenses_mapping.get(upw_license)
-        version_metadata = versions_mapping.get(upw_version or "None")
+        # Use the safe lookup helper: handles None, "None", "" → "NA" fallback
+        version_metadata = get_version_mapping(upw_version)
 
         if not license_metadata:
             logger.error(f"License mapping for '{upw_license}' does not exist.")
-
-        if not version_metadata:
-            logger.error(f"Version mapping for '{upw_version}' does not exist.")
 
         patch_operations = [
             {
@@ -1532,11 +1545,11 @@ class Loader:
         ]
         # Sanitize before sending
         patch_operations = _sanitize_ops(patch_operations)
-        _resp = dspace_wrapper.update_workspace(workspace_id, patch_operations)
+        _resp = self.dspace_wrapper.update_workspace(workspace_id, patch_operations)
         return _normalize_ws_response(_resp, {})
 
     def _add_file(self, workspace_id, file_path):
-        return dspace_wrapper.upload_file_to_workspace(workspace_id, file_path)
+        return self.dspace_wrapper.upload_file_to_workspace(workspace_id, file_path)
 
     def _filter_publications_by_valid_affiliations(self):
         """Filter publications with valid author affiliations."""
@@ -1581,14 +1594,14 @@ class Loader:
                     continue
                 source_id = f"epodoc:{internalid}"         
 
-            workspace_response = dspace_wrapper.push_publication(
+            workspace_response = self.dspace_wrapper.push_publication(
                 source, source_id, collection_id
             )
 
             valid_pdf = row.get("upw_valid_pdf", "")
             # If valid_pdf is already an absolute path, keep it as-is
             file_path = (
-                pdf_dir / valid_pdf
+                self.pdf_dir / valid_pdf
                 if pd.notna(valid_pdf) and str(valid_pdf).strip()
                 else None
             )
@@ -1642,7 +1655,7 @@ class Loader:
                         collection_id,
                         workspace_response,
                     )
-                    workflow_response = dspace_wrapper.create_workflowitem(
+                    workflow_response = self.dspace_wrapper.create_workflowitem(
                         workspace_id
                     )
                     if workflow_response and isinstance(workflow_response, dict) and "id" in workflow_response:
