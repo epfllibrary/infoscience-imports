@@ -785,7 +785,7 @@ licenses_mapping = {
     },
     "public-domain": {
         "value": "PDM",
-        "display": "Creative Commons Attribution-NonCommercial-NoDerivs",
+        "display": "Public Domain Mark",
     },
     "NA": {
         "value": "N/A",
@@ -798,6 +798,8 @@ licenses_mapping = {
 }
 
 # Mappings pour les versions
+# NOTE : utiliser versions_mapping.get(str(v) if v is not None else "NA", versions_mapping["NA"])
+# pour le lookup afin de gérer uniformément Python None, "None" et "NA".
 versions_mapping = {
     "publishedVersion": {
         "value": "http://purl.org/coar/version/c_970fb48d4fbd8a85",
@@ -815,10 +817,8 @@ versions_mapping = {
         "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
         "display": "Not Applicable (or Unknown)",
     },
-    "None": {
-        "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
-        "display": "Not Applicable (or Unknown)",
-    },
+    # "None" (string) intentionally removed — see lookup comment above.
+    # Callers must normalize: key = str(v) if v not in (None, "", "None") else "NA"
 }
 
 MAPPING_UNITS_EN = {
@@ -894,3 +894,23 @@ MAPPING_UNITS_CODES = {
     "visibilité organigramme": "NONE",
     "plateforme": "PLATEFORME",
 }
+
+
+# ---------------------------------------------------------------------------
+# Lookup helpers
+# ---------------------------------------------------------------------------
+
+def get_version_mapping(version_value) -> dict:
+    """Safe lookup in versions_mapping.
+
+    Normalises Python None, empty string and the legacy "None" string to the
+    "NA" fallback key so callers don't need to handle these cases individually.
+
+    Returns the mapping dict (with "value" and "display" keys).
+    """
+    _FALLBACK = "NA"
+    if version_value is None or str(version_value).strip() in ("", "None", "nan"):
+        key = _FALLBACK
+    else:
+        key = str(version_value).strip()
+    return versions_mapping.get(key, versions_mapping[_FALLBACK])
