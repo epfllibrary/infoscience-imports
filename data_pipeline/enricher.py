@@ -3,6 +3,9 @@
 import os
 import string
 import re
+from datetime import datetime
+from collections import Counter
+import time
 from concurrent.futures import ThreadPoolExecutor
 import unicodedata
 from unidecode import unidecode
@@ -15,8 +18,8 @@ from utils import manage_logger, clean_value
 
 from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
+from clients.openalex_client import OpenAlexClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-from clients.orcid_client import OrcidClient
 from config import scopus_epfl_afids, unit_types, excluded_unit_types
 from config import logs_dir
 
@@ -86,7 +89,11 @@ class AuthorProcessor:
                                 else (
                                     self.process_datacite(row["organizations"])
                                     if row["source"] == "datacite"
-                                    else False
+                                    else (
+                                        True   # ✅ EPO patents: try to match ALL inventors (no affiliation propagation)
+                                        if row["source"] == "epo"
+                                        else False
+                                    )
                                 )
                             )
                         )
@@ -95,21 +102,24 @@ class AuthorProcessor:
             ),
             axis=1,
         )
+        if author_ids_to_check is not None:
+            if author_ids_to_check:
+                if isinstance(author_ids_to_check, str):
+                    author_ids_to_check = [
+                        x.strip().lower() for x in author_ids_to_check.split(",") if x.strip()
+                    ]
+                else:
+                    author_ids_to_check = [str(x).strip().lower() for x in author_ids_to_check]
+                author_ids_to_check = set(author_ids_to_check)
+                def check_and_log(row):
+                    internal_id = str(row.get("internal_author_id", "")).strip().lower()
+                    orcid_id = str(row.get("orcid_id", "")).strip().lower()
+                    if internal_id in author_ids_to_check or orcid_id in author_ids_to_check:
+                        return True
+                    else:
+                        return row["epfl_affiliation"]
 
-        # Step 2: Override epfl_affiliation if internal_author_id matches a given author ID
-        if author_ids_to_check:
-            author_ids_to_check = set(
-                map(str, author_ids_to_check)
-            )  # Convert list to string set for fast lookup
-            self.df["epfl_affiliation"] = self.df.apply(
-                lambda row: (
-                    True
-                    if str(row["internal_author_id"]) in author_ids_to_check
-                    or str(row["orcid_id"]) in author_ids_to_check
-                    else row["epfl_affiliation"]
-                ),
-                axis=1,
-            )
+                self.df["epfl_affiliation"] = self.df.apply(check_and_log, axis=1)
 
         return self.df if return_df else self
 
@@ -162,7 +172,11 @@ class AuthorProcessor:
     def process_zenodo(self, text):
         if not isinstance(text, str):
             return False
-        pattern = "(?:EPFL|[Pp]olytechnique [Ff].d.rale de Lausanne)"
+        pattern = (
+            r"(?:EPFL"
+            r"|[Pp]olytechnique\s+[Ff].d.rale\s+de\s+Lausanne"
+            r"|[Ss]wiss\s+[Ff]ederal\s+[Ii]nstitute\s+of\s+[Tt]echnology\s+in\s+[Ll]ausanne)"
+        )
         return bool(re.search(pattern, text))
 
     def process_crossref(self, text):
@@ -345,20 +359,20 @@ class AuthorProcessor:
                     if unit_order == 1 and not fallback_unit:
                         fallback_unit = (unit_id, unit_name, unit_type)
 
+                main_unit = None
+
                 if prioritized_unit:
-                    self.logger.debug("Main unit retrieved: %s", prioritized_unit)
-                    self._accred_cache[sciper_id] = prioritized_unit
-                    return prioritized_unit
+                    main_unit = prioritized_unit
                 elif allowed_units:
-                    allowed_units.sort(key=lambda x: x[3])
-                    result = allowed_units[0][:3]
-                    self.logger.debug("Main unit retrieved: %s", result)
-                    self._accred_cache[sciper_id] = result
-                    return result
+                    allowed_units.sort(key=lambda unit: unit[3])
+                    main_unit = allowed_units[0][:3]
                 elif fallback_unit:
-                    self.logger.debug("Main unit retrieved: %s", fallback_unit)
-                    self._accred_cache[sciper_id] = fallback_unit
-                    return fallback_unit
+                    main_unit = fallback_unit
+
+                if main_unit:
+                    self.logger.debug("Main unit retrieved: %s", main_unit)
+                    self._accred_cache[sciper_id] = main_unit
+                    return main_unit
 
             default = ("10000", "EPFL", "Ecole")
             self.logger.warning(
@@ -366,6 +380,71 @@ class AuthorProcessor:
             )
             self._accred_cache[sciper_id] = default
             return default
+
+    def _infer_unit_from_dspace_facets(self, sciper_id: str, year: int, facet="unitOrLab"):
+        """
+        Infer the most likely affiliation unit from DSpace publications using facet aggregation.
+
+        This method uses DSpace's internal faceting (sorted by count by default) to deduce
+        an author's most probable unit for a given year.
+
+        Args:
+            sciper_id (str): The EPFL unique identifier of the author.
+            year (int): The publication year to scope the query.
+            facet (str): The facet to query (default: 'unitOrLab').
+
+        Todo:
+            - Add logic when member is flagged as 'former' in DSpace.
+            - Add logic to handle cases where EPFL is declared as "Hôte" or "Hors EPFL" in accred.
+            - Add logic to handle cases where api_epfl_mainunit is "EPFL".
+
+        Returns:
+            str: The most frequent unit label (e.g. 'lasur', 'lphe'), or None if not found.
+        """
+        if not sciper_id or pd.isna(year):
+            return None
+
+        year = int(year)
+        ranges = [
+            (year - 2, year + 1),
+            # (year - 3, year),
+            # (year - 4, year),
+        ]
+
+        for start_year, end_year in ranges:
+            query = (
+                f"cris.virtual.sciperId:({sciper_id}) "
+                f"AND (dateIssued.year:[{start_year} TO {end_year}]) "
+                f"AND (entityType:(Publication) NOT (types:(doctoral thesis) OR types_authority:(*student*)))"
+            )
+            try:
+                facet_values = dspace_wrapper.client.get_facet_values(
+                    facet_name=facet, query=query, configuration="researchoutputs", size=5
+                )
+            except Exception as e:
+                self.logger.error(
+                    "Error fetching facet values for sciper %s: %s", sciper_id, str(e)
+                )
+                continue
+
+            if facet_values:
+                top_value = facet_values[0]
+                label = top_value.get("label", "")
+                count = top_value.get("count", 0)
+                if label and count > 2:
+                    unit_label = label.upper()
+                    self.logger.info(
+                        "Inferred unit for %s (%s): %s (%d publications, from %d–%d)",
+                        sciper_id,
+                        year,
+                        unit_label,
+                        count,
+                        start_year,
+                        end_year,
+                    )
+                    return unit_label
+
+        return None
 
     def _query_dspace_authority(self, query):
         """
@@ -452,11 +531,36 @@ class AuthorProcessor:
             return None, None
 
         def query_and_enrich_person(row):
+            """
+            Enriches author metadata by reconciling identifiers (sciper, ORCID, internal IDs) 
+            and inferring their most likely EPFL unit affiliation at the time of publication.
+
+            This function performs the following steps:
+            1. Tries to find the author in DSpace to get the sciper ID and internal UUID.
+            2. Uses the sciper or name information to query the EPFL API for additional metadata.
+            3. Retrieves unit information from EPFL API (current accreditation).
+            4. Infers the most likely unit of affiliation at the time of publication using DSpace facet data.
+            5. Compares both units (API vs guessed) to determine concordance.
+            6. Chooses the most reliable unit as final_mainunit (priority: EPFL API over Infoscience guessed).
+
+            Args:
+                row (pd.Series): A row from the DataFrame representing one author/publication entry.
+
+            Returns:
+                dict: Enriched author information, including:
+                    - sciper_id, epfl_orcid, epfl_status, epfl_position
+                    - epfl_api_mainunit_id / name / type
+                    - dspace_uuid
+                    - guessing_mainunit
+                    - mainunit_match (bool)
+                    - final_mainunit (str)
+            """
             key = make_cache_key(row)
             if key in cache:
                 self.logger.debug("Returned cached data for key %s", key)
                 return cache[key]
 
+            # Initialize result container
             result = {
                 "sciper_id": None,
                 "epfl_status": None,
@@ -464,15 +568,19 @@ class AuthorProcessor:
                 "epfl_orcid": None,
                 "epfl_api_mainunit_id": None,
                 "epfl_api_mainunit_name": None,
+                "epfl_api_mainunit_type": None,
                 "dspace_uuid": None,
+                "guessing_mainunit": None,
+                "mainunit_match": None,
+                "final_mainunit": None,
             }
 
-            # Step 1 : DSpace first
+            # Step 1: Query DSpace for sciper and uuid
             uuid, dspace_sciper = get_dspace_data(row)
             result["dspace_uuid"] = uuid
             sciper_id = dspace_sciper or row.get("sciper_id")
 
-            # Step 2 : enrich from EPFL API using sciper_id or author name
+            # Step 2: Query EPFL API (by sciper if possible, fallback to name)
             if sciper_id:
                 person_info = ApiEpflClient.query_person(
                     query=sciper_id, format="digest", use_firstname_lastname=False
@@ -488,22 +596,55 @@ class AuthorProcessor:
                     use_firstname_lastname=True,
                 )
 
-            # Step 3: embed additional information in the result
+            # Step 3: Populate EPFL metadata if available
             if isinstance(person_info, dict):
-                result.update(
-                    {
-                        "sciper_id": person_info.get("sciper_id"),
-                        "epfl_orcid": person_info.get("epfl_orcid"),
-                        "epfl_status": person_info.get("epfl_status"),
-                        "epfl_position": person_info.get("epfl_position"),
-                    }
-                )
+                result.update({
+                    "sciper_id": person_info.get("sciper_id"),
+                    "epfl_orcid": person_info.get("epfl_orcid"),
+                    "epfl_status": person_info.get("epfl_status"),
+                    "epfl_position": person_info.get("epfl_position"),
+                })
 
                 if person_info.get("sciper_id"):
                     uid, uname, utype = self._fetch_accred_info(person_info["sciper_id"])
-                    result["epfl_api_mainunit_id"] = uid
-                    result["epfl_api_mainunit_name"] = uname
-                    result["epfl_api_mainunit_type"] = utype
+                    result.update({
+                        "epfl_api_mainunit_id": uid,
+                        "epfl_api_mainunit_name": uname,
+                        "epfl_api_mainunit_type": utype,
+                    })
+
+            # Step 4: Guess unit at publication date from DSpace facets
+            year = row.get("year")
+            if result.get("sciper_id") and year:
+                guessed_unit = self._infer_unit_from_dspace_facets(result["sciper_id"], year)
+                result["guessing_mainunit"] = guessed_unit
+
+                api_unit = result.get("epfl_api_mainunit_name")
+                if guessed_unit:
+                    if api_unit:
+                        result["mainunit_match"] = api_unit.strip().upper() == guessed_unit.strip().upper()
+                    else:
+                        result["mainunit_match"] = False
+
+            # Step 5: Select final_mainunit based on best guess at time of publication
+            current_year = datetime.now().year
+            publication_year = row.get("year")
+
+            # Convert and compare publication year safely
+            try:
+                publication_year = int(publication_year)
+            except (ValueError, TypeError):
+                publication_year = None
+
+            # Prioritize based on year
+            if publication_year and abs(publication_year - current_year) <= 1:
+                result["final_mainunit"] = (
+                    result["epfl_api_mainunit_name"] or result["guessing_mainunit"]
+                )
+            else:
+                result["final_mainunit"] = (
+                    result["guessing_mainunit"] or result["epfl_api_mainunit_name"]
+                )
 
             cache[key] = result
             return result
@@ -527,40 +668,127 @@ class PublicationProcessor:
 
     def process(self, return_df=True):
         self.df = self.df.copy()
-        self.df["upw_is_oa"] = False
+
+        # Initialisation des colonnes
+        self.df["upw_is_oa"] = pd.NA
         self.df["upw_is_oa"] = self.df["upw_is_oa"].astype("boolean")  # Nullable boolean
+        self.df["upw_oa_status"] = None
+        self.df["journal_is_oa"] = None
+        self.df["journal_is_in_doaj"] = None
+        self.df["upw_license"] = None
+        self.df["upw_version"] = None
+        self.df["upw_host"] = None
+        self.df["upw_oai_id"] = None
+        self.df["upw_pdf_urls"] = None
+        self.df["upw_valid_pdf"] = None
 
+        # Filtrer uniquement les lignes avec un DOI valide
+        valid_dois = self.df["doi"].dropna()
+        valid_indexes = valid_dois.index
+
+        # Récupérer les données Unpaywall en parallèle
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(self.fetch_unpaywall_data, self.df["doi"].dropna()))
+            results = list(executor.map(self.fetch_unpaywall_data, valid_dois))
 
-        for index, result in zip(self.df.index, results):
+        # Injecter les résultats dans le DataFrame original
+        for index, result in zip(valid_indexes, results):
             if result is not None:
                 self.df.at[index, "upw_is_oa"] = bool(result.get("is_oa"))
                 self.df.at[index, "upw_oa_status"] = result.get("oa_status")
                 self.df.at[index, "journal_is_oa"] = result.get("journal_is_oa")
                 self.df.at[index, "journal_is_in_doaj"] = result.get("journal_is_in_doaj")
+                self.df.at[index, "upw_license"] = result.get("license")
+                self.df.at[index, "upw_version"] = result.get("version")
+                self.df.at[index, "upw_host"] = result.get("host_type")
+                self.df.at[index, "upw_oai_id"] = result.get("pmh_id")
 
                 if self.unpaywall_format == "best-oa-location":
-                    self.df.at[index, "upw_license"] = result.get("license")
-                    self.df.at[index, "upw_version"] = result.get("version")
                     self.df.at[index, "upw_pdf_urls"] = result.get("pdf_urls")
                     self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
                 else:
-                    self.df.at[index, "upw_license"] = None
-                    self.df.at[index, "upw_version"] = None
                     self.df.at[index, "upw_pdf_urls"] = None
                     self.df.at[index, "upw_valid_pdf"] = None
             else:
-                self.df.at[index, "upw_is_oa"] = pd.NA
-                self.df.at[index, "upw_oa_status"] = None
-                self.df.at[index, "journal_is_oa"] = None
-                self.df.at[index, "journal_is_in_doaj"] = None
-                self.df.at[index, "upw_license"] = None
-                self.df.at[index, "upw_version"] = None
-                self.df.at[index, "upw_pdf_urls"] = None
-                self.df.at[index, "upw_valid_pdf"] = None
                 self.logger.warning(
                     "No unpaywall data returned for DOI %s.", self.df.at[index, "doi"]
+                )
+
+        return self.df if return_df else self
+
+class OpenAlexProcessor:
+    def __init__(self, df, format="digest"):
+        """
+        Initialize the OpenAlexProcessor.
+
+        Args:
+            df (pd.DataFrame): Input DataFrame containing at least a 'doi' column.
+            format (str): Format to request from the OpenAlex client ('digest', 'openalex', etc.).
+        """
+        self.df = df.copy()
+        self.format = format
+        log_file_path = os.path.join(logs_dir, "logging.log")
+        self.logger = manage_logger(log_file_path)
+        self.openalex_prefix = "openalex_"
+
+    def fetch_openalex_data(self, doi):
+        """
+        Fetch a single OpenAlex record using a DOI.
+
+        Args:
+            doi (str): The DOI of the record to fetch.
+
+        Returns:
+            dict or None: Parsed metadata dictionary or None if not found or failed.
+        """
+        return OpenAlexClient.fetch_record_by_unique_id(doi, format=self.format)
+
+    def process(self, return_df=True):
+        """
+        Process the DataFrame by fetching and appending OpenAlex metadata per DOI.
+
+        Args:
+            return_df (bool): If True, returns the enriched DataFrame. If False, returns self.
+
+        Returns:
+            pd.DataFrame or OpenAlexProcessor: Enriched DataFrame or self.
+        """
+        self.df = self.df.copy()
+        dois = self.df["doi"].dropna()
+        results = []
+
+        # Traitement DOI par DOI
+        for i, (index, doi) in enumerate(zip(dois.index, dois), 1):
+            self.logger.info(f"[{i}/{len(dois)}] Fetching OpenAlex data for DOI: {doi}")
+            try:
+                result = self.fetch_openalex_data(doi)
+                results.append((index, result))
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch data for DOI {doi}: {e}")
+                results.append((index, None))
+            time.sleep(1.0)  # pour respecter les limites de l’API
+
+        # Collecte de toutes les clés uniques retournées
+        all_keys = set()
+        for _, result in results:
+            if isinstance(result, dict):
+                all_keys.update(result.keys())
+
+        # Création des colonnes si absentes
+        for key in sorted(all_keys):
+            col_name = f"{self.openalex_prefix}{key}"
+            if col_name not in self.df.columns:
+                self.df[col_name] = pd.NA
+
+        # Injection des données dans le DataFrame
+        for index, result in results:
+            if isinstance(result, dict):
+                for key in all_keys:
+                    col_name = f"{self.openalex_prefix}{key}"
+                    value = result.get(key, pd.NA)
+                    self.df.at[index, col_name] = value
+            else:
+                self.logger.warning(
+                    f"No OpenAlex data returned for DOI {self.df.at[index, 'doi']}"
                 )
 
         return self.df if return_df else self

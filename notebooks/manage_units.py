@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.12.4"
+__generated_with = "0.18.4"
 app = marimo.App(width="medium")
 
 
@@ -11,7 +11,7 @@ def _():
     import pandas as pd
     import marimo as mo
     sys.path.append(os.path.abspath(".."))
-    return mo, os, pd, sys
+    return mo, pd
 
 
 @app.cell
@@ -35,90 +35,84 @@ def _(DSpaceClient):
     if not authenticated:
         print('Error logging in! Giving up.')
         exit(1)
-    return authenticated, d
+    return (d,)
 
 
-@app.cell
-def get_collections():
-    def get_collections(d):
-        """
-        Retrieve all collections from top-level communities in a DSpace instance.
+@app.function
+def get_collections(d):
+    """
+    Retrieve all collections from top-level communities in a DSpace instance.
 
-        Parameters:
-        d (object): A DSpace API client instance that provides methods such as 
-                    `get_communities(top=True)` and `get_collections(community=...)`.
+    Parameters:
+    d (object): A DSpace API client instance that provides methods such as 
+                `get_communities(top=True)` and `get_collections(community=...)`.
 
-        Returns:
-        list of dict: A list of dictionaries, each containing the 'name' and 'uuid'
-                      of a collection under the top-level communities.
-        """
-        result = []
-        # Get all top-level communities
-        top_communities = d.get_communities(top=True)
+    Returns:
+    list of dict: A list of dictionaries, each containing the 'name' and 'uuid'
+                  of a collection under the top-level communities.
+    """
+    result = []
+    # Get all top-level communities
+    top_communities = d.get_communities(top=True)
 
-        # For each community, get its collections
-        for top_community in top_communities:
-            collections = d.get_collections(community=top_community)
-            for collection in collections:
-                result.append({
-                    'name': collection.name,
-                    'uuid': collection.uuid
-                })
-        return result
-    return (get_collections,)
-
-
-@app.cell
-def get_uuid_by_name():
-    def get_uuid_by_name(collections, name):
-        """
-        Find the UUID of a collection given its name.
-
-        Parameters:
-        collections (list of dict): A list of collections, where each collection is a 
-                                    dictionary with 'name' and 'uuid' keys.
-        name (str): The name of the collection to search for.
-
-        Returns:
-        str or None: The UUID of the collection if found; otherwise, None.
-        """
+    # For each community, get its collections
+    for top_community in top_communities:
+        collections = d.get_collections(community=top_community)
         for collection in collections:
-            if collection.get('name') == name:
-                return collection.get('uuid')
-        return None
-    return (get_uuid_by_name,)
+            result.append({
+                'name': collection.name,
+                'uuid': collection.uuid
+            })
+    return result
 
 
-@app.cell
-def find_duplicate_units():
-    def find_duplicate_units(df, key='unitid', status_col='status'):
-        """
-        Identify and sort candidate duplicate organizational units.
+@app.function
+def get_uuid_by_name(collections, name):
+    """
+    Find the UUID of a collection given its name.
 
-        Units are considered duplicates if they share the same `unitid`. Within each group
-        of duplicates, rows are sorted so that units with status == 'true' appear first.
+    Parameters:
+    collections (list of dict): A list of collections, where each collection is a 
+                                dictionary with 'name' and 'uuid' keys.
+    name (str): The name of the collection to search for.
 
-        Parameters:
-        df (pd.DataFrame): The DataFrame containing unit data.
-        key (str): The column to check for duplicates (default: 'unitid').
-        status_col (str): The column indicating status (default: 'status').
+    Returns:
+    str or None: The UUID of the collection if found; otherwise, None.
+    """
+    for collection in collections:
+        if collection.get('name') == name:
+            return collection.get('uuid')
+    return None
 
-        Returns:
-        pd.DataFrame: A DataFrame with duplicated units, grouped and sorted.
-        """
-        df_valid = df[df[key].notna()]
 
-        # Find duplicated rows based on the key
-        duplicates = df_valid[df_valid.duplicated(subset=[key], keep=False)]
+@app.function
+def find_duplicate_units(df, key='unitid', status_col='status'):
+    """
+    Identify and sort candidate duplicate organizational units.
 
-        # Sort by key (e.g. unitid), and prioritize status == 'true'
-        duplicates_sorted = duplicates.sort_values(
-            by=[key, status_col],
-            ascending=[True, False]  # status 'true' comes first (alphabetically, "true" > "false")
-        )
+    Units are considered duplicates if they share the same `unitid`. Within each group
+    of duplicates, rows are sorted so that units with status == 'true' appear first.
 
-        return duplicates_sorted
-    return (find_duplicate_units,)
+    Parameters:
+    df (pd.DataFrame): The DataFrame containing unit data.
+    key (str): The column to check for duplicates (default: 'unitid').
+    status_col (str): The column indicating status (default: 'status').
+
+    Returns:
+    pd.DataFrame: A DataFrame with duplicated units, grouped and sorted.
+    """
+    df_valid = df[df[key].notna()]
+
+    # Find duplicated rows based on the key
+    duplicates = df_valid[df_valid.duplicated(subset=[key], keep=False)]
+
+    # Sort by key (e.g. unitid), and prioritize status == 'true'
+    duplicates_sorted = duplicates.sort_values(
+        by=[key, status_col],
+        ascending=[True, False]  # status 'true' comes first (alphabetically, "true" > "false")
+    )
+
+    return duplicates_sorted
 
 
 @app.cell
@@ -170,58 +164,6 @@ def _(pd):
         else:
             return pd.DataFrame(columns=df.columns.tolist() + ['open_acronym', 'open_unitid', 'open_parent', 'open_url', 'open_uuid'])
     return (find_closed_with_open_match,)
-
-
-@app.cell
-def _(pd):
-    def get_outputs_by_unit(d, unit_uuid, size=100):
-        """
-        Fetch and structure research outputs (publications) linked to a specific organizational unit.
-
-        Parameters:
-        d (object): DSpace API client object with a `search_objects` method.
-        unit_uuid (str): The UUID of the unit/authority to search publications for.
-        size (int): Number of results to fetch (default: 100).
-
-        Returns:
-        pd.DataFrame: A DataFrame containing structured metadata for each publication.
-        """
-        # Build the search query
-        query = f"unitOrLab_authority:({unit_uuid})"
-        configuration = "researchoutputs"
-        sort_order = "dc.date.accessioned,DESC"
-
-        # Execute the search
-        routputs = d.search_objects(
-            query=query,
-            page=0,
-            size=size,
-            sort=sort_order,
-            dso_type="item",
-            configuration=configuration
-        )
-
-        # Parse the search results into structured records
-        researchoutput = []
-
-        for r in routputs:
-            researchoutput.append({
-                'uuid': r.uuid,
-                'title': r.metadata.get('dc.title', [{}])[0].get('value'),
-                'type': r.metadata.get('dc.type', [{}])[0].get('value'),
-                'authors': set(x.get('value') for x in r.metadata.get('dc.contributor.author', [{}]) if x.get('value')),
-                'scipers': set(x.get('value') for x in r.metadata.get('cris.virtual.sciperId', [{}]) if x.get('value')),
-                'journal': r.metadata.get('dc.relation.journal', [{}])[0].get('value'),
-                'issued': r.metadata.get('dc.date.issued', [{}])[0].get('value'),
-                'created': r.metadata.get('dc.date.created', [{}])[0].get('value'),
-                'units': set(x.get('value') for x in r.metadata.get('dc.description.sponsorship', [{}]) if x.get('value')),
-                'peerreviewed': r.metadata.get('epfl.peerreviewed', [{}])[0].get('value'),
-                'epfl': r.metadata.get('epfl.writtenAt', [{}])[0].get('value'),
-            })
-
-        # Convert to DataFrame
-        return pd.DataFrame(researchoutput)
-    return (get_outputs_by_unit,)
 
 
 @app.cell
@@ -326,36 +268,34 @@ def _(ApiEpflClient, df_units, enrich_units):
     return (df_units_enriched,)
 
 
-@app.cell
-def map_unit_types_to_dspace():
-    def map_unit_types_to_dspace(df_units, mapping_codes, mapping_en, mapping_fr):
-        """
-        Add columns to df_units by mapping 'unittype_label' to:
-        - a code (dspace_type_code),
-        - a label in English (dspace_type_en),
-        - a label in French (dspace_type_fr).
+@app.function
+def map_unit_types_to_dspace(df_units, mapping_codes, mapping_en, mapping_fr):
+    """
+    Add columns to df_units by mapping 'unittype_label' to:
+    - a code (dspace_type_code),
+    - a label in English (dspace_type_en),
+    - a label in French (dspace_type_fr).
 
-        Parameters:
-        df_units (pd.DataFrame): DataFrame with a column 'unittype_label'.
-        mapping_codes (dict): Mapping from label to DSpace code.
-        mapping_en (dict): Mapping from label to English label.
-        mapping_fr (dict): Mapping from label to French label.
+    Parameters:
+    df_units (pd.DataFrame): DataFrame with a column 'unittype_label'.
+    mapping_codes (dict): Mapping from label to DSpace code.
+    mapping_en (dict): Mapping from label to English label.
+    mapping_fr (dict): Mapping from label to French label.
 
-        Returns:
-        pd.DataFrame: The enriched DataFrame with 3 new columns.
-        """
-        df_units = df_units.copy()
-        label_lower = df_units['unittype_label'].str.lower()
+    Returns:
+    pd.DataFrame: The enriched DataFrame with 3 new columns.
+    """
+    df_units = df_units.copy()
+    label_lower = df_units['unittype_label'].str.lower()
 
-        # Map values using get() to avoid KeyErrors for unknown labels
+    # Map values using get() to avoid KeyErrors for unknown labels
 
-        dspace_type_code = label_lower.map(mapping_codes.get)
-        df_units['dspace_type_code'] = dspace_type_code
-        df_units['dspace_type_en'] = dspace_type_code.map(mapping_en.get)
-        df_units['dspace_type_fr'] = dspace_type_code.map(mapping_fr.get)
+    dspace_type_code = label_lower.map(mapping_codes.get)
+    df_units['dspace_type_code'] = dspace_type_code
+    df_units['dspace_type_en'] = dspace_type_code.map(mapping_en.get)
+    df_units['dspace_type_fr'] = dspace_type_code.map(mapping_fr.get)
 
-        return df_units
-    return (map_unit_types_to_dspace,)
+    return df_units
 
 
 @app.cell
@@ -364,7 +304,6 @@ def _(
     MAPPING_UNITS_EN,
     MAPPING_UNITS_FR,
     df_units_enriched,
-    map_unit_types_to_dspace,
 ):
     df_units_final = map_unit_types_to_dspace(
         df_units_enriched,
@@ -415,149 +354,145 @@ def _(add_acronym_match_column, df_units_final):
 def _(df_units_enrich, mo):
     transformed_df = mo.ui.dataframe(df_units_enrich)
     transformed_df
-    return (transformed_df,)
+    return
+
+
+@app.function
+def activate_units_with_cf(df_units):
+    """
+    Set status to 'true' for rows where cf is not null/empty and status is 'false'.
+
+    Parameters:
+    df_units (pd.DataFrame): Must contain 'cf' and 'status' columns.
+
+    Returns:
+    pd.DataFrame: Updated DataFrame with modified status.
+    """
+    df_units = df_units.copy()
+
+    # Condition: cf is not null/empty and status is 'false'
+    condition = (
+        df_units['cf'].astype(str).str.strip().ne('') & 
+        df_units['cf'].notna() &
+        df_units['status'].astype(str).str.lower().eq('false')
+    )
+
+    df_units.loc[condition, 'status'] = 'true'
+    return df_units
 
 
 @app.cell
-def activate_units_with_cf():
-    def activate_units_with_cf(df_units):
-        """
-        Set status to 'true' for rows where cf is not null/empty and status is 'false'.
-
-        Parameters:
-        df_units (pd.DataFrame): Must contain 'cf' and 'status' columns.
-
-        Returns:
-        pd.DataFrame: Updated DataFrame with modified status.
-        """
-        df_units = df_units.copy()
-
-        # Condition: cf is not null/empty and status is 'false'
-        condition = (
-            df_units['cf'].astype(str).str.strip().ne('') & 
-            df_units['cf'].notna() &
-            df_units['status'].astype(str).str.lower().eq('false')
-        )
-
-        df_units.loc[condition, 'status'] = 'true'
-        return df_units
-    return (activate_units_with_cf,)
-
-
-@app.cell
-def _(activate_units_with_cf, df_units_final):
-    df_units_refined = activate_units_with_cf(df_units_final)
+def _(df_units_enrich):
+    df_units_refined = activate_units_with_cf(df_units_enrich)
     df_units_refined
     return (df_units_refined,)
 
 
-@app.cell
-def update_unit():
-    def update_unit(d, item_uuid, dspace_type_code=None, url=None, cf=None):
-        """
-        Update the dc.type, oairecerif.identifier.url and epfl.orgUnit.cf metadata
-        of an organizational unit via PATCH operation using d.api_patch.
-        Applies inference rules on type if not provided.
+@app.function
+def update_unit(d, item_uuid, dspace_type_code=None, url=None, cf=None):
+    """
+    Update the dc.type, oairecerif.identifier.url and epfl.orgUnit.cf metadata
+    of an organizational unit via PATCH operation using d.api_patch.
+    Applies inference rules on type if not provided.
 
-        Parameters:
-        d (object): DSpace API client.
-        item_uuid (str): UUID of the unit item.
-        dspace_type_code (str or None): Type code to assign (e.g. 'CENTRE').
-        url (str or None): URL to assign.
-        cf (str or int, optional): Code FNS (cf) to assign.
+    Parameters:
+    d (object): DSpace API client.
+    item_uuid (str): UUID of the unit item.
+    dspace_type_code (str or None): Type code to assign (e.g. 'CENTRE').
+    url (str or None): URL to assign.
+    cf (str or int, optional): Code FNS (cf) to assign.
 
-        Returns:
-        list of str: List of patch log messages.
-        """
-        def is_valid(val):
-            return val is not None and str(val).strip().lower() not in ["", "null"]
+    Returns:
+    list of str: List of patch log messages.
+    """
+    def is_valid(val):
+        return val is not None and str(val).strip().lower() not in ["", "null"]
 
-        results = []
-        item = d.get_item(item_uuid)
-        item_url = item.links["self"]["href"]
-        metadata = item.metadata
+    results = []
+    item = d.get_item(item_uuid)
+    item_url = item.links["self"]["href"]
+    metadata = item.metadata
 
-        # --- RULE: infer type if needed ---
-        type_none = str(dspace_type_code).strip().lower()
-        if type_none in ["none"]:
-            unit_name = metadata.get('dc.title', [{}])[0].get('value', '')
-            unit_name_stripped = unit_name.strip()
-            unit_name_lower = unit_name_stripped.lower()
+    # --- RULE: infer type if needed ---
+    type_none = str(dspace_type_code).strip().lower()
+    if type_none in ["none"]:
+        unit_name = metadata.get('dc.title', [{}])[0].get('value', '')
+        unit_name_stripped = unit_name.strip()
+        unit_name_lower = unit_name_stripped.lower()
 
-            keywords = ["laboratoire", "laboratory", "unité du prof.", "chaire", "chair"]
-            starts_with_prof = unit_name_stripped.startswith("Prof.")
+        keywords = ["laboratoire", "laboratory", "unité du prof.", "chaire", "chair"]
+        starts_with_prof = unit_name_stripped.startswith("Prof.")
 
-            if any(kw in unit_name_lower for kw in keywords) or starts_with_prof:
-                dspace_type_code = "LABO"
-                results.append("Inferred type 'LABO' from unit name")
+        if any(kw in unit_name_lower for kw in keywords) or starts_with_prof:
+            dspace_type_code = "LABO"
+            results.append("Inferred type 'LABO' from unit name")
 
-        # --- dc.type ---
-        if is_valid(dspace_type_code):
-            existing_type = metadata.get('dc.type', [])
-            value = {"value": dspace_type_code.strip(), "language": None, "authority": None}
+    # --- dc.type ---
+    if is_valid(dspace_type_code):
+        existing_type = metadata.get('dc.type', [])
+        value = {"value": dspace_type_code.strip(), "language": None, "authority": None}
 
-            path = "/metadata/dc.type/0" if existing_type else "/metadata/dc.type/-"
-            op = "replace" if existing_type else "add"
-            value_payload = value if op == "replace" else [value]
+        path = "/metadata/dc.type/0" if existing_type else "/metadata/dc.type/-"
+        op = "replace" if existing_type else "add"
+        value_payload = value if op == "replace" else [value]
 
-            try:
-                response = d.api_patch(item_url, op, path, value_payload)
-                results.append(f"{op.capitalize()}d dc.type '{dspace_type_code}': {response.status_code}")
-            except Exception as e:
-                results.append(f"Error updating dc.type: {e}")
-
-        # --- URL ---
-        if is_valid(url):
-            existing_url = metadata.get('oairecerif.identifier.url', [])
-            value = {"value": url.strip(), "language": None, "authority": None}
-
-            path = "/metadata/oairecerif.identifier.url/0" if existing_url else "/metadata/oairecerif.identifier.url/-"
-            op = "replace" if existing_url else "add"
-            value_payload = value if op == "replace" else [value]
-
-            try:
-                response = d.api_patch(item_url, op, path, value_payload)
-                results.append(f"{op.capitalize()}d URL '{url}': {response.status_code}")
-            except Exception as e:
-                results.append(f"Error updating URL: {e}")
-
-        # --- CF ---
-        if is_valid(cf):
-            existing_cf = metadata.get('epfl.orgUnit.cf', [])
-            value = {
-                "value": str(cf).strip(),
-                "language": None,
-                "authority": None,
-                "securityLevel": 0
-            }
-
-            path = "/metadata/epfl.orgUnit.cf/0" if existing_cf else "/metadata/epfl.orgUnit.cf/-"
-            op = "replace" if existing_cf else "add"
-            value_payload = value if op == "replace" else [value]
-
-            try:
-                response = d.api_patch(item_url, op, path, value_payload)
-                results.append(f"{op.capitalize()}d CF '{cf}': {response.status_code}")
-            except Exception as e:
-                results.append(f"Error updating CF: {e}")
-
-            # --- Status (epfl.orgUnit.active → true) ---
         try:
-            value = {"value": "true", "language": None, "authority": None}
-            response = d.api_patch(item_url, "replace", "/metadata/epfl.orgUnit.active/0", value)
-            results.append(f"Replaced status with 'true': {response.status_code}")
+            response = d.api_patch(item_url, op, path, value_payload)
+            results.append(f"{op.capitalize()}d dc.type '{dspace_type_code}': {response.status_code}")
         except Exception as e:
-            results.append(f"Error updating status to true: {e}")
+            results.append(f"Error updating dc.type: {e}")
 
-        if not results:
-            results.append("No patch operation performed (no valid type, URL, or CF).")
+    # --- URL ---
+    if is_valid(url):
+        existing_url = metadata.get('oairecerif.identifier.url', [])
+        value = {"value": url.strip(), "language": None, "authority": None}
 
-        return results
-    return (update_unit,)
+        path = "/metadata/oairecerif.identifier.url/0" if existing_url else "/metadata/oairecerif.identifier.url/-"
+        op = "replace" if existing_url else "add"
+        value_payload = value if op == "replace" else [value]
+
+        try:
+            response = d.api_patch(item_url, op, path, value_payload)
+            results.append(f"{op.capitalize()}d URL '{url}': {response.status_code}")
+        except Exception as e:
+            results.append(f"Error updating URL: {e}")
+
+    # --- CF ---
+    if is_valid(cf):
+        existing_cf = metadata.get('epfl.orgUnit.cf', [])
+        value = {
+            "value": str(cf).strip(),
+            "language": None,
+            "authority": None,
+            "securityLevel": 0
+        }
+
+        path = "/metadata/epfl.orgUnit.cf/0" if existing_cf else "/metadata/epfl.orgUnit.cf/-"
+        op = "replace" if existing_cf else "add"
+        value_payload = value if op == "replace" else [value]
+
+        try:
+            response = d.api_patch(item_url, op, path, value_payload)
+            results.append(f"{op.capitalize()}d CF '{cf}': {response.status_code}")
+        except Exception as e:
+            results.append(f"Error updating CF: {e}")
+
+        # --- Status (epfl.orgUnit.active → true) ---
+    try:
+        value = {"value": "true", "language": None, "authority": None}
+        response = d.api_patch(item_url, "replace", "/metadata/epfl.orgUnit.active/0", value)
+        results.append(f"Replaced status with 'true': {response.status_code}")
+    except Exception as e:
+        results.append(f"Error updating status to true: {e}")
+
+    if not results:
+        results.append("No patch operation performed (no valid type, URL, or CF).")
+
+    return results
 
 
 @app.cell
-def _(pd, update_unit):
+def _(pd):
     def batch_update_units(d, df_units):
         """
         Batch update units in DSpace based on df_units content.
@@ -607,82 +542,80 @@ def _(pd, update_unit):
 def _(batch_update_units, d, df_units_refined):
     df_up_units_report = batch_update_units(d, df_units_refined)
     df_up_units_report
-    return (df_up_units_report,)
+    return
 
 
-@app.cell
-def patch_sponsorship_unit():
-    def patch_sponsorship_unit(d, item_uuid, obsolete_unit, active_unit):
-        """
-        Patch 'dc.description.sponsorship' of one item to replace an obsolete unit with an active one.
-        Returns patch log and sponsorship acronyms before and after the operation.
-        """
-        responses = []
-        item = d.get_item(item_uuid)
-        item_url = item.links["self"]["href"]
-        md = item.metadata
+@app.function
+def patch_sponsorship_unit(d, item_uuid, obsolete_unit, active_unit):
+    """
+    Patch 'dc.description.sponsorship' of one item to replace an obsolete unit with an active one.
+    Returns patch log and sponsorship acronyms before and after the operation.
+    """
+    responses = []
+    item = d.get_item(item_uuid)
+    item_url = item.links["self"]["href"]
+    md = item.metadata
 
-        sponsorships = md.get('dc.description.sponsorship', [])
-        obsolete_found = []
-        active_present = False
+    sponsorships = md.get('dc.description.sponsorship', [])
+    obsolete_found = []
+    active_present = False
 
-        # Record pre-patch values
-        sponsorships_before = [x.get('value') for x in sponsorships if x.get('value')]
+    # Record pre-patch values
+    sponsorships_before = [x.get('value') for x in sponsorships if x.get('value')]
 
+    last_response = None
+
+    for i, entry in enumerate(sponsorships):
+        val = entry.get('value')
+        auth = entry.get('authority')
+
+        if val == obsolete_unit['acronym'] and auth == obsolete_unit['uuid']:
+            obsolete_found.append(i)
+        if val == active_unit['acronym'] and auth == active_unit['uuid']:
+            active_present = True
+
+    if active_present and obsolete_found:
+        for idx in obsolete_found:
+            path = f"/metadata/dc.description.sponsorship/{idx}"
+            response = d.api_patch(item_url, "remove", path, None)
+            last_response = response
+            responses.append(f"Removed obsolete unit at index {idx}: {response.status_code}")
+
+    elif not active_present and obsolete_found:
+        first_idx = obsolete_found[0]
+        path = f"/metadata/dc.description.sponsorship/{first_idx}"
+        new_value = {
+            "value": active_unit['acronym'],
+            "language": None,
+            "authority": active_unit['uuid'],
+            "confidence": 600,
+        }
+        response = d.api_patch(item_url, "replace", path, new_value)
+        last_response = response
+        responses.append(f"Replaced obsolete with active at index {first_idx}: {response.status_code}")
+
+        for idx in obsolete_found[1:]:
+            path = f"/metadata/dc.description.sponsorship/{idx}"
+            response = d.api_patch(item_url, "remove", path, None)
+            last_response = response
+            responses.append(f"Removed duplicate obsolete unit at index {idx}: {response.status_code}")
+
+    else:
+        responses.append("No action taken (no obsolete unit found or already clean)")
         last_response = None
 
-        for i, entry in enumerate(sponsorships):
-            val = entry.get('value')
-            auth = entry.get('authority')
+    # Extract post-patch values from last response (if any patch was applied)
+    if last_response and last_response.status_code == 200:
+        metadata_after = last_response.json().get("metadata", {})
+        sponsorships_after = [x.get('value') for x in metadata_after.get("dc.description.sponsorship", []) if x.get('value')]
+    else:
+        sponsorships_after = sponsorships_before  # unchanged
 
-            if val == obsolete_unit['acronym'] and auth == obsolete_unit['uuid']:
-                obsolete_found.append(i)
-            if val == active_unit['acronym'] and auth == active_unit['uuid']:
-                active_present = True
-
-        if active_present and obsolete_found:
-            for idx in obsolete_found:
-                path = f"/metadata/dc.description.sponsorship/{idx}"
-                response = d.api_patch(item_url, "remove", path, None)
-                last_response = response
-                responses.append(f"Removed obsolete unit at index {idx}: {response.status_code}")
-
-        elif not active_present and obsolete_found:
-            first_idx = obsolete_found[0]
-            path = f"/metadata/dc.description.sponsorship/{first_idx}"
-            new_value = {
-                "value": active_unit['acronym'],
-                "language": None,
-                "authority": active_unit['uuid'],
-                "confidence": 600,
-            }
-            response = d.api_patch(item_url, "replace", path, new_value)
-            last_response = response
-            responses.append(f"Replaced obsolete with active at index {first_idx}: {response.status_code}")
-
-            for idx in obsolete_found[1:]:
-                path = f"/metadata/dc.description.sponsorship/{idx}"
-                response = d.api_patch(item_url, "remove", path, None)
-                last_response = response
-                responses.append(f"Removed duplicate obsolete unit at index {idx}: {response.status_code}")
-
-        else:
-            responses.append("No action taken (no obsolete unit found or already clean)")
-            last_response = None
-
-        # Extract post-patch values from last response (if any patch was applied)
-        if last_response and last_response.status_code == 200:
-            metadata_after = last_response.json().get("metadata", {})
-            sponsorships_after = [x.get('value') for x in metadata_after.get("dc.description.sponsorship", []) if x.get('value')]
-        else:
-            sponsorships_after = sponsorships_before  # unchanged
-
-        return responses, sponsorships_before, sponsorships_after
-    return (patch_sponsorship_unit,)
+    return responses, sponsorships_before, sponsorships_after
 
 
 @app.cell
-def _(patch_sponsorship_unit, pd):
+def _(pd):
     def batch_replace_unit(d, obsolete_unit, active_unit, size=50, max_pages=None):
         """
         Batch-replace obsolete units in all items by calling patch_sponsorship_unit on each.
@@ -728,7 +661,7 @@ def _(patch_sponsorship_unit, pd):
 def _(df_units_refined, find_closed_with_open_match):
     df_closed_duplicates = find_closed_with_open_match(df_units_refined)
     df_closed_duplicates
-    return (df_closed_duplicates,)
+    return
 
 
 @app.cell
@@ -740,7 +673,59 @@ def _(batch_replace_unit, d):
 
     # Affichage ou export du rapport
     df_replace_unit_report
-    return active_unit, df_replace_unit_report, obsolete_unit
+    return
+
+
+@app.cell
+def _(pd):
+    def get_outputs_by_unit(d, unit_uuid, size=100):
+        """
+        Fetch and structure research outputs (publications) linked to a specific organizational unit.
+
+        Parameters:
+        d (object): DSpace API client object with a `search_objects` method.
+        unit_uuid (str): The UUID of the unit/authority to search publications for.
+        size (int): Number of results to fetch (default: 100).
+
+        Returns:
+        pd.DataFrame: A DataFrame containing structured metadata for each publication.
+        """
+        # Build the search query
+        query = f"unitOrLab_authority:({unit_uuid})"
+        configuration = "researchoutputs"
+        sort_order = "dc.date.accessioned,DESC"
+
+        # Execute the search
+        routputs = d.search_objects(
+            query=query,
+            page=0,
+            size=size,
+            sort=sort_order,
+            dso_type="item",
+            configuration=configuration
+        )
+
+        # Parse the search results into structured records
+        researchoutput = []
+
+        for r in routputs:
+            researchoutput.append({
+                'uuid': r.uuid,
+                'title': r.metadata.get('dc.title', [{}])[0].get('value'),
+                'type': r.metadata.get('dc.type', [{}])[0].get('value'),
+                'authors': set(x.get('value') for x in r.metadata.get('dc.contributor.author', [{}]) if x.get('value')),
+                'scipers': set(x.get('value') for x in r.metadata.get('cris.virtual.sciperId', [{}]) if x.get('value')),
+                'journal': r.metadata.get('dc.relation.journal', [{}])[0].get('value'),
+                'issued': r.metadata.get('dc.date.issued', [{}])[0].get('value'),
+                'created': r.metadata.get('dc.date.created', [{}])[0].get('value'),
+                'units': set(x.get('value') for x in r.metadata.get('dc.description.sponsorship', [{}]) if x.get('value')),
+                'peerreviewed': r.metadata.get('epfl.peerreviewed', [{}])[0].get('value'),
+                'epfl': r.metadata.get('epfl.writtenAt', [{}])[0].get('value'),
+            })
+
+        # Convert to DataFrame
+        return pd.DataFrame(researchoutput)
+    return
 
 
 if __name__ == "__main__":

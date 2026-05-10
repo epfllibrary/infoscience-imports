@@ -385,14 +385,14 @@ doctypes_mapping_dict = {
         #     "collection": "",
         #     "dc.type": "text",
         # },
-        # "presentation": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference presentation",
-        # },
-        # "poster": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings",
-        # },
+        "presentation": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference presentation",
+        },
+        "poster": {
+            "collection": "Conferences, Workshops, Symposiums, and Seminars",
+            "dc.type": "text::conference output::conference proceedings",
+        },
         # "publication/article": {
         #     "collection": "Journal articles",
         #     "dc.type": "text::journal::journal article",
@@ -425,45 +425,103 @@ doctypes_mapping_dict = {
         #     "collection": "Student works",
         #     "dc.type": "text::thesis::doctoral thesis",
         # },
-        # "image/diagram": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/drawing": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/figure": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/photo": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/plot": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
-        # "image/other": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "image",
-        # },
+        "image/diagram": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
+        },
+        "image/drawing": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
+        },
+        "image/figure": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
+        },
+        "image/photo": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
+        },
+        "image/plot": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
+        },
+        "image/other": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
+        },
         "software": {
             "collection": "Datasets and Code",
             "dc.type": "software",
         },
-        # "video": {
-        #     "collection": "Images, Videos, Interactive resources, and Design",
-        #     "dc.type": "video",
-        # },
+        "video": {
+            "collection": "Datasets and Code",
+            "dc.type": "dataset::recorded data",
+        },
         "model": {
             "collection": "Datasets and Code",
             "dc.type": "dataset",
         },
-        "other": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
+        # "other": {
+        #     "collection": "Datasets and Code",
+        #     "dc.type": "dataset",
+        # },
+    },
+    "source_epo": {
+        "patent": {
+            "collection": "Patents",
+            "dc.type": "patent",
+        },
+        "A": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "A1": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "A2": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "B1": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "B2": {
+            "collection": "Patents",
+            "dc.type": "patent::utility model",
+        },
+        "P": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P1": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P2": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P3": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P4": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "P9": {
+            "collection": "Patents",
+            "dc.type": "patent::plant patent",
+        },
+        "S": {
+            "collection": "Patents",
+            "dc.type": "patent::design patent",
+        },
+        "S1": {
+            "collection": "Patents",
+            "dc.type": "patent::design patent",
         },
     },
 }

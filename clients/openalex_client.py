@@ -20,9 +20,28 @@ import mappings
 # Base URL for OpenAlex API
 openalex_api_base_url = "https://api.openalex.org"
 
+_DOI_RE = re.compile(r"^https?://(?:dx\.)?doi\.org/", re.IGNORECASE)
+_OA_PREFIX = "https://openalex.org/"
+
+def normalize_doi(doi: str) -> str:
+    if not isinstance(doi, str):
+        return ""
+    doi = doi.strip()
+    return _DOI_RE.sub("", doi)
+
+def normalize_openalex_id(full_id: str) -> str:
+    if not isinstance(full_id, str):
+        return ""
+    full_id = full_id.strip()
+    return full_id[len(_OA_PREFIX):] if full_id.startswith(_OA_PREFIX) else full_id
+
 # Load environment variables
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 openalex_email = os.environ.get("CONTACT_API_EMAIL")
+openalex_data_version = os.environ.get("OPENALEX_DATA_VERSION", "2")
+openalex_token = os.environ.get("OPENALEX_API_KEY")
+user_agent = os.environ.get("USER_AGENT", "EPFL-Institutional-Repository - Infoscience-imports/1.0 (https://github.com/epfllibrary/infoscience-imports)")
+
 
 accepted_doctypes = [
     key for key in mappings.doctypes_mapping_dict["source_crossref"].keys()
@@ -30,44 +49,62 @@ accepted_doctypes = [
 
 # Retry decorator to handle request retries on specific status codes
 retry_decorator = tenacity.retry(
-    retry=retry_if_api_request_error(status_codes=[429]),
-    wait=tenacity.wait_fixed(2),
-    stop=tenacity.stop_after_attempt(5),
+    retry=(retry_if_api_request_error(status_codes=[429, 502, 503, 504])),
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=30)
+    + tenacity.wait_random(0, 1),
+    stop=tenacity.stop_after_attempt(6),
     reraise=True,
 )
-
 
 @endpoint(base_url=openalex_api_base_url)
 class OpenAlexEndpoint:
     works = "works"
     work_id = "works/{openalexId}"
-
-
+    doi = "works/doi:{doi}"
 class Client(APIClient):
     log_file_path = os.path.join(logs_dir, "logging.log")
     logger = manage_logger(log_file_path)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Paramètres appliqués à TOUTES les requêtes
+        self.default_params = {}
+        if openalex_email:
+            self.default_params["mailto"] = openalex_email
+        # Active la nouvelle version de données OpenAlex
+        # (surchageable avec OPENALEX_DATA_VERSION)
+        if openalex_data_version:
+            self.default_params["data-version"] = str(openalex_data_version)
+        # OpenAlex API token (query param)
+        if openalex_token:
+            self.default_params["api_key"] = openalex_token
+        # User-Agent header
+        if user_agent:
+            self.default_headers = {
+                "User-Agent": user_agent,
+                "Accept": "application/json",
+            }
+
+        self.last_response = None
+
+    def _merge_params(self, extra: dict | None = None) -> dict:
+        """Merge des paramètres en respectant les défauts globaux."""
+        base = dict(self.default_params)
+        if extra:
+            base.update({k: v for k, v in extra.items() if v is not None})
+        return base
 
     @retry_request
     def search_query(self, **param_kwargs):
         """
         Basic search query in the OpenAlex API.
 
-        Example request:
+        Example:
         https://api.openalex.org/works?filter=title.search:cadmium&per_page=5&page=1
-
-        Usage:
-        OpenAlexClient.search_query(filter="title.search:cadmium", per_page=5, page=1)
-
-        Returns:
-        A JSON object containing search results from OpenAlex.
         """
-        param_kwargs.setdefault("email", openalex_email)
-        self.params = {**param_kwargs}
+        self.params = self._merge_params(param_kwargs)
         response = self.get(OpenAlexEndpoint.works, params=self.params)
-
-        # 🟢 Stocke la dernière réponse ici
-        self.last_response = response
-
+        self.last_response = response  # stocke la dernière réponse
         return response
 
     @retry_request
@@ -84,10 +121,9 @@ class Client(APIClient):
         Returns:
         The total count of results for the query.
         """
-        param_kwargs.setdefault("email", openalex_email)
         param_kwargs.setdefault("per_page", 1)
         param_kwargs.setdefault("page", 1)
-        self.params = {**param_kwargs}
+        self.params = self._merge_params(param_kwargs)
         return self.search_query(**self.params)["meta"]["count"]
 
     @retry_decorator
@@ -104,16 +140,14 @@ class Client(APIClient):
         Returns:
         A list of IDs from OpenAlex.
         """
-        param_kwargs.setdefault("email", openalex_email)
-        param_kwargs.setdefault("per_page", 50)
-        # Curseur initial
+        param_kwargs.setdefault("per_page", 100)
         cursor = param_kwargs.pop("cursor", "*")
 
         all_ids: List[str] = []
 
         while True:
             # On inclut le curseur à chaque requête
-            self.params = {**param_kwargs, "cursor": cursor}
+            self.params = self._merge_params({**param_kwargs, "cursor": cursor})
             response = self.search_query(**self.params)
 
             results = response.get("results", [])
@@ -121,12 +155,11 @@ class Client(APIClient):
                 break
 
             for record in results:
-                raw_doi = record.get("doi")
-                if raw_doi:
-                    doi_id = re.sub(r'^https?://(?:dx\.)?doi\.org/', '', raw_doi, flags=re.IGNORECASE)
-                    all_ids.append(doi_id)
+                doi = self.openalex_extract_doi(record)
+                if doi:
+                    all_ids.append(doi)
                 else:
-                    all_ids.append(record["id"])
+                    all_ids.append(normalize_openalex_id(record.get("id", "")))
 
             # Passage au curseur suivant
             cursor = response.get("meta", {}).get("next_cursor")
@@ -147,14 +180,15 @@ class Client(APIClient):
         Returns:
             list: Processed records in the specified format.
         """
-        param_kwargs.setdefault("email", openalex_email)
-        param_kwargs.setdefault("per_page", 50)
+        param_kwargs.setdefault("per_page", 100)
         cursor = param_kwargs.pop("cursor", "*")
 
         all_records = []
+        page_count = 0
+        total_count = None
 
         while True:
-            self.params = {**param_kwargs, "cursor": cursor}
+            self.params = self._merge_params({**param_kwargs, "cursor": cursor})
             response = self.search_query(**self.params)
 
             results = response.get("results", [])
@@ -166,6 +200,10 @@ class Client(APIClient):
                 if parsed:
                     all_records.append(parsed)
 
+            page_count += 1
+            total_count = response.get("meta", {}).get("count", total_count)
+            self.logger.info(f"Page {page_count} harvested{' out of ' + str((total_count // param_kwargs['per_page']) + 1) if total_count else ''}.")
+
             cursor = response.get("meta", {}).get("next_cursor")
             if not cursor:
                 break
@@ -175,22 +213,38 @@ class Client(APIClient):
     @retry_decorator
     def fetch_record_by_unique_id(self, openalex_id, format="digest"):
         """
-        Retrieves a specific record by its unique OpenAlex ID.
+        Retrieves a specific record by its unique OpenAlex ID or DOI.
 
-        Example request:
-        https://api.openalex.org/works/W2762925973
+        Supports both:
+        - OpenAlex ID: "W2762925973"
+        - DOI: "10.1103/physrevd.111.l091101"
 
-        Usage:
-        OpenAlexClient.fetch_record_by_unique_id("W2762925973")
+        Args:
+            openalex_id (str): The OpenAlex ID or DOI.
+            format (str): Output format for processing ("digest", "digest-ifs3", "ifs3", or "openalex").
 
         Returns:
-        A record with key fields.
+            dict or None: Processed metadata record, or None if not found.
         """
-        self.params = {"email": openalex_email}
-        result = self.get(
-            OpenAlexEndpoint.work_id.format(openalexId=openalex_id), params=self.params
-        )
-        return self._process_record(result, format) if result else None
+        if not openalex_id or str(openalex_id).strip().lower() == "null":
+            return None
+
+        self.params = self._merge_params()
+
+        # Determine endpoint based on whether it's a DOI or an OpenAlex ID
+        if isinstance(openalex_id, str) and openalex_id.lower().startswith("10."):
+            # Handle DOI case
+            endpoint_url = OpenAlexEndpoint.doi.format(doi=openalex_id)
+        else:
+            # Fallback to OpenAlex ID
+            endpoint_url = OpenAlexEndpoint.work_id.format(openalexId=openalex_id)
+
+        try:
+            result = self.get(endpoint_url, params=self.params)
+            return self._process_record(result, format) if result else None
+        except Exception as e:
+            self.logger.error(f"Error fetching record for ID/DOI '{openalex_id}': {e}")
+            return None
 
     def _process_fetch_records(self, format, **param_kwargs):
         """
@@ -203,6 +257,8 @@ class Client(APIClient):
         Returns:
             list: Processed records in the requested format.
         """
+        self.params = self._merge_params(self.params if isinstance(self.params, dict) else {})
+
         if format == "digest":
             return [
                 self._extract_digest_record_info(record)
@@ -241,7 +297,7 @@ class Client(APIClient):
         Returns:
             dict: Extracted information in digest format.
         """
-        return {
+        digest = {
             "source": "openalex",
             "internal_id": x["id"],
             "issueDate": self._extract_publication_date(x),
@@ -249,26 +305,45 @@ class Client(APIClient):
             "title": x.get("display_name", ""),
             "doctype": self._extract_first_doctype(x),
             "pubyear": x.get("publication_year"),
-            "publisher": self._extract_publisher(x),
-            "publisherPlace": "",
-            "journalTitle": self._extract_journal_title(x),
-            "seriesTitle": "",
-            "bookTitle": "",
-            "editors": "",
-            "journalISSN": self._extract_journal_issn(x),
-            "seriesISSN": "",
-            "bookISBN": "",
-            "bookDOI": "",
-            "journalVolume": self._extract_volume(x),
-            "seriesVolume": "",
-            "bookPart": "",
+            "volume": self._extract_volume(x),
             "issue": self._extract_issue(x),
             "startingPage": self._extract_starting_page(x),
             "endingPage": self._extract_ending_page(x),
-            "pmid": "",
             "artno": x.get("biblio", {}).get("article_number", ""),
             "keywords": self._extract_keywords(x),
+            "is_paratext": self._extract_is_paratext(x),
+            "is_retracted": self._extract_is_retracted(x),
+            "openalex_type": self._extract_openalex_doctype(x),
+            "openalex_id": self._extract_openalex_id(x),
+            "referenced_works_count": self._extract_referenced_works_count(x),
+            "cited_by_count": self._extract_cited_by_count(x),
         }
+
+        for label, func in [
+            ("primary_location", self._extract_primary_location_info),
+            ("best_oa_location", self._extract_best_oa_location_info),
+            ("open_access", self._extract_open_access_info),
+            ("affiliation_info", self._extract_affiliation_info),
+            (
+                "corresponding_institution_ids",
+                self._extract_corresponding_institution_ids,
+            ), 
+        ]:
+            try:
+                result = func(x)
+                # self.logger.info(f"[{label}] extracted fields: {result}")
+                digest.update(result)
+            except Exception as e:
+                self.logger.warning(f"[{label}] extraction failed: {e}")
+
+        try:
+            apc_info = self._extract_apc_info(x)
+            if apc_info:
+                digest.update(apc_info)
+        except Exception as e:
+            self.logger.warning(f"[apc] extraction failed: {e}")
+
+        return digest
 
     def _extract_ifs3_digest_record_info(self, x):
         """
@@ -305,6 +380,9 @@ class Client(APIClient):
         ifs3_info["authors"] = self.extract_ifs3_authors(x)
         return ifs3_info
 
+    def _extract_openalex_id(self, x):
+        return normalize_openalex_id(x.get("id", ""))
+
     def openalex_extract_doi(self, x):
         """
         Extract DOI from an OpenAlex record, removing the prefix 'https://doi.org/'.
@@ -315,12 +393,7 @@ class Client(APIClient):
         Returns:
             str: DOI without the 'https://doi.org/' prefix, or an empty string if DOI is None.
         """
-        doi = x.get("doi", "")
-        if isinstance(doi, str) and doi.startswith("https://doi.org/"):
-            return doi[len("https://doi.org/") :]  # Remove the DOI prefix
-        return (
-            doi.lower() if isinstance(doi, str) else ""
-        )
+        return normalize_doi(x.get("doi", ""))
 
     def _extract_first_doctype(self, x):
         """
@@ -333,6 +406,173 @@ class Client(APIClient):
             str: Document type extracted from the record.
         """
         return x.get("type_crossref")
+
+    def _extract_openalex_doctype(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("type")
+
+    def _extract_is_paratext(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("is_paratext")
+
+    def _extract_is_retracted(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("is_retracted")
+
+    def _extract_referenced_works_count(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("referenced_works_count")
+
+    def _extract_cited_by_count(self, x):
+        """
+        Extract the document type from a single OpenAlex record.
+
+        Args:
+            x (dict): A single OpenAlex record.
+
+        Returns:
+            str: Document type extracted from the record.
+        """
+        return x.get("cited_by_count")
+
+    def _extract_primary_location_info(self, x: dict) -> dict:
+        primary = x.get("primary_location", {}) or {}
+        source = primary.get("source", {}) or {}
+
+        return {
+            "primary_is_oa": str(primary.get("is_oa", "")),
+            "primary_version": primary.get("version", ""),
+            "primary_license": primary.get("license", ""),
+            "primary_host_org": source.get("host_organization_name", ""),
+            "primary_issn": (
+                "||".join(source.get("issn", []))
+                if isinstance(source.get("issn", []), list)
+                else source.get("issn", "")
+            ),
+            "primary_issn_l": source.get("issn_l", ""),
+            "primary_is_core": str(source.get("is_core", "")),
+            "primary_source_type": source.get("type", ""),
+            "primary_container_title": source.get("display_name", ""),
+        }
+
+    def _extract_best_oa_location_info(self, x: dict) -> dict:
+        best_oa = x.get("best_oa_location", {}) or {}
+        source = best_oa.get("source", {}) or {}
+
+        return {
+            "best_oa_is_oa": str(best_oa.get("is_oa", "")),
+            "best_oa_pdf_url": best_oa.get("pdf_url", ""),
+            "best_oa_landing_url": best_oa.get("landing_page_url", ""),
+            "best_oa_license": best_oa.get("license", ""),
+            "best_oa_version": best_oa.get("version", ""),
+            "best_oa_is_in_doaj": str(source.get("is_in_doaj", "")),
+            "best_oa_container_title": source.get("display_name", ""),
+            "best_oa_issn": (
+                "||".join(source.get("issn", []))
+                if isinstance(source.get("issn", []), list)
+                else source.get("issn", "")
+            ),
+            "best_oa_issn_l": source.get("issn_l", ""),
+            "best_oa_host_org": source.get("host_organization_name", ""),
+            "best_oa_is_core": str(source.get("is_core", "")),
+            "best_oa_source_type": source.get("type", ""),
+        }
+
+    def _extract_open_access_info(self, x: dict) -> dict:
+        oa = x.get("open_access", {}) or {}
+
+        return {
+            "oa_status": oa.get("oa_status", ""),
+            "oa_any_repository_has_fulltext": str(
+                oa.get("any_repository_has_fulltext", "")
+            ),
+            "oa_is_oa": str(oa.get("is_oa", "")),
+            "oa_url": oa.get("oa_url", ""),
+        }
+
+    def _extract_affiliation_info(self, x: dict) -> dict:
+        """
+        Flattens and extracts affiliation information from OpenAlex 'authorships'.
+
+        Returns:
+            dict with concatenated values (||-joined):
+                - affiliation_ids
+                - affiliation_names
+                - affiliation_rors
+                - affiliation_country_codes
+                - affiliation_raw_strings
+        """
+        ids = set()
+        names = set()
+        rors = set()
+        countries = set()
+        raw_strings = set()
+
+        try:
+            for authorship in x.get("authorships", []):
+                # Normalized institutions
+                for inst in authorship.get("institutions", []):
+                    if not isinstance(inst, dict):
+                        continue
+                    inst_id = inst.get("id")
+                    ror_id = inst.get("ror")
+                    if inst_id:
+                        ids.add(inst_id.split("/")[-1])
+                    if ror_id:
+                        rors.add(ror_id.split("/")[-1])
+                    if inst.get("display_name"):
+                        names.add(inst["display_name"].strip())
+                    if inst.get("country_code"):
+                        countries.add(inst["country_code"].strip())
+
+                # Raw affiliation strings (from 'affiliations')
+                for aff in authorship.get("affiliations", []):
+                    raw = aff.get("raw_affiliation_string", "")
+                    if raw:
+                        raw_strings.add(raw.strip())
+
+        except Exception as e:
+            self.logger.warning(f"Error in _extract_affiliation_info: {e}")
+
+        return {
+            "affiliation_ids": "||".join(sorted(ids)),
+            "affiliation_names": "||".join(sorted(names)),
+            "affiliation_rors": "||".join(sorted(rors)),
+            "affiliation_country_codes": "||".join(sorted(countries)),
+            "affiliation_raw_strings": "||".join(sorted(raw_strings)),
+        }
 
     def get_dc_type_info(self, x):
         """
@@ -430,9 +670,10 @@ class Client(APIClient):
                 authors.append(
                     {
                         "author": formatted_name,
-                        "internal_author_id": author["author"]["id"],
+                        "internal_author_id": (author.get("author") or {}).get("id"),
                         "orcid_id": self._extract_author_orcid(author["author"]),
                         "organizations": institutions,
+                        "is_corresponding": author.get("is_corresponding", False),
                     }
                 )
         except KeyError:
@@ -441,60 +682,103 @@ class Client(APIClient):
             )
         return authors
 
-
     def extract_abstract(self, x):
         """
         Reconstruit l'abstract depuis abstract_inverted_index.
         """
         try:
             index = x.get("abstract_inverted_index")
-            if not index or not isinstance(index, dict):
+            if not isinstance(index, dict):
                 return ""
-
             position_map = {}
             for word, positions in index.items():
+                if not isinstance(positions, list):
+                    continue
                 for pos in positions:
-                    position_map[pos] = word
-
+                    if isinstance(pos, int):
+                        position_map[pos] = word
             abstract = " ".join(position_map[i] for i in sorted(position_map))
             return abstract.strip()
         except Exception as e:
-            self.logger.error(f"Error extracting abstract: {e}")
             return ""
 
     def _extract_publication_date(self, x):
         try:
             date_parts = x.get("publication_date", "")
-            return date_parts if date_parts else ""
+            return date_parts if isinstance(date_parts, str) else ""
         except Exception as e:
-            self.logger.error(f"Error extracting publication date: {e}")
             return ""
 
-    def _extract_journal_title(self, x):
-        return x.get("primary_location", {}).get("source", {}).get("display_name", "")
-
-    def _extract_journal_issn(self, x):
-        issn = x.get("primary_location", {}).get("source", {}).get("issn_l", "")
-        return issn if isinstance(issn, str) else "||".join(issn)
-
-    def _extract_publisher(self, x):
-        return x.get("primary_location", {}).get("source", {}).get("publisher", "")
-
     def _extract_volume(self, x):
-        return x.get("biblio", {}).get("volume", "")
+        try:
+            return x.get("biblio", {}).get("volume", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_issue(self, x):
-        return x.get("biblio", {}).get("issue", "")
+        try:
+            return x.get("biblio", {}).get("issue", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_starting_page(self, x):
-        return x.get("biblio", {}).get("first_page", "")
+        try:
+            return x.get("biblio", {}).get("first_page", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_ending_page(self, x):
-        return x.get("biblio", {}).get("last_page", "")
+        try:
+            return x.get("biblio", {}).get("last_page", "") or ""
+        except Exception as e:
+            return ""
 
     def _extract_keywords(self, x):
-        concepts = x.get("concepts", [])
-        return "||".join([c.get("display_name", "") for c in concepts])
+        try:
+            concepts = x.get("concepts", [])
+            if not isinstance(concepts, list):
+                return ""
+            return "||".join(
+                [c.get("display_name", "") for c in concepts if isinstance(c, dict)]
+            )
+        except Exception as e:
+            return ""
+
+    def _extract_apc_info(self, x: dict) -> dict:
+        """
+        Extrait apc_list et apc_paid sous forme de champs textuels plats.
+        Exemple : apc_list_value, apc_list_currency, apc_list_value_usd, etc.
+        """
+        out = {}
+
+        def flatten(field: str):
+            obj = x.get(field) or {}
+            if not isinstance(obj, dict):
+                return
+            for k in ("value", "currency", "value_usd"):
+                if k in obj and obj[k] is not None:
+                    out[f"{field}_{k}"] = str(obj[k])
+
+        flatten("apc_list")
+        flatten("apc_paid")
+
+        return out
+
+    def _extract_corresponding_institution_ids(self, x: dict) -> dict:
+        """
+        Extrait la liste des corresponding_institution_ids au format texte,
+        concaténée par '||' et normalisée (IDs OpenAlex sans préfixe URL).
+        """
+        try:
+            raw_list = x.get("corresponding_institution_ids") or []
+            if not isinstance(raw_list, list):
+                return {"corresponding_institution_ids": ""}
+            ids = [normalize_openalex_id(s) for s in raw_list if isinstance(s, str)]
+            ids = [i for i in ids if i]  # supprime les vides
+            return {"corresponding_institution_ids": "||".join(sorted(set(ids)))}
+        except Exception as e:
+            self.logger.warning(f"Error in _extract_corresponding_institution_ids: {e}")
+            return {"corresponding_institution_ids": ""}
 
     @staticmethod
     def _format_authorname(raw: str) -> str:

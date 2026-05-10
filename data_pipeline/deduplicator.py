@@ -46,7 +46,8 @@ class DataFrameProcessor:
         title = title.translate(str.maketrans("", "", string.punctuation))
 
         # Generate unique IDs based on DOI and title+pubyear
-        doi_id = row["doi"] if pd.notna(row["doi"]) else None
+        doi_val = row.get("doi", pd.NA)
+        doi_id = doi_val if (pd.notna(doi_val) and str(doi_val).strip()) else pd.NA
         title_pubyear_id = title + str(pubyear)
 
         # Check for fuzzy matches against existing IDs for title+pubyear
@@ -76,6 +77,10 @@ class DataFrameProcessor:
         # Unpack the unique_id tuple
         combined_df[["doi_id", "title_pubyear_id"]] = pd.DataFrame(
             combined_df["dedup_keys"].tolist(), index=combined_df.index
+        )
+
+        combined_df["doi_id"] = combined_df["doi_id"].replace(
+            {None: pd.NA, "": pd.NA, "None": pd.NA}
         )
 
         # Drop the helper column 'dedup_keys'
@@ -116,19 +121,38 @@ class DataFrameProcessor:
 
             return base_row
 
+        def groupby_non_empty(df: pd.DataFrame, key: str):
+            """
+            Groupby only on non-empty keys.
+            Rows with empty/NaN key are kept as-is (not grouped).
+            """
+            s = df[key]
+            mask = s.notna() & s.astype(str).str.strip().ne("")
+            return df[mask], df[~mask]
+
         # Process duplicates based on 'doi_id'
-        deduplicated_df = (
-            combined_df.groupby("doi_id", as_index=False)
-            .apply(merge_complementary_info)
-            .reset_index(drop=True)
-        )
+        df_with_key, df_no_key = groupby_non_empty(combined_df, "doi_id")
+
+        if not df_with_key.empty:
+            dedup_with_key = (
+                df_with_key.groupby("doi_id", as_index=False)
+                .apply(merge_complementary_info)
+                .reset_index(drop=True)
+            )
+            deduplicated_df = pd.concat([dedup_with_key, df_no_key], ignore_index=True)
+        else:
+            deduplicated_df = combined_df.copy()
 
         # Process duplicates based on 'title_pubyear_id'
-        deduplicated_df = (
-            deduplicated_df.groupby("title_pubyear_id", as_index=False)
-            .apply(merge_complementary_info)
-            .reset_index(drop=True)
-        )
+        df_with_key, df_no_key = groupby_non_empty(deduplicated_df, "title_pubyear_id")
+
+        if not df_with_key.empty:
+            dedup_with_key = (
+                df_with_key.groupby("title_pubyear_id", as_index=False)
+                .apply(merge_complementary_info)
+                .reset_index(drop=True)
+            )
+            deduplicated_df = pd.concat([dedup_with_key, df_no_key], ignore_index=True)
 
         # Drop the helper columns
         deduplicated_df.drop(columns=["doi_id", "title_pubyear_id"], inplace=True)
@@ -153,6 +177,34 @@ class DataFrameProcessor:
         duplicates_df = df[df["is_duplicate"] == True].drop(columns=["is_duplicate"])
         return filtered_df, duplicates_df
 
+    def deduplicate_infoscience_enhanced(self, df):
+        self.logger.info("Recherche avancée de doublons avec métadonnées...")
+        wrapper = DSpaceClientWrapper()
+
+        results = df.apply(
+            lambda row: wrapper.find_duplicate_enhanced(row), axis=1, result_type="expand"
+        )
+
+        # S'assurer que les index sont bien alignés
+        results.index = df.index
+
+        # Fusionner proprement
+        df_enhanced = pd.concat([df, results], axis=1)
+
+        # Filtrer et retourner les deux sous-ensembles
+        filtered_df = (
+            df_enhanced[df_enhanced["is_duplicate"] == False]
+            .drop(columns=["is_duplicate"])
+            .copy()
+        )
+        duplicates_df = (
+            df_enhanced[df_enhanced["is_duplicate"] == True]
+            .drop(columns=["is_duplicate"])
+            .copy()
+        )
+
+        return filtered_df, duplicates_df
+
     def generate_main_dataframes(self, df):
         # Step 1: Add an incremental row_id to the DataFrame
         df["row_id"] = range(1, len(df) + 1)
@@ -162,13 +214,18 @@ class DataFrameProcessor:
         for _, row in df.iterrows():
             row_id = row["row_id"]
             source = row["source"]
+            year = row["pubyear"]
             authors = row["authors"]
 
             for author_data in authors:
                 new_row = {
-                    "row_id": row_id,
+                    "row_id": row_id,  # Ensure row_id is the first key
                     "source": source,
+                    "year": year,
                     "role": author_data.get("role", None),
+                    "openalex_is_corresponding": author_data.get(
+                        "is_corresponding", None
+                    ),
                     "author": author_data.get("author", None),
                     "orcid_id": author_data.get("orcid_id", None),
                     "internal_author_id": author_data.get("internal_author_id", None),
@@ -178,6 +235,46 @@ class DataFrameProcessor:
                 new_rows.append(new_row)
 
         df_authors = pd.DataFrame(new_rows)
+
+        # --- Normalisation des organizations UNIQUEMENT pour la dédup ---
+        def normalize_orgs(orgs):
+            if pd.isna(orgs) or orgs is None:
+                return None
+            parts = [p.strip() for p in str(orgs).split("|") if p.strip()]
+            if not parts:
+                return None
+            parts = sorted(set(parts))  # enlève doublons + trie
+            return "|".join(parts)
+
+        df_authors["organizations_norm"] = df_authors["organizations"].apply(normalize_orgs)
+
+        # Définition de ce qui constitue un doublon d’auteur pour une même publication
+        subset_cols = [
+            "row_id",
+            "author",
+            "orcid_id",
+            "internal_author_id",
+            "role",
+            # "openalex_is_corresponding",
+            # "organizations_norm",
+        ]
+
+        df_authors = (
+            df_authors
+            .drop_duplicates(subset=subset_cols, keep="first")
+            .reset_index(drop=True)
+        )
+
+        # On enlève la colonne technique, les données originales restent inchangées
+        df_authors = df_authors.drop(columns=["organizations_norm"])
+
+        # Garder row_id en première colonne
+        author_cols = ["row_id"] + [col for col in df_authors.columns if col != "row_id"]
+        df_authors = df_authors[author_cols]
+
+        # DataFrame des métadonnées (sans la liste 'authors')
         df_metadata = df.drop(columns=["authors"])
+        metadata_cols = ["row_id"] + [col for col in df_metadata.columns if col != "row_id"]
+        df_metadata = df_metadata[metadata_cols]
 
         return df_metadata, df_authors

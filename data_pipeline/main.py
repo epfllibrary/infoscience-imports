@@ -1,196 +1,424 @@
-"""Main script to run the data pipeline."""
+#!/usr/bin/env python3
+"""Main script to run the data pipeline (cron-friendly)."""
 
 import os
+import sys
+import argparse
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import pandas as pd
 from dotenv import load_dotenv
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+
+# --- Project imports
 from config import default_queries
 from data_pipeline.deduplicator import DataFrameProcessor
 from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
 from data_pipeline.loader import Loader
 from data_pipeline.reporting import GenerateReports
-
 from data_pipeline.harvester import (
     WosHarvester,
     ScopusHarvester,
     CrossrefHarvester,
     OpenAlexCrossrefHarvester,
+    ZenodoHarvester,
+    EPOHarvester,
 )
 
+# -----------------------------------------------------------------------------
+# Environment & constants
+# -----------------------------------------------------------------------------
 load_dotenv()
 
-recipient_email = os.getenv("RECIPIENT_EMAIL")
-sender_email = os.getenv("SENDER_EMAIL")
-smtp_server = os.getenv("SMTP_SERVER")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data"
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex", "zenodo", "epo")
 
 
-def save_csv(df, filename, export_dir):
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+def setup_logger(verbosity: int = 0) -> logging.Logger:
+    logger = logging.getLogger("pipeline")
+    logger.setLevel(logging.DEBUG)
+
+    # Console handler (cron sees stdout/stderr)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.DEBUG if verbosity > 0 else logging.INFO)
+    ch_formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+    ch.setFormatter(ch_formatter)
+
+    # Rotating file handler
+    fh = RotatingFileHandler(
+        LOG_DIR / "pipeline.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+    )
+    fh.setLevel(logging.DEBUG)
+    fh_formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    )
+    fh.setFormatter(fh_formatter)
+
+    # Avoid duplicate handlers in case of re-import
+    if not logger.handlers:
+        logger.addHandler(ch)
+        logger.addHandler(fh)
+
+    return logger
+
+
+# -----------------------------------------------------------------------------
+# Utils
+# -----------------------------------------------------------------------------
+def parse_author_ids(arg: Optional[str]) -> List[str]:
+    """Accepts a comma-separated string or a path to a file (one ID per line)."""
+    if not arg:
+        return []
+    p = Path(arg)
+    if p.exists() and p.is_file():
+        return [
+            line.strip()
+            for line in p.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    # else treat as inline list
+    raw = arg.replace(",", "\n").splitlines()
+    return [x.strip() for x in raw if x.strip()]
+
+
+def parse_sources(
+    arg: Optional[str], logger: Optional[logging.Logger] = None
+) -> List[str]:
+    """
+    Parse a comma-separated list of sources. If None or 'all', return all supported.
+    Unknown sources are ignored with a warning.
+    """
+    if not arg or arg.strip().lower() == "all":
+        return list(SUPPORTED_SOURCES)
+
+    raw = [s.strip().lower() for s in arg.split(",") if s.strip()]
+    valid = [s for s in raw if s in SUPPORTED_SOURCES]
+    invalid = [s for s in raw if s not in SUPPORTED_SOURCES]
+
+    if invalid and logger:
+        logger.warning(
+            f"Ignoring unknown sources: {', '.join(invalid)}. "
+            f"Supported: {', '.join(SUPPORTED_SOURCES)}"
+        )
+
+    if not valid:
+        if logger:
+            logger.error(
+                "No valid sources provided after filtering. "
+                f"Supported: {', '.join(SUPPORTED_SOURCES)}"
+            )
+        return []
+    return valid
+
+
+def ensure_queries(override: Optional[Dict[str, str]]) -> Dict[str, str]:
+    merged = dict(default_queries)
+    if override:
+        merged.update({k.lower(): v for k, v in override.items()})
+    # make sure all expected keys exist
+    for k in SUPPORTED_SOURCES:
+        merged.setdefault(k, "")
+    return merged
+
+
+def save_csv(
+    df: pd.DataFrame, filename: str, export_dir: Path, logger: logging.Logger
+) -> Optional[Path]:
     """Saves a DataFrame to CSV if it's not empty and ensures the directory exists."""
-    if not df.empty:
-        os.makedirs(export_dir, exist_ok=True)  # ✅ Assure la création du dossier
-        filepath = os.path.join(export_dir, filename)
-        df.to_csv(filepath, index=False, encoding="utf-8")
+    if isinstance(df, (list, tuple, dict)):
+        df = pd.DataFrame(df)
+    if df is None or df.empty:
+        logger.debug(f"Skip empty dataframe: {filename}")
+        return None
+    export_dir.mkdir(parents=True, exist_ok=True)
+    filepath = export_dir / filename
+    df.to_csv(filepath, index=False, encoding="utf-8")
+    logger.info(f"Saved CSV: {filepath} ({len(df)} rows)")
+    return filepath
 
 
-def main(
-    start_date=None,
-    end_date=None,
-    queries=None,
-    authors_ids=None,
-    output_dir=None,
-):
+def date_range_from_window(
+    window_days: int, end_date: Optional[str] = None
+) -> Tuple[str, str]:
+    """Compute [start,end] ISO dates for a sliding window (inclusive)."""
+    if end_date:
+        end = datetime.fromisoformat(end_date).date()
+    else:
+        end = datetime.now().date()
+    start = end - timedelta(days=max(1, window_days) - 1)
+    return start.isoformat(), end.isoformat()
+
+
+# ---------- New helpers for ID-based harvesting --------------------------------
+def build_id_queries(
+    scopus_ids: List[str],
+    wos_ids: List[str],
+    orcids: List[str],
+    openalex_ids: List[str] = [],
+) -> Dict[str, str]:
     """
-    Harvests, processes, deduplicates, enriches, and loads publication data from external sources.
-
-    Args:
-        start_date (str): The start date for harvesting publications (format: "YYYY-MM-DD").
-        end_date (str): The end date for harvesting publications (format: "YYYY-MM-DD").
-        queries (dict, optional): A dictionary of queries to override default queries for each data source.
-        authors_ids (list, optional): A list of author IDs to filter and enrich EPFL-related authors.
-        output_dir (str, optional): Directory where the report should be saved.
-
-
-    Returns:
-        dict: A dictionary containing the following DataFrames:
-            - "df_metadata" (pd.DataFrame): Metadata of publications with Open Access enrichment.
-            - "df_authors" (pd.DataFrame): General authors dataset.
-            - "df_epfl_authors" (pd.DataFrame): EPFL-author-specific dataset with enriched information.
-            - "df_unloaded" (pd.DataFrame): Publications that were not loaded into Infoscience.
-            - "df_loaded" (pd.DataFrame): Fully processed and loaded publications.
-            - "df_rejected" (pd.DataFrame): Publications that were rejected during the process.
-            - "report_path" (str): Path to the generated Excel report.
-
-
-    Example:
-        results = main(start_date="2024-01-01", end_date="2025-01-01")
-        df_metadata = results["df_metadata"]
-        print(df_metadata.head())
+    Build per-source query strings targeting author identifiers.
+    NOTE: Adapte au besoin selon la syntaxe attendue par tes harvesters.
     """
-    today = datetime.now().date()
-    if start_date is None:
-        start_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
-    if end_date is None:
-        end_date = today.strftime("%Y-%m-%d")
+    id_queries: Dict[str, str] = {}
 
-    script_dir = Path(__file__).resolve().parent
-    project_root = script_dir.parent
-    if output_dir is None:
-        output_dir = project_root / "data"
-    output_dir = Path(output_dir).resolve()
+    # SCOPUS
+    scopus_bits: List[str] = []
+    if scopus_ids:
+        scopus_bits += [f"AU-ID({aid})" for aid in scopus_ids]
+    if orcids:
+        scopus_bits += [f"ORCID({o})" for o in orcids]
+    if scopus_bits:
+        id_queries["scopus"] = " OR ".join(scopus_bits)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    wos_bits: List[str] = []
+    # WOS: AI=() 
+    if wos_ids:
+        wos_bits += wos_ids
+    if orcids:
+        wos_bits += orcids
+    if wos_bits:
+        # Exemple: AI=(R-1234-2017 OR 0000-0002-1825-0097)
+        id_queries["wos"] = f"AI=({ ' OR '.join(wos_bits) })"
 
+    # CROSSREF: le harvester utilise field_queries; ici on encode une "pseudo" query.
+    # Option 1 (souvent OK): filter orcid côté harvester en parsant ce motif.
+    # Exemple valeur: FILTER_ORCID:0000-0001-...,0000-0002-...
+    # if orcids:
+    #     id_queries["crossref"] = "FILTER_ORCID:" + ",".join(orcids)
+
+    # OPENALEX
+    if openalex_ids:
+        id_queries["openalex"] = "authorships.author.id:" + "|".join(openalex_ids)
+    elif orcids:
+        id_queries["openalex"] = "authorships.author.orcid:" + "|".join(orcids)
+    # ZENODO: pas de recherche par auteur-id standard → ne change rien par défaut
+    return id_queries
+
+
+def merge_unique(*lists: List[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for lst in lists:
+        for x in lst or []:
+            if x and x not in seen:
+                seen.add(x)
+                out.append(x)
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Core
+# -----------------------------------------------------------------------------
+def run_pipeline(
+    logger: logging.Logger,
+    start_date: str,
+    end_date: str,
+    queries: Dict[str, str],
+    author_ids: List[str],
+    output_dir: Path,
+    dry_run: bool = False,
+    no_email: bool = False,
+    sources: Optional[List[str]] = None,
+) -> Dict[str, pd.DataFrame | str | None]:
+    """
+    Harvest, deduplicate, enrich, and (optionally) load data into DSpace.
+    Returns dict of dataframes and report path.
+    """
+    active_sources = sources or list(SUPPORTED_SOURCES)
+    if not active_sources:
+        raise ValueError("No sources selected. Use --sources to specify at least one.")
+
+    logger.info(
+        f"=== Pipeline start | window: {start_date} → {end_date} | "
+        f"dry_run={dry_run} | sources={','.join(active_sources)} ==="
+    )
+
+    # Timestamped export dir
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    export_dir = os.path.join(output_dir, execution_timestamp)
-    os.makedirs(export_dir, exist_ok=True)
+    export_dir = output_dir / execution_timestamp
+    export_dir.mkdir(parents=True, exist_ok=True)
 
-    # Merge provided queries with default queries
-    merged_queries = {**default_queries, **(queries or {})}
+    # -------------------- Harvest
+    def safe_harvest(name: str, fn) -> pd.DataFrame:
+        try:
+            df = pd.DataFrame(fn())
+            logger.info(f"[Harvest] {name}: {len(df)} records")
+            return df
+        except Exception as e:
+            logger.exception(f"[Harvest] {name} failed: {e}")
+            return pd.DataFrame()
 
-    # Initialize harvesters dynamically
-    harvesters = {
-        "wos": WosHarvester(start_date, end_date, merged_queries["wos"]),
-        "scopus": ScopusHarvester(start_date, end_date, merged_queries["scopus"]),
-        "crossref": CrossrefHarvester(
+    # full registry
+    registry = {
+        "wos": lambda: WosHarvester(start_date, end_date, queries["wos"]).harvest(),
+        "scopus": lambda: ScopusHarvester(
+            start_date, end_date, queries["scopus"]
+        ).harvest(),
+        "crossref": lambda: CrossrefHarvester(
             start_date,
             end_date,
             query=None,
-            field_queries={
-                "query.affiliation": merged_queries["crossref"],
-            },
-        ),
-        "openalex": OpenAlexCrossrefHarvester(
-            start_date, end_date, merged_queries["openalex"]
-        ),  # Uncomment if needed
+            field_queries={"query.affiliation": queries["crossref"]},
+        ).harvest(),
+        "openalex": lambda: OpenAlexCrossrefHarvester(
+            start_date, end_date, queries["openalex"]
+        ).harvest(),
+        "zenodo": lambda: ZenodoHarvester(
+            start_date, end_date, queries["zenodo"]
+        ).harvest(),
+        "epo": lambda: EPOHarvester(
+            start_date, end_date, queries["epo"]
+        ).harvest(),
     }
 
-    # Harvest publications
-    publications = {name: harvester.harvest() for name, harvester in harvesters.items()}
+    # keep only selected
+    harvesters = {k: v for k, v in registry.items() if k in active_sources}
+
+    publications: Dict[str, pd.DataFrame] = {
+        name: safe_harvest(name, fn) for name, fn in harvesters.items()
+    }
 
     for name, df in publications.items():
-        save_csv(df, f"Raw_{name.capitalize()}Publications.csv", export_dir)
+        save_csv(df, f"Raw_{name.capitalize()}Items.csv", export_dir, logger)
 
-    # Deduplicate publications (pass only non-empty datasets)
-    deduplicator = (
-        DataFrameProcessor(*[df for df in publications.values() if not df.empty])
-        if any(not df.empty for df in publications.values())
-        else None
-    )
+    # -------------------- Deduplication
+    non_empty = [df for df in publications.values() if not df.empty]
+    if not non_empty:
+        logger.warning("No harvested data from selected sources; nothing to process.")
+        return {
+            "df_metadata": pd.DataFrame(),
+            "df_authors": pd.DataFrame(),
+            "df_epfl_authors": pd.DataFrame(),
+            "df_unloaded": pd.DataFrame(),
+            "df_loaded": pd.DataFrame(),
+            "df_rejected": pd.DataFrame(),
+            "report_path": None,
+        }
 
-    df_deduplicated = (
-        deduplicator.deduplicate_dataframes() if deduplicator else pd.DataFrame()
-    )
-    save_csv(df_deduplicated, "DeduplicatedPublications.csv", export_dir)
+    deduplicator = DataFrameProcessor(*non_empty)
+    df_deduplicated = deduplicator.deduplicate_dataframes()
+    save_csv(df_deduplicated, "DeduplicatedItems.csv", export_dir, logger)
 
-    df_final, df_unloaded = (
-        deduplicator.deduplicate_infoscience(df_deduplicated)
-        if not df_deduplicated.empty
-        else (pd.DataFrame(), pd.DataFrame())
-    )
-    save_csv(df_unloaded, "UnloadedPublications.csv", export_dir)
+    # DSpace-aware dedup (what to import vs duplicates)
+    if df_deduplicated.empty:
+        logger.warning("Deduplicated dataframe is empty.")
+        df_final, df_unloaded = pd.DataFrame(), pd.DataFrame()
+    else:
+        df_final, df_unloaded = deduplicator.deduplicate_infoscience(df_deduplicated)
+    save_csv(df_unloaded, "UnloadedItems.csv", export_dir, logger)
 
-    # Process metadata & authors
-    df_metadata, df_authors = (
-        deduplicator.generate_main_dataframes(df_final)
-        if not df_final.empty
-        else (pd.DataFrame(), pd.DataFrame())
-    )
-    save_csv(df_metadata, "Publications.csv", export_dir)
-    save_csv(df_authors, "AuthorsAndAffiliations.csv", export_dir)
+    # -------------------- Build main dataframes
+    if df_final.empty:
+        df_metadata, df_authors = pd.DataFrame(), pd.DataFrame()
+    else:
+        df_metadata, df_authors = deduplicator.generate_main_dataframes(df_final)
 
-    author_processor = AuthorProcessor(df_authors) if not df_authors.empty else None
-    df_epfl_authors = (
-        author_processor.process(author_ids_to_check=authors_ids)
-        .filter_epfl_authors()
-        .clean_authors()
-        .nameparse_authors()
-        .reconcile_authors(return_df=True)
-        if author_processor
-        else pd.DataFrame()
-    )
-    save_csv(df_epfl_authors, "EpflAuthors.csv", export_dir)
+    save_csv(df_metadata, "Items.csv", export_dir, logger)
+    save_csv(df_authors, "AuthorsAndAffiliations.csv", export_dir, logger)
 
-    # Enrich publications with OA full text
-    df_oa_metadata = (
-        PublicationProcessor(df_metadata).process(return_df=True)
-        if not df_metadata.empty
-        else pd.DataFrame()
-    )
-    save_csv(df_oa_metadata, "PublicationsWithOAMetadata.csv", export_dir)
+    # -------------------- Author enrichment
+    if df_authors.empty:
+        df_epfl_authors = pd.DataFrame()
+    else:
+        ap = AuthorProcessor(df_authors)
+        df_epfl_authors = (
+            ap.process(author_ids_to_check=author_ids)
+            .filter_epfl_authors()
+            .clean_authors()
+            .nameparse_authors()
+            .reconcile_authors(return_df=True)
+        )
 
-    # Load final data
-    loader_instance = Loader(df_oa_metadata, df_epfl_authors, df_authors) if not df_oa_metadata.empty else None
-    df_loaded = loader_instance.create_complete_publication() if loader_instance else pd.DataFrame()
-    save_csv(df_loaded, "ImportedPublications.csv", export_dir)
+    save_csv(df_epfl_authors, "EpflAuthors.csv", export_dir, logger)
 
-    # Compute rejected publications
-    df_rejected = (
-        df_oa_metadata[~df_oa_metadata["row_id"].isin(df_loaded["row_id"])]
-        if "row_id" in df_oa_metadata.columns and "row_id" in df_loaded.columns
-        else df_oa_metadata.copy()
-    )
-    save_csv(df_rejected, "RejectedPublications.csv", export_dir)
+    # -------------------- Publication enrichment (OA, fulltexts, etc.)
+    if df_metadata.empty:
+        df_oa_metadata = pd.DataFrame()
+    else:
+        df_oa_metadata = PublicationProcessor(df_metadata).process(return_df=True)
 
-    report_path = None  # Default to None if no report is generated
-    if any(
-        not df.empty for df in [df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded]
+    save_csv(df_oa_metadata, "ItemsWithOAMetadata.csv", export_dir, logger)
+
+    # -------------------- Load into DSpace (unless dry-run)
+    if dry_run or df_oa_metadata.empty:
+        logger.info("Dry-run active or no enriched items → skip loading.")
+        df_loaded = pd.DataFrame()
+    else:
+        loader = Loader(df_oa_metadata, df_epfl_authors, df_authors)
+        df_loaded = loader.create_complete_publication()
+
+    save_csv(df_loaded, "ImportedItems.csv", export_dir, logger)
+
+    # -------------------- Rejected
+    if df_oa_metadata.empty:
+        df_rejected = pd.DataFrame()
+    elif (
+        "row_id" in df_oa_metadata.columns
+        and "row_id" in getattr(df_loaded, "columns", [])
+        and not df_loaded.empty
     ):
-        if "row_id" in df_loaded.columns:
-            report_generator = GenerateReports(
+        df_rejected = df_oa_metadata[
+            ~df_oa_metadata["row_id"].isin(df_loaded["row_id"])
+        ]
+    else:
+        df_rejected = df_oa_metadata.copy()
+
+    save_csv(df_rejected, "RejectedItems.csv", export_dir, logger)
+
+    # -------------------- Report & email
+    report_path = None
+    can_report = any(
+        not df.empty for df in [df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded]
+    )
+    if can_report and "row_id" in getattr(df_loaded, "columns", []):
+        try:
+            generator = GenerateReports(
                 df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
             )
-            report_path = report_generator.generate_excel_report(output_dir=export_dir)
+            report_path = generator.generate_excel_report(output_dir=export_dir)
+            logger.info(f"Report generated: {report_path}")
 
-            if report_path:
-                report_generator.send_report_by_email(
-                    recipient_email=recipient_email,
-                    sender_email=sender_email,
-                    smtp_server=smtp_server,
+            if (
+                not no_email
+                and not dry_run
+                and RECIPIENT_EMAIL
+                and SENDER_EMAIL
+                and SMTP_SERVER
+            ):
+                generator.send_report_by_email(
+                    recipient_email=RECIPIENT_EMAIL,
+                    sender_email=SENDER_EMAIL,
+                    smtp_server=SMTP_SERVER,
                     import_start_date=start_date,
                     import_end_date=end_date,
                     file_path=report_path,
                 )
+                logger.info(f"Report emailed to {RECIPIENT_EMAIL}")
+            else:
+                logger.info("Email sending skipped (no_email/dry_run or env not set).")
+        except Exception as e:
+            logger.exception(f"Failed to generate/send report: {e}")
+
+    logger.info("=== Pipeline end ===")
 
     return {
         "df_metadata": df_oa_metadata,
@@ -199,8 +427,199 @@ def main(
         "df_unloaded": df_unloaded,
         "df_loaded": df_loaded,
         "df_rejected": df_rejected,
-        "report_path": report_path,  # None if no report was generated
+        "report_path": str(report_path) if report_path else None,
     }
+
+
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Run the publications data pipeline (harvest → dedup → enrich → load → report)."
+    )
+    # Windowing
+    p.add_argument(
+        "--window-days",
+        type=int,
+        default=15,
+        help="Sliding window size in days (default: 15).",
+    )
+    p.add_argument(
+        "--start-date",
+        type=str,
+        default=None,
+        help="Override start date (YYYY-MM-DD). If set, --end-date is required.",
+    )
+    p.add_argument(
+        "--end-date",
+        type=str,
+        default=None,
+        help="Override end date (YYYY-MM-DD). Required if --start-date is set.",
+    )
+
+    # Queries override (simple)
+    p.add_argument("--query-wos", type=str, default=None)
+    p.add_argument("--query-scopus", type=str, default=None)
+    p.add_argument("--query-crossref", type=str, default=None)
+    p.add_argument("--query-openalex", type=str, default=None)
+    p.add_argument("--query-zenodo", type=str, default=None)
+    p.add_argument("--query-epo", type=str, default=None)
+
+    # Authors (legacy, kept)
+    p.add_argument(
+        "--author-ids",
+        type=str,
+        default=None,
+        help="Comma-separated list OR path to file (one per line). Used by AuthorProcessor.author_ids_to_check.",
+    )
+
+    # ---------- New: ID-based harvesting options ----------
+    p.add_argument(
+        "--scopus-ids",
+        type=str,
+        default=None,
+        help="Scopus Author IDs (comma-separated or file path). Triggers ID-based harvesting for Scopus.",
+    )
+    p.add_argument(
+        "--wos-ids",
+        type=str,
+        default=None,
+        help="Web of Science ResearcherIDs (comma-separated or file path). Triggers ID-based harvesting for WoS.",
+    )
+    p.add_argument(
+        "--orcid-ids",
+        type=str,
+        default=None,
+        help="ORCID iDs (comma-separated or file path). Triggers ID-based harvesting for Crossref/OpenAlex (+Scopus/WoS where supported).",
+    )
+    p.add_argument(
+        "--openalex-ids",
+        type=str,
+        default=None,
+        help="OpenAlex Author IDs (comma-separated or file path). Triggers ID-based harvesting for OpenAlex.",
+    )   
+
+    # Source selection
+    p.add_argument(
+        "--sources",
+        type=str,
+        default="all",
+        help=(
+            "Comma-separated subset of sources to harvest "
+            f"(supported: {', '.join(SUPPORTED_SOURCES)}). Default: all"
+        ),
+    )
+
+    # Output & mode
+    p.add_argument(
+        "--output-dir",
+        type=str,
+        default=str(DEFAULT_OUTPUT_DIR),
+        help=f"Output directory (default: {DEFAULT_OUTPUT_DIR}).",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run everything but skip the final load and email.",
+    )
+    p.add_argument(
+        "--no-email",
+        action="store_true",
+        help="Do not send the report email (even if env is set).",
+    )
+
+    # Misc
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity (use -vv for debug).",
+    )
+
+    return p
+
+
+def main():
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    logger = setup_logger(args.verbose)
+
+    # Compute date window
+    if args.start_date and not args.end_date:
+        parser.error("--start-date requires --end-date")
+    if args.end_date and not args.start_date:
+        parser.error("--end-date requires --start-date")
+
+    if args.start_date and args.end_date:
+        start_date, end_date = args.start_date, args.end_date
+    else:
+        start_date, end_date = date_range_from_window(args.window_days)
+
+    # Parse IDs for ID-based harvesting
+    scopus_ids = parse_author_ids(args.scopus_ids)
+    wos_ids = parse_author_ids(args.wos_ids)
+    orcid_ids = parse_author_ids(args.orcid_ids)
+    openalex_ids = parse_author_ids(args.openalex_ids)
+
+    # Build query overrides
+    override = {
+        k: v
+        for k, v in {
+            "wos": args.query_wos,
+            "scopus": args.query_scopus,
+            "crossref": args.query_crossref,
+            "openalex": args.query_openalex,
+            "zenodo": args.query_zenodo,
+            "epo": args.query_epo,
+        }.items()
+        if v is not None
+    }
+
+    # Si des IDs sont fournis, on fabrique des queries par identifiant
+    if scopus_ids or wos_ids or orcid_ids or openalex_ids:
+        id_q = build_id_queries(scopus_ids, wos_ids, orcid_ids, openalex_ids)
+        # Remplace uniquement les sources concernées
+        override.update(id_q)
+        logger.info(
+            "ID-based harvesting active for: "
+            + ", ".join(sorted(id_q.keys()))  # ex: scopus,wos,crossref,openalex
+        )
+
+    queries = ensure_queries(override)
+
+    output_dir = Path(args.output_dir).resolve()
+
+    # Fusion des IDs pour AuthorProcessor.author_ids_to_check (legacy + nouveaux)
+    author_ids_for_enrichment = merge_unique(
+        parse_author_ids(args.author_ids), scopus_ids, wos_ids, orcid_ids, openalex_ids
+    )
+
+    selected_sources = parse_sources(args.sources, logger=logger)
+    if not selected_sources:
+        parser.error(
+            "No valid sources selected. Use --sources with one or more of: "
+            + ", ".join(SUPPORTED_SOURCES)
+        )
+
+    try:
+        run_pipeline(
+            logger=logger,
+            start_date=start_date,
+            end_date=end_date,
+            queries=queries,
+            author_ids=author_ids_for_enrichment,
+            output_dir=output_dir,
+            dry_run=args.dry_run,
+            no_email=args.no_email,
+            sources=selected_sources,
+        )
+        sys.exit(0)
+    except Exception as e:
+        logger.exception(f"Pipeline crashed: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

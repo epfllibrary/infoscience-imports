@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.11"
+__generated_with = "0.14.12"
 app = marimo.App(width="medium")
 
 
@@ -86,7 +86,7 @@ def _(pd):
 
 @app.cell
 def _(d, get_items):
-    query ="datacite.rights:(metadata-only) dateIssued.year:2024 dc.identifier.doi:10.1016/j.trip.2024.101183 (types:(conference paper) OR types:(article))"
+    query ="datacite.rights:(metadata-only) dateIssued.year:2024  (types:(conference paper))"
     # query ="dc.identifier.doi:(10.1126/sciadv.adt7195) (types:(conference) OR types:(journal))"
     df = get_items(d, query, size=100, max_pages=None)
     df
@@ -95,7 +95,7 @@ def _(d, get_items):
 
 @app.cell
 def _(PublicationProcessor, df):
-    processor = PublicationProcessor(df)
+    processor = PublicationProcessor(df, unpaywall_format="oa")
     df_enriched = processor.process(return_df=True)
     df_enriched
     return (df_enriched,)

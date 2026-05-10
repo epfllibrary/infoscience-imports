@@ -14,6 +14,7 @@ from clients.zenodo_client import ZenodoClient
 from clients.openalex_client import OpenAlexClient
 from clients.crossref_client import CrossrefClient
 from clients.datacite_client import DataCiteClient
+from clients.epo_ops_client import EPOClient
 from utils import manage_logger
 from config import logs_dir
 
@@ -93,7 +94,7 @@ class WosHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
-
+        self.logger.info("Fetching records from WOS with query: %s", self.query)
         createdTimeSpan = f"{self.start_date}+{self.end_date}"
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
@@ -175,6 +176,7 @@ class ScopusHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
+        self.logger.info("Fetching records from Scopus with query: %s", self.query)
         # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
         total = ScopusClient.count_results(query=updated_query)
@@ -244,11 +246,11 @@ class ZenodoHarvester(Harvester):
         - `authors`: list of creators, each represented as a dict containing:
             - `author`
             - `orcid_id`
-            - `internal_author_id` (empty for Zenoodo)
+            - `internal_author_id` (empty for Zenodo)
             - `organizations`
             - `suborganization`
         """
-
+        self.logger.info("Fetching records from Zenodo with query: %s", self.query)
         columns = (
             "source",
             "internal_id",
@@ -261,33 +263,47 @@ class ZenodoHarvester(Harvester):
             "authors",
             "first_creation",
         )
-        empty_data = {}
-        for c in columns:
-            empty_data[c] = []
+        empty_data = {c: [] for c in columns}
 
         updated_query = " AND ".join(
             [self.query, f"created:[{self.start_date} TO {self.end_date}]"]
         )
 
-        total = ZenodoClient.count_results(q=updated_query)
+        total = int(ZenodoClient.count_results(q=updated_query))
         self.logger.info("- Number of objects found in Zenodo: %s", total)
+
         if total == 0:
             self.logger.warning("No object found. Returning an empty DataFrame.")
-            return pd.DataFrame()
-        size = 50
-        recs = []
-        for i in range(0, 1 + int(total) // size):
+            return pd.DataFrame(columns=columns)
+
+        size = 25
+        recs: list[dict] = []
+
+        # nombre de pages = ceil(total / size)
+        num_pages = (total + size - 1) // size
+
+        for page in range(1, num_pages + 1):
+            start_idx = (page - 1) * size + 1
+            end_idx = min(page * size, total)
             self.logger.info(
-                "Harvest objects %d to %d out of %d", i * size + 1, min((i + 1) * size, total), total
+                "Harvest objects %d to %d out of %d",
+                start_idx,
+                end_idx,
+                total,
             )
+
             h_recs = ZenodoClient.fetch_records(
-                format=self.format, q=updated_query, size=size, page=i + 1
+                format=self.format,
+                q=updated_query,
+                size=size,
+                page=page,
             )
-            if h_recs is not None:
+            if h_recs:
                 recs.extend(h_recs)
+
             time.sleep(30)
+
         # Keep only valid ifs3 doctypes, filter out unknown_doctype
-        # print(recs)
         df = (
             pd.DataFrame(recs)
             .query('ifs3_collection != "unknown"')
@@ -296,7 +312,6 @@ class ZenodoHarvester(Harvester):
         )
 
         return df
-
 
 class OpenAlexHarvester(Harvester):
     """
@@ -323,7 +338,7 @@ class OpenAlexHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary.
         """
-
+        self.logger.info("Fetching records from OpenAlex with query: %s", self.query)
         # Formulate the filter for the query
         filters = (
             f"from_publication_date:{self.start_date},"
@@ -335,57 +350,31 @@ class OpenAlexHarvester(Harvester):
         total = OpenAlexClient.count_results(filter=filters)
         self.logger.info("Total publications found in OpenAlex: %s", total)
 
-        if total == 0:
-            self.logger.debug("No publications found. Returning an empty DataFrame.")
-            return pd.DataFrame()
-
-        count = 50  # Number of items per request
-        recs = []
-        cursor = "*"
-        page = 1
-
-        while True:
-            self.logger.info("Harvesting page %d (cursor: %s)", page, cursor)
-
-            try:
-                h_recs = OpenAlexClient.fetch_records(
-                    format=self.format, filter=filters, per_page=count, cursor=cursor
-                )
-
-                if h_recs:
-                    recs.extend(h_recs)
-                else:
-                    self.logger.warning("No records found for page %d.", page)
-                    break
-
-                # Get the next cursor from the last API response
-                last_response_meta = OpenAlexClient.last_response.get("meta", {})
-                cursor = last_response_meta.get("next_cursor", None)
-
-                if not cursor:
-                    self.logger.info("No next cursor found. Pagination complete.")
-                    break
-
-                page += 1
-
-            except Exception as e:
-                self.logger.error("Error fetching records for page %d: %s", page, e)
-                break
-
-        # Build the DataFrame if records were collected
-        if recs:
-            df = (
-                pd.DataFrame(recs)
-                .query('ifs3_collection != "unknown"')  # Filter out unmapped types
-                .reset_index(drop=True)
+        try:
+            openalex_records = OpenAlexClient.fetch_records(
+                format=self.format, filter=filters
             )
-            df = pd.DataFrame(recs).reset_index(drop=True)
-        else:
-            self.logger.debug("No valid records fetched. Returning an empty DataFrame.")
+        except Exception as e:
+            self.logger.error("Failed to fetch records from OpenAlex: %s", e)
             return pd.DataFrame()
 
-        return df
+        if not openalex_records:
+            self.logger.warning(
+                "No records found in OpenAlex. Returning empty DataFrame."
+            )
+            return pd.DataFrame()
 
+        self.logger.info("- %d records retrieved from OpenAlex.", len(openalex_records))
+
+        df = pd.DataFrame(openalex_records)
+
+        if "ifs3_collection" in df.columns:
+            df = df.query('ifs3_collection != "unknown"')
+
+        df = df.copy()
+        df["source"] = "openalex"
+
+        return df.reset_index(drop=True)
 
 class CrossrefHarvester(Harvester):
     """
@@ -433,6 +422,7 @@ class CrossrefHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors as dictionaries.
         """
+        self.logger.info("Fetching records from Crossref with query: %s", self.query)
         # Build the parameter dictionary for targeted queries.
         params = {}
         if isinstance(self.query, dict):
@@ -514,7 +504,7 @@ class OpenAlexCrossrefHarvester(Harvester):
         2. Enrich each DOI with Crossref metadata (title, type, etc.).
         3. Merge and return a normalized DataFrame.
         """
-        self.logger.info("Fetching records from OpenAlex...")
+        self.logger.info("Fetching records from OpenAlex with query: %s", self.query)
 
         filters = (
             f"from_publication_date:{self.start_date},"
@@ -741,3 +731,111 @@ class DataCiteHarvester(Harvester):
                     doi_keep = cand["internal_id"].iloc[0]
                 keep.add(doi_keep)
         return df[df["internal_id"].isin(keep)].drop(columns=["registered_dt"]).copy()
+
+class EPOHarvester(Harvester):
+    """
+    EPO OPS (Espacenet) Harvester.
+    """
+
+    def __init__(
+        self,
+        start_date: str,
+        end_date: str,
+        query: str,
+        format: str = "ifs3",
+        constituents: list[str] | None = None,
+        per_page: int = 25,
+        max_records: int | None = None,
+        group_by_family: bool = True,
+    ):
+        super().__init__("EPO", start_date, end_date, query, format)
+        self.constituents = constituents  # ex: ["biblio"] (optionnel)
+        self.per_page = per_page
+        self.max_records = max_records
+        self.group_by_family = group_by_family
+
+        # client instance (OPS uses env credentials)
+        self.client = EPOClient()
+
+    @staticmethod
+    def _yyyymmdd(date_str: str) -> str:
+        # expected input "YYYY-MM-DD" (as used elsewhere in your pipeline)
+        return (date_str or "").replace("-", "").strip()
+
+
+    def _build_cql(self) -> str:
+        """
+        Build an EPO OPS CQL query using:
+        pd within "YYYYMMDD,YYYYMMDD"
+        """
+        q = (self.query or "").strip()
+        if not q:
+            raise ValueError("EPOHarvester.query is empty; provide a CQL fragment.")
+
+        sd = self._yyyymmdd(self.start_date)
+        ed = self._yyyymmdd(self.end_date)
+
+        parts = [f"({q})"]
+
+        if len(sd) == 8 and sd.isdigit() and len(ed) == 8 and ed.isdigit():
+            parts.append(f'pd within "{sd},{ed}"')
+        else:
+            # Defensive: don't silently harvest everything if dates are malformed
+            raise ValueError(
+                f"Invalid date range for OPS 'pd within': start_date={self.start_date} end_date={self.end_date}"
+            )
+
+        return " AND ".join(parts)
+
+    def fetch_and_parse_publications(self) -> pd.DataFrame:
+        """
+        Returns a pandas DataFrame containing patent publications harvested from EPO OPS.
+
+        Output columns depend on your EPOClient format, but you should end up with at least:
+        - source, internal_id, title, doctype, pubyear
+        and any extra patent-specific fields (family_id, applicants, inventors, issueDate, etc.).
+        """
+        cql = self._build_cql()
+        self.logger.info("Fetching records from EPO OPS with CQL: %s", cql)
+
+        try:
+            # Optional: quick count for logging (can be slow on OPS; keep if useful)
+            total = self.client.count_results(cql=cql)
+            self.logger.info("Total publications found in EPO OPS: %s", total)
+        except Exception as e:
+            self.logger.warning("Could not count EPO OPS results (continuing): %s", e)
+            total = None
+
+        try:
+            recs = self.client.fetch_records(
+                cql=cql,
+                format=self.format,
+                per_page=self.per_page,
+                max_records=self.max_records,
+                constituents=self.constituents,
+                group_by_family=self.group_by_family,
+            )
+        except Exception as e:
+            self.logger.error("Failed to fetch records from EPO OPS: %s", e)
+            return pd.DataFrame()
+
+        if not recs:
+            self.logger.warning(
+                "No records returned by EPO OPS. Returning empty DataFrame."
+            )
+            return pd.DataFrame()
+
+        df = pd.DataFrame(recs).reset_index(drop=True)
+
+        # Harmonisation minimale attendue downstream
+        if "source" not in df.columns:
+            df["source"] = "epo"
+
+        # Ta sortie EPO a déjà doctype="Patent" et pubyear, donc rien à filtrer ici.
+        # Si tu veux protéger le pipeline contre des records incomplets:
+        needed = ["internal_id", "title", "doctype"]
+        missing = [c for c in needed if c not in df.columns]
+        if missing:
+            self.logger.warning("EPO dataframe missing expected columns: %s", missing)
+
+        return df

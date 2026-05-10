@@ -6,6 +6,7 @@ itables
 nameparser
 pandas
 numpy
+pyarrow
 plotly
 python-dotenv
 python-Levenshtein
@@ -22,3 +23,5 @@ flask
 marimo
 lxml
 bs4
+dateparser
+python-epo-ops-client
