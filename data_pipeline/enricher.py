@@ -10,10 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 import unicodedata
 from unidecode import unidecode
 import pandas as pd
-from fuzzywuzzy import fuzz, process
+from rapidfuzz import fuzz, process
 import nameparser
 from nameparser import HumanName
-from utils import manage_logger, clean_value
+from utils import get_pipeline_logger, clean_value
 
 
 from clients.api_epfl_client import ApiEpflClient
@@ -21,10 +21,8 @@ from clients.unpaywall_client import UnpaywallClient
 from clients.openalex_client import OpenAlexClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
 from config import scopus_epfl_afids, unit_types, excluded_unit_types
-from config import logs_dir
 
-
-dspace_wrapper = DSpaceClientWrapper()
+logger = get_pipeline_logger("enricher")
 
 
 class AuthorProcessor:
@@ -45,12 +43,19 @@ class AuthorProcessor:
     processor.process().nameparse_authors().orcid_data_reconciliation()
     """
 
-    def __init__(self, df):
+    def __init__(self, df, dspace_client: DSpaceClientWrapper = None):
         self.df = df
+        self.logger = logger
+        self._accred_cache = {}
+        # Allow injection for testing; create lazily if not provided.
+        self._dspace_wrapper = dspace_client
 
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
-        self._accred_cache = {}        
+    @property
+    def dspace_wrapper(self) -> DSpaceClientWrapper:
+        if self._dspace_wrapper is None:
+            self._dspace_wrapper = DSpaceClientWrapper()
+        return self._dspace_wrapper
+
 
     def process(self, return_df=False, author_ids_to_check=None):
         """
@@ -60,48 +65,37 @@ class AuthorProcessor:
 
         Args:
             return_df (bool): If True, returns the processed DataFrame.
-            author_ids_to_check (list, optional): List of researcher IDs to check. If any of these
-                                                IDs appear in internal_author_id, epfl_affiliation=True.
+            author_ids_to_check (list, optional): List of researcher IDs to check.
 
         Returns:
             DataFrame or self: Processed DataFrame if return_df is True, otherwise self.
         """
 
-        self.df = self.df.copy()  # Avoid modifying the original DataFrame
+        self.df = self.df.copy()
+
+        # Dispatch table: source name -> affiliation-detection method.
+        # Extending to a new source only requires adding one entry here.
+        _source_dispatch = {
+            "scopus": lambda orgs: self.process_scopus(orgs, check_all=True),
+            "wos": self.process_wos,
+            "openalex": self.process_openalex,
+            "openalex+crossref": self.process_openalex,
+            "crossref": self.process_crossref,
+            "zenodo": self.process_zenodo,
+            "datacite": self.process_datacite,
+            "epo": lambda _orgs: True,  # All inventors are candidates for EPO patents
+        }
+
+        def _detect_affiliation(row):
+            handler = _source_dispatch.get(row["source"])
+            if handler is None:
+                self.logger.warning("Unknown source '%s' — epfl_affiliation set to False.", row["source"])
+                return False
+            return handler(row["organizations"])
 
         # Step 1: Detect EPFL-affiliated authors based on organization names
-        self.df["epfl_affiliation"] = self.df.apply(
-            lambda row: (
-                self.process_scopus(row["organizations"], check_all=True)
-                if row["source"] == "scopus"
-                else (
-                    self.process_wos(row["organizations"])
-                    if row["source"] == "wos"
-                    else (
-                        self.process_openalex(row["organizations"])
-                        if row["source"] in ("openalex", "openalex+crossref")
-                        else (
-                            self.process_crossref(row["organizations"])
-                            if row["source"] == "crossref"
-                            else (
-                                self.process_zenodo(row["organizations"])
-                                if row["source"] == "zenodo"
-                                else (
-                                    self.process_datacite(row["organizations"])
-                                    if row["source"] == "datacite"
-                                    else (
-                                        True   # ✅ EPO patents: try to match ALL inventors (no affiliation propagation)
-                                        if row["source"] == "epo"
-                                        else False
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            ),
-            axis=1,
-        )
+        self.df["epfl_affiliation"] = self.df.apply(_detect_affiliation, axis=1)
+
         if author_ids_to_check is not None:
             if author_ids_to_check:
                 if isinstance(author_ids_to_check, str):
@@ -111,13 +105,13 @@ class AuthorProcessor:
                 else:
                     author_ids_to_check = [str(x).strip().lower() for x in author_ids_to_check]
                 author_ids_to_check = set(author_ids_to_check)
+
                 def check_and_log(row):
                     internal_id = str(row.get("internal_author_id", "")).strip().lower()
                     orcid_id = str(row.get("orcid_id", "")).strip().lower()
                     if internal_id in author_ids_to_check or orcid_id in author_ids_to_check:
                         return True
-                    else:
-                        return row["epfl_affiliation"]
+                    return row["epfl_affiliation"]
 
                 self.df["epfl_affiliation"] = self.df.apply(check_and_log, axis=1)
 
@@ -418,7 +412,7 @@ class AuthorProcessor:
                 f"AND (entityType:(Publication) NOT (types:(doctoral thesis) OR types_authority:(*student*)))"
             )
             try:
-                facet_values = dspace_wrapper.client.get_facet_values(
+                facet_values = self.dspace_wrapper.client.get_facet_values(
                     facet_name=facet, query=query, configuration="researchoutputs", size=5
                 )
             except Exception as e:
@@ -454,9 +448,9 @@ class AuthorProcessor:
         """
 
         try:
-            response = dspace_wrapper.search_authority(filter_text=query)
+            response = self.dspace_wrapper.search_authority(filter_text=query)
             self.logger.info("Querying DSpace for author %s", query)
-            sciper_id = dspace_wrapper.get_sciper_from_authority(response)
+            sciper_id = self.dspace_wrapper.get_sciper_from_authority(response)
             self.logger.info("Sciper %s was retrieved in DSpace for author %s", sciper_id, query)
             return sciper_id
         except Exception as e:
@@ -518,7 +512,7 @@ class AuthorProcessor:
             for query in queries:
                 self.logger.info("Find person in DSpace with query: %s", query)
                 try:
-                    result = dspace_wrapper.find_person(query=query)
+                    result = self.dspace_wrapper.find_person(query=query)
                     if isinstance(result, dict) and all(
                         k in result for k in ["uuid", "sciper_id"]
                     ):
@@ -660,8 +654,7 @@ class PublicationProcessor:
     def __init__(self, df, unpaywall_format="best-oa-location"):
         self.df = df
         self.unpaywall_format = unpaywall_format 
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = logger
 
     def fetch_unpaywall_data(self, doi):
         return UnpaywallClient.fetch_by_doi(doi, format=self.unpaywall_format)
@@ -726,8 +719,7 @@ class OpenAlexProcessor:
         """
         self.df = df.copy()
         self.format = format
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = logger
         self.openalex_prefix = "openalex_"
 
     def fetch_openalex_data(self, doi):
