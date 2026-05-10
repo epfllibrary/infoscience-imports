@@ -541,11 +541,60 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _validate_env(logger: logging.Logger) -> None:
+    """Warn early if key environment variables are missing.
+
+    Nothing here is hard-blocking (the pipeline ran without explicit checks
+    before), but surfacing missing vars at startup avoids cryptic failures
+    deep inside a harvesting or loading step.
+
+    Variable names are taken directly from the client source files:
+      - dspace_client_wrapper.py → DS_API_ENDPOINT
+      - api_epfl_client.py       → API_EPFL_USER, API_EPFL_PWD
+      - scopus_client.py         → SCOPUS_API_KEY
+      - wos_client_v2.py         → WOS_TOKEN
+      - epo_ops_client.py        → EPO_OPS_KEY, EPO_OPS_SECRET
+      - crossref/unpaywall/…     → CONTACT_API_EMAIL
+    """
+    # Truly required: without the DSpace endpoint the loader cannot run at all.
+    if not os.getenv("DS_API_ENDPOINT"):
+        logger.warning(
+            "DS_API_ENDPOINT is not set — DSpace loading will fail. "
+            "Set it in your .env file (see dspace/.sample.env)."
+        )
+
+    # Per-source optional vars — warn only, never exit.
+    optional = {
+        "API_EPFL_USER":    "EPFL People API authentication (author reconciliation)",
+        "API_EPFL_PWD":     "EPFL People API authentication (author reconciliation)",
+        "SCOPUS_API_KEY":   "Scopus harvesting",
+        "WOS_TOKEN":        "Web of Science harvesting",
+        "EPO_OPS_KEY":      "EPO Open Patent Services harvesting",
+        "EPO_OPS_SECRET":   "EPO Open Patent Services harvesting",
+        "CONTACT_API_EMAIL":"Crossref / Unpaywall / OpenAlex polite pool",
+        "ZENODO_API_KEY":   "Zenodo harvesting (authenticated rate limit)",
+        "ORCID_API_TOKEN":  "ORCID author reconciliation",
+    }
+    missing_optional = [
+        f"  {var}: {desc}"
+        for var, desc in optional.items()
+        if not os.getenv(var)
+    ]
+    if missing_optional:
+        logger.debug(
+            "Optional env vars not set (related sources will degrade gracefully):\n%s",
+            "\n".join(missing_optional),
+        )
+
+
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
     logger = setup_logger(args.verbose)
+
+    # Validate environment before doing anything else
+    _validate_env(logger)
 
     # Compute date window
     if args.start_date and not args.end_date:
