@@ -17,14 +17,15 @@ Automated harvesting, deduplication, enrichment, and loading of publication data
 4. [Quick start](#quick-start)
 5. [Streamlit supervision UI](#streamlit-supervision-ui)
 6. [Authentication](#authentication)
-7. [CLI reference](#cli-reference)
-8. [Environments](#environments-dev--test--prod)
-9. [Environment variables](#environment-variables)
-10. [Architecture](#architecture)
-11. [Output structure](#output-structure)
-12. [Incremental logic](#incremental-logic)
-13. [License](#license)
-14. [Citation](#citation)
+7. [Scheduled runs](#scheduled-runs)
+8. [CLI reference](#cli-reference)
+9. [Environments](#environments-dev--test--prod)
+10. [Environment variables](#environment-variables)
+11. [Architecture](#architecture)
+12. [Output structure](#output-structure)
+13. [Incremental logic](#incremental-logic)
+14. [License](#license)
+15. [Citation](#citation)
 
 ---
 
@@ -98,6 +99,7 @@ streamlit run app.py
 |---|---|---|
 | 🏠 Tableau de bord | all | KPIs, 30-day trend chart, recent runs, per-source breakdown, charts by type / OA status / year / unit / journal / PDF proportion |
 | 🚀 Lancer un run | admin | Form to configure and launch the pipeline; live log streaming with stop button |
+| ⏰ Programmation | admin | Create and manage scheduled runs; cron-based triggers; enable/disable toggle; run-now button; scheduler status indicator |
 | 📋 Publications | all | Paginated, sortable, filterable datatable; OA / licence / PDF badges; EPFL author + unit aggregation; weak-status flag; Excel report download |
 | 📊 Statistiques | all | Per-run funnel by source, publication type breakdown, EPFL author and unit tabs |
 | ⚙️ Configuration | admin | Environment variable status, DuckDB info, `.env` template |
@@ -153,6 +155,52 @@ python -m ui.auth remove <username>
 ```
 
 Credentials are stored as [bcrypt](https://pypi.org/project/bcrypt/) hashes in `.streamlit/auth.yaml` (gitignored). Copy `.streamlit/auth.yaml.example` as a reference for the file structure.
+
+---
+
+## Scheduled runs
+
+The **⏰ Programmation** page (admin only) lets you define pipeline runs that fire automatically on a cron schedule, without manual intervention.
+
+### How it works
+
+`run_ui.sh` starts `scheduler.py` as a background daemon alongside Streamlit. The daemon reads `data/schedules.json` every 15 seconds and registers or updates APScheduler jobs accordingly — any change made in the UI takes effect without a restart.
+
+When a scheduled job fires, the scheduler:
+1. Acquires the per-environment run lock (`data/run_active_{env}.json`). If a run is already active, the execution is silently skipped.
+2. Spawns `data_pipeline/main.py` as an independent OS subprocess.
+3. Updates `last_run_at`, `last_run_id`, and `last_run_status` in `schedules.json` on completion.
+
+Because jobs run as separate OS processes, **stopping or restarting the UI does not interrupt a run already in progress** — it continues to completion and releases the lock itself.
+
+### Creating a schedule
+
+1. Open **⏰ Programmation** in the sidebar (admin role required).
+2. Check the scheduler status indicator at the top — it should show 🟢. If it shows ⚪, start the UI via `./run_ui.sh`.
+3. Click **➕ Nouveau schedule** and fill in:
+
+| Field | Description |
+|---|---|
+| **Nom** | Label shown in the schedule list |
+| **Environnement** | `dev`, `test`, or `prod` |
+| **Sources** | One or more sources to harvest (default: `scopus`, `crossref`, `openalex`) |
+| **Fenêtre glissante** | Days back from today (default: 20) |
+| **Fréquence** | Preset (daily, weekly, …) or "Personnalisé…" for a manual cron expression |
+| **Expression cron** | Standard 5-field cron — pre-filled from the preset, always editable |
+| **Dry-run** | Skip DSpace ingestion |
+| **Désactiver l'envoi d'e-mail** | Suppress the Excel report email |
+
+4. Click **Créer le schedule**. The next execution time is shown immediately.
+
+### Managing schedules
+
+Each schedule card shows the next scheduled execution and the last run result (✅ / ⏳ / ❌).
+
+- **Toggle "Actif"** — enable or disable without deleting the schedule. Takes effect within 15 seconds.
+- **▶ Now** — fire the run immediately, using the schedule's configuration.
+- **🗑** — permanently delete the schedule.
+
+The last 50 lines of `logs/scheduler.log` are accessible at the bottom of the page.
 
 ---
 
