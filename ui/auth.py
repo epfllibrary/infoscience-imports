@@ -113,10 +113,18 @@ def login_wall() -> tuple[str, str]:
         st.stop()
 
     cookie = _load_config().get("cookie", {})
-    if not cookie.get("key"):
+    key = cookie.get("key", "")
+    if not key:
         st.error(
             "La clé de signature du cookie est absente dans `auth.yaml`.  \n"
             "Générez-en une avec `python -m ui.auth genkey`."
+        )
+        st.stop()
+    if len(key.encode()) < 32:
+        st.error(
+            f"La clé de signature du cookie est trop courte "
+            f"({len(key.encode())} octets, minimum 32).  \n"
+            "Régénérez-la avec `python -m ui.auth genkey`."
         )
         st.stop()
 
