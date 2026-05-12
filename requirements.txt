@@ -27,6 +27,7 @@ dateparser
 python-epo-ops-client
 streamlit
 apscheduler
+streamlit-authenticator
 
 bcrypt
 PyYAML
