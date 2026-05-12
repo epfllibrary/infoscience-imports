@@ -228,10 +228,10 @@ doctypes_mapping_dict = {
         #     "collection": "Other",
         #     "dc.type": "text",
         # },
-        "dataset": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
+        # "dataset": {
+        #     "collection": "Datasets and Code",
+        #     "dc.type": "dataset",
+        # },
         # "dissertation": {
         #     "collection": "EPFL thesis",
         #     "dc.type": "text::thesis::doctoral thesis",
