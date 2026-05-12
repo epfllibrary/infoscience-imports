@@ -279,23 +279,3 @@ logs/
 
 All code, UI labels, comments, docstrings, commit messages, and PR descriptions must be written in **English**.
 
----
-
-## Git workflow
-
-```bash
-# Always branch from main
-git checkout main && git pull origin main
-git checkout -b feature/descriptive-name
-
-# Commit with conventional format
-git add <files>
-git commit -m "feat(scope): imperative description"
-# Types: feat, fix, refactor, docs, test, chore, perf, style, ci
-
-# Push and open PR
-git push origin feature/descriptive-name
-gh pr create --title "Brief description" --body "..."
-```
-
-**Never** work directly on `main`. **Never** skip the conventional commit format.
