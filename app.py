@@ -10,6 +10,7 @@ Configuration :
 
 from __future__ import annotations
 
+import html as _html
 import os
 import sys
 import subprocess
@@ -557,7 +558,7 @@ elif page == "🚀 Lancer un run":
             else:
                 tail = "(log non encore disponible…)"
             log_box.markdown(
-                f'<div class="log-console">{tail}</div>',
+                f'<div class="log-console">{_html.escape(tail)}</div>',
                 unsafe_allow_html=True,
             )
             if current is None:

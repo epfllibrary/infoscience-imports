@@ -198,6 +198,18 @@ def login_wall() -> tuple[str, str]:
         session = _verify_session(token)
         if session:
             _apply_session(session, token)
+            # Remove the token from the visible URL bar without a page reload
+            # so it is not recorded in browser history or sent in Referer
+            # headers during navigation.  The token stays valid in
+            # sessions.json for the next browser refresh.
+            st.html(
+                f"<script>"
+                f"(function(){{var u=new URL(window.location);"
+                f"u.searchParams.delete('{_PARAM_NAME}');"
+                f"window.history.replaceState({{}}, '', u);}})()"
+                f"</script>",
+                unsafe_allow_javascript=True,
+            )
             st.rerun()
         else:
             # Token expired or invalid — remove it and show login
