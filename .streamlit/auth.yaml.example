@@ -1,0 +1,23 @@
+# Infoscience Imports — credentials
+# Copy this file to auth.yaml and populate it with the CLI tool:
+#
+#   python -m ui.auth add admin    admin
+#   python -m ui.auth add reporter reporting
+#   python -m ui.auth list
+#   python -m ui.auth passwd <username>
+#
+# Roles:
+#   admin     — full access (all pages)
+#   reporting — read-only (dashboard, publications, statistics)
+#
+# Passwords are stored as bcrypt hashes, NEVER in plain text.
+
+users:
+  admin:
+    name: Administrateur
+    password: "$2b$12$REPLACE_WITH_HASHED_PASSWORD"
+    role: admin
+  reporter:
+    name: Reporter
+    password: "$2b$12$REPLACE_WITH_HASHED_PASSWORD"
+    role: reporting

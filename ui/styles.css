@@ -1,0 +1,175 @@
+/* =============================================================================
+   Infoscience Import Pipeline — UI stylesheet
+   Colour tokens are injected by app.py as CSS custom properties on :root.
+   ============================================================================= */
+
+/* ── App background ──────────────────────────────────────────────────────────
+   Light theme base colours come from .streamlit/config.toml.
+   Only the app wrapper background and the sidebar need manual overrides.      */
+.stApp {
+    background: #f8f9fa;
+}
+
+
+/* ── Sidebar dark theme ──────────────────────────────────────────────────────
+   Target only semantic text elements so that input fields (selectbox,
+   text inputs) keep their native light-theme appearance — white background
+   with dark text — and remain readable.                                        */
+
+[data-testid="stSidebar"] {
+    background: #1a1a2e;
+}
+
+/* Headings and markdown paragraphs */
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] .stMarkdown li,
+[data-testid="stSidebar"] small {
+    color: #c8d0e0 !important;
+}
+
+/* Widget labels (e.g. "Environnement", "Navigation") */
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+    color: #c8d0e0 !important;
+}
+
+/* Radio and checkbox option text
+   Use data-testid (stable) + wildcard children to handle Streamlit's
+   varying internal markup across versions (span, p, div…).              */
+[data-testid="stSidebar"] [data-testid="stRadio"] label,
+[data-testid="stSidebar"] [data-testid="stRadio"] label *,
+[data-testid="stSidebar"] [data-testid="stCheckbox"] label,
+[data-testid="stSidebar"] [data-testid="stCheckbox"] label * {
+    color: #c8d0e0 !important;
+}
+
+/* Caption / helper text */
+[data-testid="stSidebar"] .stCaption {
+    color: #8898aa !important;
+}
+
+/* Divider */
+[data-testid="stSidebar"] hr {
+    border-color: rgba(255, 255, 255, .12);
+}
+
+/* Selectbox input field and its open dropdown: force dark text on white bg  */
+[data-testid="stSidebar"] [data-baseweb="select"] * {
+    color: #212121 !important;
+}
+[data-testid="stSidebar"] [data-baseweb="popover"] {
+    background: #ffffff;
+}
+[data-testid="stSidebar"] [data-baseweb="popover"] * {
+    color: #212121 !important;
+}
+
+/* Sidebar button */
+[data-testid="stSidebar"] .stButton > button {
+    background: rgba(0, 116, 128, .65) !important;
+    border: 1px solid rgba(255, 255, 255, .2) !important;
+    color: #ffffff !important;
+    border-radius: 6px !important;
+    padding: 6px 18px !important;
+    font-weight: 600 !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: var(--canard) !important;
+    filter: none !important;
+}
+
+
+/* ── Buttons (main content) ──────────────────────────────────────────────────
+   Explicit background: primaryColor from config.toml is not reliably applied
+   to button backgrounds in all Streamlit versions.                             */
+
+.stButton > button,
+.stFormSubmitButton > button {
+    background: var(--canard) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 6px !important;
+    padding: 8px 22px !important;
+    font-weight: 600 !important;
+    transition: filter .15s ease;
+}
+.stButton > button:hover,
+.stFormSubmitButton > button:hover {
+    background: var(--canard) !important;
+    filter: brightness(0.85) !important;
+    color: #ffffff !important;
+}
+
+
+/* ── Metric cards ────────────────────────────────────────────────────────── */
+
+.metric-card {
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 20px 24px;
+    border-left: 4px solid var(--canard);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+    margin-bottom: 12px;
+}
+.metric-label { font-size: 0.82rem; color: var(--gray-600); margin-bottom: 4px; }
+.metric-value { font-size: 2rem;    font-weight: 700;        color: var(--black); }
+.metric-sub   { font-size: 0.78rem; color: var(--gray-600);  margin-top: 2px; }
+
+
+/* ── Status badges ───────────────────────────────────────────────────────── */
+
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+.badge-imported     { background: #dff0c8; color: #3a5a10; }
+.badge-rejected     { background: #ffd5d5; color: #7a0000; }
+.badge-running      { background: #fdefd5; color: #7a4400; }
+.badge-completed    { background: #cdeaea; color: #003d42; }
+.badge-failed       { background: #f5cecc; color: #6b0f0f; }
+.badge-workflow     { background: #cdeaea; color: #003d42; }
+.badge-workspace    { background: #fdefd5; color: #7a4400; }
+.badge-deduplicated { background: #dce6f0; color: #2b4e72; }
+.badge-error        { background: #ffd5d5; color: #7a0000; }
+
+
+/* ── Section headers ─────────────────────────────────────────────────────── */
+
+.section-header {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--canard);
+    border-bottom: 2px solid var(--canard);
+    padding-bottom: 5px;
+    margin-bottom: 14px;
+}
+
+
+/* ── Log console ─────────────────────────────────────────────────────────── */
+
+.log-console {
+    background: #0d1117;
+    color: #7ee787;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    padding: 14px 18px;
+    border-radius: 8px;
+    max-height: 420px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    border: 1px solid #30363d;
+}
+
+
+/* ── DataFrames ──────────────────────────────────────────────────────────── */
+
+div[data-testid="stDataFrame"] {
+    border-radius: 8px;
+    overflow: hidden;
+}

@@ -17,11 +17,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
 # --- Project imports
+import env_loader
 from config import default_queries
 from data_pipeline.deduplicator import DataFrameProcessor
 from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
 from data_pipeline.loader import Loader
 from data_pipeline.reporting import GenerateReports
+from db.pipeline_db import PipelineDB
 from data_pipeline.harvester import (
     WosHarvester,
     ScopusHarvester,
@@ -34,11 +36,9 @@ from data_pipeline.harvester import (
 # -----------------------------------------------------------------------------
 # Environment & constants
 # -----------------------------------------------------------------------------
-load_dotenv()
-
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SMTP_SERVER = os.getenv("SMTP_SERVER")
+# load_dotenv() is intentionally NOT called here at module level.
+# env_loader.load_env() is called inside main() after --env is parsed,
+# so the correct .env.{env} file is loaded before any os.getenv() access.
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -238,6 +238,7 @@ def run_pipeline(
     dry_run: bool = False,
     no_email: bool = False,
     sources: Optional[List[str]] = None,
+    run_id: Optional[str] = None,
 ) -> Dict[str, pd.DataFrame | str | None]:
     """
     Harvest, deduplicate, enrich, and (optionally) load data into DSpace.
@@ -252,8 +253,9 @@ def run_pipeline(
         f"dry_run={dry_run} | sources={','.join(active_sources)} ==="
     )
 
-    # Timestamped export dir
-    execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    # Use caller-supplied run_id (e.g. from UI) so DuckDB and the UI state
+    # file share the same identifier; fall back to a local timestamp.
+    execution_timestamp = run_id or datetime.now().strftime("%Y-%m-%d_%H-%M")
     export_dir = output_dir / execution_timestamp
     export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -384,7 +386,52 @@ def run_pipeline(
 
     save_csv(df_rejected, "RejectedItems.csv", export_dir, logger)
 
+    # -------------------- Persist to DuckDB
+    run_id = execution_timestamp
+    try:
+        db = PipelineDB()
+        db.start_run(run_id=run_id, window_start=start_date, window_end=end_date,
+                     sources=active_sources, dry_run=dry_run)
+
+        # Stats par source
+        for src, df_src in publications.items():
+            db.record_source_stats(run_id=run_id, source=src, harvested=len(df_src))
+        db.record_source_stats(
+            run_id=run_id, source="__total__",
+            harvested=sum(len(d) for d in publications.values()),
+            deduplicated=len(df_unloaded),
+            loaded=len(df_loaded) if not df_loaded.empty else 0,
+            rejected=len(df_rejected) if not df_rejected.empty else 0,
+        )
+
+        # Publications (importées + rejetées + dédoublonnées)
+        db.record_publications(run_id, df_loaded, df_rejected,
+                               df_deduplicated=df_unloaded if not df_unloaded.empty else None)
+
+        # Auteurs EPFL et unités (upsert)
+        if df_epfl_authors is not None and not df_epfl_authors.empty:
+            db.record_epfl_authors(df_epfl_authors)
+            db.record_units(df_epfl_authors)
+            db.record_pub_author_links(run_id, df_epfl_authors)
+            db.record_pub_unit_links(run_id, df_epfl_authors)
+            db.record_detected_authors(run_id, df_epfl_authors)
+
+        db.finish_run(run_id, status="completed")
+        db.close()
+        logger.info("DuckDB: run %s enregistré (%d importés, %d rejetés, %d dédoublonnés)",
+                    run_id,
+                    len(df_loaded) if not df_loaded.empty else 0,
+                    len(df_rejected) if not df_rejected.empty else 0,
+                    len(df_unloaded))
+    except Exception as e:
+        logger.warning("DuckDB: échec de l'enregistrement (non bloquant) — %s: %s",
+                       type(e).__name__, e, exc_info=True)
+
     # -------------------- Report & email
+    recipient_email = os.getenv("RECIPIENT_EMAIL")
+    sender_email    = os.getenv("SENDER_EMAIL")
+    smtp_server     = os.getenv("SMTP_SERVER")
+
     report_path = None
     can_report = any(
         not df.empty for df in [df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded]
@@ -400,19 +447,19 @@ def run_pipeline(
             if (
                 not no_email
                 and not dry_run
-                and RECIPIENT_EMAIL
-                and SENDER_EMAIL
-                and SMTP_SERVER
+                and recipient_email
+                and sender_email
+                and smtp_server
             ):
                 generator.send_report_by_email(
-                    recipient_email=RECIPIENT_EMAIL,
-                    sender_email=SENDER_EMAIL,
-                    smtp_server=SMTP_SERVER,
+                    recipient_email=recipient_email,
+                    sender_email=sender_email,
+                    smtp_server=smtp_server,
                     import_start_date=start_date,
                     import_end_date=end_date,
                     file_path=report_path,
                 )
-                logger.info(f"Report emailed to {RECIPIENT_EMAIL}")
+                logger.info(f"Report emailed to {recipient_email}")
             else:
                 logger.info("Email sending skipped (no_email/dry_run or env not set).")
         except Exception as e:
@@ -529,6 +576,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Do not send the report email (even if env is set).",
     )
 
+    # Environment
+    p.add_argument(
+        "--env",
+        choices=env_loader.ENVIRONMENTS,
+        default=None,
+        help=(
+            "Target environment — loads the corresponding .env.{env} file. "
+            f"Choices: {', '.join(env_loader.ENVIRONMENTS)}. "
+            "Defaults to the persisted selection (or 'dev' if none)."
+        ),
+    )
+
+    # Internal — set by the UI to keep run_id consistent between the state
+    # file and DuckDB; not intended for manual use.
+    p.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+
     # Misc
     p.add_argument(
         "-v",
@@ -544,17 +612,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def _validate_env(logger: logging.Logger) -> None:
     """Warn early if key environment variables are missing.
 
-    Nothing here is hard-blocking (the pipeline ran without explicit checks
-    before), but surfacing missing vars at startup avoids cryptic failures
-    deep inside a harvesting or loading step.
+    Nothing here is hard-blocking, but surfacing missing vars at startup
+    avoids cryptic failures deep inside a harvesting or loading step.
 
     Variable names are taken directly from the client source files:
-      - dspace_client_wrapper.py → DS_API_ENDPOINT
-      - api_epfl_client.py       → API_EPFL_USER, API_EPFL_PWD
-      - scopus_client.py         → SCOPUS_API_KEY
-      - wos_client_v2.py         → WOS_TOKEN
-      - epo_ops_client.py        → EPO_OPS_KEY, EPO_OPS_SECRET
-      - crossref/unpaywall/…     → CONTACT_API_EMAIL
+      - dspace_rest_client/client.py → DS_API_ENDPOINT, DS_API_TOKEN
+      - dspace_client_wrapper.py     → DS_API_ENDPOINT
+      - api_epfl_client.py           → API_EPFL_USER, API_EPFL_PWD
+      - unpaywall_client.py          → ELS_API_KEY
+      - scopus_client.py             → SCOPUS_API_KEY, SCOPUS_INST_TOKEN
+      - wos_client_v2.py             → WOS_TOKEN
+      - epo_ops_client.py            → EPO_OPS_KEY, EPO_OPS_SECRET
+      - crossref/unpaywall/openalex  → CONTACT_API_EMAIL
+      - openalex_client.py           → OPENALEX_API_KEY
+      - zenodo_client.py             → ZENODO_API_KEY
+      - orcid_client.py              → ORCID_API_TOKEN
+      - main.py                      → RECIPIENT_EMAIL, SENDER_EMAIL, SMTP_SERVER
     """
     # Truly required: without the DSpace endpoint the loader cannot run at all.
     if not os.getenv("DS_API_ENDPOINT"):
@@ -565,15 +638,22 @@ def _validate_env(logger: logging.Logger) -> None:
 
     # Per-source optional vars — warn only, never exit.
     optional = {
+        "DS_API_TOKEN":     "DSpace REST API static token (dspace_rest_client auth)",
         "API_EPFL_USER":    "EPFL People API authentication (author reconciliation)",
         "API_EPFL_PWD":     "EPFL People API authentication (author reconciliation)",
+        "ELS_API_KEY":      "Elsevier API key (PDF retrieval via Unpaywall)",
         "SCOPUS_API_KEY":   "Scopus harvesting",
+        "SCOPUS_INST_TOKEN":"Scopus institutional token (full-text & extended metadata)",
         "WOS_TOKEN":        "Web of Science harvesting",
         "EPO_OPS_KEY":      "EPO Open Patent Services harvesting",
         "EPO_OPS_SECRET":   "EPO Open Patent Services harvesting",
         "CONTACT_API_EMAIL":"Crossref / Unpaywall / OpenAlex polite pool",
+        "OPENALEX_API_KEY": "OpenAlex authenticated API access",
         "ZENODO_API_KEY":   "Zenodo harvesting (authenticated rate limit)",
         "ORCID_API_TOKEN":  "ORCID author reconciliation",
+        "RECIPIENT_EMAIL":  "Email report delivery (recipient)",
+        "SENDER_EMAIL":     "Email report delivery (sender)",
+        "SMTP_SERVER":      "Email report delivery (SMTP server)",
     }
     missing_optional = [
         f"  {var}: {desc}"
@@ -591,7 +671,11 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    # Load the correct .env.{env} before any os.getenv() access
+    active_env = env_loader.load_env(args.env)
+
     logger = setup_logger(args.verbose)
+    logger.info("Environment: %s (.env.%s)", active_env, active_env)
 
     # Validate environment before doing anything else
     _validate_env(logger)
@@ -664,11 +748,20 @@ def main():
             dry_run=args.dry_run,
             no_email=args.no_email,
             sources=selected_sources,
+            run_id=args.run_id,
         )
         sys.exit(0)
     except Exception as e:
         logger.exception(f"Pipeline crashed: {e}")
         sys.exit(1)
+    finally:
+        # Explicitly remove the UI run-lock so the live-log while loop in
+        # the Streamlit UI exits promptly, even when this process becomes a
+        # zombie before the UI calls os.kill() on it again.
+        try:
+            env_loader.run_lock_path().unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

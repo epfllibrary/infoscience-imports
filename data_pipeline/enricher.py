@@ -697,7 +697,15 @@ class PublicationProcessor:
 
                 if self.unpaywall_format == "best-oa-location":
                     self.df.at[index, "upw_pdf_urls"] = result.get("pdf_urls")
-                    self.df.at[index, "upw_valid_pdf"] = result.get("valid_pdf")
+                    # Publisher-specific or implied-OA licences are NOT truly open:
+                    # the PDF may be freely viewable but redistribution is restricted.
+                    # Block upw_valid_pdf so the loader never tries to attach these files.
+                    _lic = str(result.get("license") or "").lower().strip()
+                    _is_open_license = _lic.startswith("cc-") or _lic in ("public-domain", "pd")
+                    # None (not False) — the loader treats valid_pdf as a filename
+                    # string and does `pdf_dir / valid_pdf`; a boolean would crash it.
+                    valid_pdf = result.get("valid_pdf") if _is_open_license else None
+                    self.df.at[index, "upw_valid_pdf"] = valid_pdf
                 else:
                     self.df.at[index, "upw_pdf_urls"] = None
                     self.df.at[index, "upw_valid_pdf"] = None

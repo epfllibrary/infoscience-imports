@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+
+title: "Infoscience Import Pipeline"
+abstract: >
+  Automated harvesting, deduplication, enrichment, and loading of publication
+  data from multiple external sources (Scopus, Web of Science, Crossref,
+  OpenAlex, Zenodo, EPO) into Infoscience / DSpace-CRIS.
+  Includes a Streamlit supervision UI with role-based access, multi-environment
+  support, and curation features.
+
+authors:
+  - family-names: Sicot
+    given-names: Julien
+    email: julien.sicot@epfl.ch
+    affiliation: "EPFL Library — École Polytechnique Fédérale de Lausanne"
+    orcid: "https://orcid.org/0000-0000-0000-0000"   # replace with actual ORCID
+
+repository-code: "https://github.com/epfllibrary/infoscience-imports"
+url: "https://infoscience.epfl.ch"
+license: MIT
+
+version: "1.0.0"
+date-released: "2026-05-11"
+
+keywords:
+  - institutional repository
+  - DSpace
+  - Infoscience
+  - EPFL
+  - open access
+  - publication harvesting
+  - bibliometrics
+  - Scopus
+  - Web of Science
+  - OpenAlex
+  - Unpaywall
+  - Streamlit
+
+references:
+  - type: software
+    title: "DSpace REST Python Client"
+    authors:
+      - name: "The Library Code GmbH"
+    url: "https://github.com/the-library-code/dspace-rest-python"
+    license: BSD-3-Clause
+    notes: "Bundled in dspace/dspace_rest_client/"

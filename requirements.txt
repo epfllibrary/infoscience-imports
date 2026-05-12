@@ -25,3 +25,8 @@ lxml
 bs4
 dateparser
 python-epo-ops-client
+streamlit
+apscheduler
+
+bcrypt
+PyYAML
