@@ -23,6 +23,7 @@ sonar-project.properties
 template.py
 **/.DS_Store
 **/.claude/**
+**/.vscode/**
 
 
 # Ignore local windows batch files and internal documentation #
