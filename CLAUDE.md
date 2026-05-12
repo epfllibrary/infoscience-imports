@@ -171,7 +171,7 @@ python -m ui.auth passwd <username>
 python -m ui.auth remove <username>
 ```
 
-**Session persistence**: on login, a 256-bit random token is created, stored server-side in `data/sessions.json` (TTL: 8 hours), and written to the URL via `st.query_params["_s"]`. On browser refresh the token is read from the URL query param and the session is restored without re-authentication.
+**Session persistence**: on login, a 256-bit random token is written to the URL via `st.query_params["_s"]` and stored server-side in `data/sessions.json` (TTL: 8 hours). On the first page load the token is read, the session is restored into `st.session_state`, and the token is immediately removed from the URL — it is never visible during normal navigation. A hard browser refresh requires re-authentication.
 
 **Roles**:
 - `admin` — all pages including run launcher, scheduling, and configuration
@@ -189,6 +189,8 @@ Started automatically by `run_ui.sh` alongside Streamlit. Reads `data/schedules.
 - Loads `.env.{env}` via `dotenv_values()` (thread-safe, no `os.environ` mutation) before spawning the subprocess — required for API keys not present in the shell environment.
 - Updates `last_run_at`, `last_run_status` in `schedules.json` after each execution.
 - Logs to `logs/scheduler.log`.
+
+**Process isolation**: each job is launched via `subprocess.Popen` and gets its own OS process. Killing the UI or the scheduler process does **not** kill a job that is already running — it continues until completion. The run lock (`run_active_{env}.json`) remains present for the duration and is cleaned up by `main.py` when it exits, so restarting the UI while a job is running will not trigger a duplicate run.
 
 `schedules.json` schema per entry: `id`, `name`, `enabled`, `sources`, `window_days`, `cron`, `env`, `dry_run`, `no_email`, `created_by`, `created_at`, `last_run_at`, `last_run_id`, `last_run_status`.
 
