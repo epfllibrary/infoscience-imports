@@ -829,6 +829,58 @@ class PipelineDB:
             "SELECT ts,level,message FROM run_logs"
             " WHERE run_id=? ORDER BY ts DESC LIMIT ?", [run_id, limit])
 
+    # ── read — dashboard aggregates ──────────────────────────────────────
+
+    def get_dashboard_kpis(self, months: int = 12) -> dict:
+        """KPI aggregates for the last N months: run counts, success rate, avg duration."""
+        r = self._query_one(
+            "SELECT COUNT(*) AS total_runs,"
+            " SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,"
+            " AVG(CASE WHEN ended_at IS NOT NULL THEN EPOCH(ended_at-started_at) END) AS avg_s"
+            " FROM runs WHERE started_at >= NOW() - INTERVAL (?) MONTH",
+            [months])
+        total     = int(r[0] or 0)
+        completed = int(r[1] or 0)
+        avg_s     = float(r[2]) if r[2] is not None else None
+        imp = self._query_one(
+            "SELECT COUNT(*) FROM publications p"
+            " INNER JOIN runs r ON r.run_id=p.run_id"
+            " WHERE p.status IN ('workflow','workspace')"
+            " AND r.started_at >= NOW() - INTERVAL (?) MONTH",
+            [months])
+        rej = self._query_one(
+            "SELECT COUNT(*) FROM publications p"
+            " INNER JOIN runs r ON r.run_id=p.run_id"
+            " WHERE p.status = 'rejected'"
+            " AND r.started_at >= NOW() - INTERVAL (?) MONTH",
+            [months])
+        return {
+            "total_runs":     total,
+            "completed":      completed,
+            "success_rate":   round(100 * completed / total) if total else 0,
+            "avg_duration_s": avg_s,
+            "total_imported": int(imp[0] or 0) if imp else 0,
+            "total_rejected": int(rej[0] or 0) if rej else 0,
+        }
+
+    def get_pubs_status_per_run(self, limit: int = 20) -> pd.DataFrame:
+        """Per-run publication status counts for the most recent N runs."""
+        return self._query(
+            "SELECT p.run_id, p.status, COUNT(*) AS count"
+            " FROM publications p"
+            " WHERE p.run_id IN ("
+            "   SELECT run_id FROM runs ORDER BY started_at DESC LIMIT ?"
+            " ) GROUP BY p.run_id, p.status",
+            [limit])
+
+    def get_pubs_by_status(self, run_id=None) -> pd.DataFrame:
+        """Publication counts grouped by status (works for both a specific run and all runs)."""
+        w = "WHERE run_id=?" if run_id else ""
+        p = [run_id] if run_id else []
+        return self._query(
+            f"SELECT status, COUNT(*) AS count FROM publications {w}"
+            f" GROUP BY status ORDER BY count DESC", p)
+
     # ── close (no-op: no persistent connection) ──────────────────────────
 
     def close(self) -> None:
