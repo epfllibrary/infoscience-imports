@@ -240,7 +240,7 @@ with st.sidebar:
         _cls  = "nav-item active" if _p == page else "nav-item"
         _href = f"?page={_p.replace(' ', '+')}"
         _nav_html += (
-            f'<a class="{_cls}" href="{_href}">'
+            f'<a class="{_cls}" href="{_href}" target="_self">'
             f'<span class="ms ms-neutral">{_ico}</span>'
             f'<span>{_p}</span></a>'
         )
