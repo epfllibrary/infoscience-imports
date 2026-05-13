@@ -1350,321 +1350,338 @@ elif page == "📊 Statistiques":
     st.markdown("# 📊 Statistiques")
 
     db_r = get_db()
-    runs_df = db_r.get_runs(limit=50)
-    if runs_df.empty:
-        st.info(
-            "Aucun run enregistré. Lancez un premier run pour voir les statistiques."
-        )
+    _stat_runs_df = db_r.get_runs(limit=100)
+    if _stat_runs_df.empty:
+        st.info("Aucun run enregistré. Lancez un premier run pour voir les statistiques.")
         st.stop()
 
-    # ── Run selector shared across all tabs ───────────────────────────────
-    _run_opts_stat = ["Tous les runs"] + runs_df["run_id"].tolist()
+    # ── Run selector — drives all charts below ─────────────────────────────
+    _run_opts_stat = ["Tous les runs"] + _stat_runs_df["run_id"].tolist()
     _sel_stat_run = st.selectbox(
         "Périmètre", _run_opts_stat, key="stat_run_filter",
-        help="Filtre appliqué à tous les onglets.",
+        help="Sélectionnez un run pour explorer ses données en détail, "
+             "ou gardez « Tous les runs » pour une vue agrégée.",
     )
     _stat_run_id = None if _sel_stat_run == "Tous les runs" else _sel_stat_run
 
-    tab_run, tab_authors, tab_units = st.tabs(
-        ["📈 Par run", "👤 Auteurs EPFL", "🏛 Unités"]
+    tab_overview, tab_pubs, tab_people = st.tabs(
+        ["📊 Vue d'ensemble", "📑 Publications", "👥 Auteurs & Unités"]
     )
 
-    # ── Tab 1 : statistiques par run ──────────────────────────────────────
-    with tab_run:
-        stats_df = db_r.get_run_stats(_stat_run_id) if _stat_run_id else pd.DataFrame()
-        pub_df   = db_r.get_publications(run_id=_stat_run_id, limit=5000)
+    # ── Tab 1 : Vue d'ensemble ────────────────────────────────────────────
+    with tab_overview:
+        _s1, _s2 = st.columns(2)
 
-        # ── Row 1 : source funnel + publication status ────────────────────
-        c1, c2 = st.columns(2)
-        with c1:
+        # Source funnel — uses get_sources_breakdown which supports run_id=None
+        with _s1:
             st.markdown(
                 '<div class="section-header">Entonnoir par source</div>',
-                unsafe_allow_html=True,
-            )
-            src = (
-                stats_df[stats_df["source"] != "__total__"]
-                if not stats_df.empty else stats_df
-            )
-            if not src.empty:
-                fig = go.Figure()
-                for col_n, color, label in [
+                unsafe_allow_html=True)
+            _src_stat = db_r.get_sources_breakdown(run_id=_stat_run_id)
+            _src_stat = _src_stat[_src_stat["source"] != "__total__"] if not _src_stat.empty else _src_stat
+            if not _src_stat.empty:
+                _fig_f = go.Figure()
+                for _col, _clr, _lbl in [
                     ("harvested", "#b0c4de", "Collectés"),
-                    ("loaded",    EPFL_TEAL,  "Importés"),
-                    ("rejected",  "#e74c3c",   "Rejetés"),
+                    ("loaded",    CANARD,    "Importés"),
+                    ("rejected",  C_RED,     "Rejetés"),
                 ]:
-                    fig.add_trace(go.Bar(
-                        name=label, x=src["source"], y=src[col_n],
-                        marker_color=color,
-                    ))
-                fig.update_layout(
-                    barmode="group", height=280,
-                    margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="white",
+                    _fig_f.add_trace(go.Bar(name=_lbl, x=_src_stat["source"],
+                                            y=_src_stat[_col], marker_color=_clr))
+                _fig_f.update_layout(
+                    barmode="group", height=300,
+                    margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 )
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(_fig_f, width="stretch")
             else:
-                st.caption("Sélectionnez un run spécifique ou lancez un run.")
+                st.caption("Aucune donnée de source disponible.")
 
-        with c2:
+        # Status distribution — uses get_pubs_by_status (no row limit)
+        with _s2:
             st.markdown(
-                '<div class="section-header">Statut des publications</div>',
-                unsafe_allow_html=True,
-            )
-            if not pub_df.empty:
-                _sc = pub_df["status"].value_counts().reset_index()
-                _sc.columns = ["status", "count"]
-                fig2 = px.pie(
-                    _sc, names="status", values="count", color="status",
+                '<div class="section-header">Distribution des statuts</div>',
+                unsafe_allow_html=True)
+            _st_df = db_r.get_pubs_by_status(_stat_run_id)
+            if not _st_df.empty:
+                _fig_st = px.pie(
+                    _st_df, names="status", values="count", color="status",
                     color_discrete_map={
-                        "workflow":    EPFL_TEAL,  "workspace":   "#f39c12",
-                        "deduplicated":"#3498db",  "rejected":    "#e74c3c",
-                        "error":       "#95a5a6",
+                        "workflow":    CANARD,  "workspace":   LEMAN,
+                        "deduplicated": C_BLUE, "rejected":    C_RED,
+                        "error":        C_GRAY_600,
                     },
-                    hole=0.42, height=280,
+                    hole=0.42, height=300,
                 )
-                fig2.update_layout(margin=dict(l=0, r=0, t=10, b=0))
-                fig2.update_traces(textposition="inside", textinfo="percent+label")
-                st.plotly_chart(fig2, width="stretch")
+                _fig_st.update_layout(
+                    margin=dict(l=0, r=0, t=4, b=0),
+                    legend=dict(orientation="h", yanchor="top", y=-0.08),
+                )
+                _fig_st.update_traces(textposition="inside", textinfo="percent+label")
+                st.plotly_chart(_fig_st, width="stretch")
             else:
                 st.caption("Aucune donnée.")
 
-        # ── Row 2 : document types + OA status ───────────────────────────
-        c3, c4 = st.columns(2)
-        with c3:
+        _s3, _s4 = st.columns(2)
+
+        with _s3:
+            st.markdown(
+                '<div class="section-header">Statut Open Access</div>',
+                unsafe_allow_html=True)
+            _oa_df = db_r.get_pubs_by_oa_status(_stat_run_id)
+            if not _oa_df.empty:
+                _OA_COLORS_S = {
+                    "OA + PDF":    C_GREEN,   "OA sans PDF":  LEMAN,
+                    "OA non-libre": C_YELLOW, "Non-OA":       C_GRAY_600,
+                    "Non défini":  C_GRAY_100,
+                }
+                _fig_oa_s = px.pie(
+                    _oa_df, names="oa_category", values="count",
+                    color="oa_category", color_discrete_map=_OA_COLORS_S,
+                    hole=0.42, height=300,
+                )
+                _fig_oa_s.update_layout(
+                    margin=dict(l=0, r=0, t=4, b=0),
+                    legend=dict(orientation="h", yanchor="top", y=-0.08),
+                )
+                _fig_oa_s.update_traces(textposition="inside", textinfo="percent+label")
+                st.plotly_chart(_fig_oa_s, width="stretch")
+            else:
+                st.caption("Aucune donnée.")
+
+        with _s4:
+            st.markdown(
+                '<div class="section-header">Proportion avec PDF récupéré</div>',
+                unsafe_allow_html=True)
+            _pdf_s = db_r.get_pdf_stats(_stat_run_id)
+            if _pdf_s["total"] > 0:
+                _pdf_data_s = pd.DataFrame({
+                    "label": ["PDF récupéré", "Sans PDF"],
+                    "count": [_pdf_s["with_pdf"], _pdf_s["total"] - _pdf_s["with_pdf"]],
+                })
+                _fig_pdf_s = px.pie(
+                    _pdf_data_s, names="label", values="count", color="label",
+                    color_discrete_map={"PDF récupéré": C_GREEN, "Sans PDF": C_GRAY_100},
+                    hole=0.42, height=300,
+                )
+                _fig_pdf_s.update_layout(
+                    margin=dict(l=0, r=0, t=4, b=0),
+                    legend=dict(orientation="h", yanchor="top", y=-0.08),
+                )
+                _fig_pdf_s.update_traces(textposition="inside", textinfo="percent+label")
+                st.plotly_chart(_fig_pdf_s, width="stretch")
+                _pct_s = round(100 * _pdf_s["with_pdf"] / _pdf_s["total"]) if _pdf_s["total"] else 0
+                st.caption(
+                    f"{_pdf_s['with_pdf']} PDF sur {_pdf_s['total']} publications importées ({_pct_s} %)"
+                )
+            else:
+                st.caption("Aucune donnée.")
+
+        # Per-source detail table (only meaningful for a specific run)
+        if _stat_run_id:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-header">Détail par source</div>',
+                unsafe_allow_html=True)
+            _detail_df = db_r.get_run_stats(_stat_run_id)
+            if not _detail_df.empty:
+                st.dataframe(
+                    _detail_df.rename(columns={
+                        "source": "Source", "harvested": "Collectés",
+                        "deduplicated": "Dédoublonnés", "loaded": "Importés",
+                        "rejected": "Rejetés",
+                    }),
+                    width="stretch", hide_index=True,
+                )
+
+    # ── Tab 2 : Publications ──────────────────────────────────────────────
+    with tab_pubs:
+        _p1, _p2 = st.columns(2)
+
+        with _p1:
             st.markdown(
                 '<div class="section-header">Types de documents importés</div>',
-                unsafe_allow_html=True,
-            )
-            _type_df = db_r.get_pubs_by_type(_stat_run_id)
-            if not _type_df.empty:
-                _type_df = _type_df[_type_df["type"].notna()].head(15)
-                fig3 = px.bar(
-                    _type_df, x="count", y="type", orientation="h",
-                    color_discrete_sequence=[EPFL_TEAL],
+                unsafe_allow_html=True)
+            _type_stat = db_r.get_pubs_by_type(_stat_run_id)
+            if not _type_stat.empty:
+                _type_stat = _type_stat[_type_stat["type"].notna()].head(15)
+                _fig_t = px.bar(
+                    _type_stat, x="count", y="type", orientation="h",
+                    color_discrete_sequence=[CANARD],
                     labels={"count": "Publications", "type": "Type"},
-                    height=320,
+                    height=max(280, len(_type_stat) * 22),
                 )
-                fig3.update_layout(
+                _fig_t.update_layout(
                     margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
                     yaxis=dict(autorange="reversed"),
                 )
-                st.plotly_chart(fig3, width="stretch")
+                st.plotly_chart(_fig_t, width="stretch")
             else:
                 st.caption("Aucune donnée.")
 
-        with c4:
-            st.markdown(
-                '<div class="section-header">Statut Open Access</div>',
-                unsafe_allow_html=True,
-            )
-            _oa_df = db_r.get_pubs_by_oa_status(_stat_run_id)
-            if not _oa_df.empty:
-                _OA_COLORS = {
-                    "OA + PDF":     C_GREEN,  "OA sans PDF": LEMAN,
-                    "OA non-libre": C_YELLOW, "Non-OA":      C_GRAY_600,
-                    "Non défini":   C_GRAY_100,
-                }
-                fig4 = px.pie(
-                    _oa_df, names="oa_category", values="count",
-                    color="oa_category", color_discrete_map=_OA_COLORS,
-                    hole=0.42, height=320,
-                )
-                fig4.update_layout(
-                    margin=dict(l=0, r=0, t=4, b=0),
-                    legend=dict(orientation="h", yanchor="top", y=-0.1),
-                )
-                fig4.update_traces(textposition="inside", textinfo="percent+label")
-                st.plotly_chart(fig4, width="stretch")
-            else:
-                st.caption("Aucune donnée.")
-
-        # ── Row 3 : year distribution + PDF proportion ────────────────────
-        c5, c6 = st.columns(2)
-        with c5:
+        with _p2:
             st.markdown(
                 '<div class="section-header">Par année de publication</div>',
-                unsafe_allow_html=True,
-            )
-            _year_df = db_r.get_pubs_by_year(_stat_run_id)
-            if not _year_df.empty:
-                fig5 = px.bar(
-                    _year_df, x="year", y="count",
+                unsafe_allow_html=True)
+            _year_stat = db_r.get_pubs_by_year(_stat_run_id)
+            if not _year_stat.empty:
+                _fig_yr = px.bar(
+                    _year_stat, x="year", y="count",
                     color_discrete_sequence=[CANARD],
                     labels={"year": "Année", "count": "Publications"},
                     height=280,
                 )
-                fig5.update_layout(
+                _fig_yr.update_layout(
                     margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
                 )
-                st.plotly_chart(fig5, width="stretch")
+                st.plotly_chart(_fig_yr, width="stretch")
             else:
                 st.caption("Aucune donnée.")
 
-        with c6:
-            st.markdown(
-                '<div class="section-header">Proportion avec PDF récupéré</div>',
-                unsafe_allow_html=True,
-            )
-            _pdf = db_r.get_pdf_stats(_stat_run_id)
-            if _pdf["total"] > 0:
-                _pdf_data = pd.DataFrame({
-                    "label": ["PDF récupéré", "Sans PDF"],
-                    "count": [_pdf["with_pdf"], _pdf["total"] - _pdf["with_pdf"]],
-                })
-                fig6 = px.pie(
-                    _pdf_data, names="label", values="count", color="label",
-                    color_discrete_map={"PDF récupéré": C_GREEN, "Sans PDF": C_GRAY_100},
-                    hole=0.42, height=280,
-                )
-                fig6.update_layout(
-                    margin=dict(l=0, r=0, t=4, b=0),
-                    legend=dict(orientation="h", yanchor="top", y=-0.1),
-                )
-                fig6.update_traces(textposition="inside", textinfo="percent+label")
-                st.plotly_chart(fig6, width="stretch")
-                _pct = round(100 * _pdf["with_pdf"] / _pdf["total"]) if _pdf["total"] else 0
-                st.caption(
-                    f"{_pdf['with_pdf']} PDF sur {_pdf['total']} publications ({_pct} %)"
-                )
-            else:
-                st.caption("Aucune donnée.")
-
-        # ── Row 4 : top journals (full width) ────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
-            '<div class="section-header">Top journaux</div>', unsafe_allow_html=True
-        )
-        _jour_df = db_r.get_pubs_by_journal(_stat_run_id, limit=15)
-        if not _jour_df.empty:
-            fig7 = px.bar(
-                _jour_df, x="count", y="journal", orientation="h",
+            '<div class="section-header">Top journaux</div>', unsafe_allow_html=True)
+        _jour_stat = db_r.get_pubs_by_journal(_stat_run_id, limit=20)
+        if not _jour_stat.empty:
+            _fig_j = px.bar(
+                _jour_stat, x="count", y="journal", orientation="h",
                 color_discrete_sequence=[CANARD],
                 labels={"count": "Publications", "journal": "Journal"},
-                height=360,
+                height=max(300, len(_jour_stat) * 22),
             )
-            fig7.update_layout(
+            _fig_j.update_layout(
                 margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
                 yaxis=dict(autorange="reversed"),
             )
-            st.plotly_chart(fig7, width="stretch")
+            st.plotly_chart(_fig_j, width="stretch")
         else:
             st.caption("Aucun journal disponible.")
 
-        # ── Source stats table ────────────────────────────────────────────
-        if not stats_df.empty:
+    # ── Tab 3 : Auteurs & Unités ──────────────────────────────────────────
+    with tab_people:
+        _col_auth, _col_units = st.columns([3, 2])
+
+        # ── Left column: authors ──────────────────────────────────────────
+        with _col_auth:
             st.markdown(
-                '<div class="section-header">Détail par source</div>',
-                unsafe_allow_html=True,
-            )
-            st.dataframe(
-                stats_df.rename(columns={
-                    "source": "Source", "harvested": "Collectés",
-                    "deduplicated": "Dédoublonnés", "loaded": "Importés",
-                    "rejected": "Rejetés",
-                }),
-                width="stretch", hide_index=True,
-            )
+                '<div class="section-header">Top auteurs EPFL</div>',
+                unsafe_allow_html=True)
+            _top_auth = db_r.get_top_epfl_authors(run_id=_stat_run_id, limit=20)
+            if not _top_auth.empty:
+                # Single colour — unit shown in hover to avoid legend explosion
+                _fig_auth = px.bar(
+                    _top_auth, x="pub_count", y="full_name", orientation="h",
+                    color_discrete_sequence=[CANARD],
+                    custom_data=["main_unit", "sciper"],
+                    labels={"pub_count": "Publications", "full_name": "Auteur"},
+                    height=max(300, len(_top_auth) * 26),
+                )
+                _fig_auth.update_traces(
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Publications : %{x}<br>"
+                        "Unité : %{customdata[0]}<br>"
+                        "SCIPER : %{customdata[1]}"
+                        "<extra></extra>"
+                    )
+                )
+                _fig_auth.update_layout(
+                    margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
+                    yaxis=dict(autorange="reversed"),
+                    showlegend=False,
+                )
+                st.plotly_chart(_fig_auth, width="stretch")
+            else:
+                st.caption("Aucun auteur EPFL réconcilié disponible.")
 
-    # ── Tab 2 : auteurs EPFL ──────────────────────────────────────────────
-    with tab_authors:
-        # ── Top EPFL authors chart ────────────────────────────────────────
-        st.markdown(
-            '<div class="section-header">Top auteurs EPFL</div>',
-            unsafe_allow_html=True,
-        )
-        _top_auth_df = db_r.get_top_epfl_authors(run_id=_stat_run_id, limit=20)
-        if not _top_auth_df.empty:
-            _fig_auth = px.bar(
-                _top_auth_df, x="pub_count", y="full_name", orientation="h",
-                color="main_unit",
-                labels={
-                    "pub_count": "Publications", "full_name": "Auteur",
-                    "main_unit": "Unité",
-                },
-                height=max(320, len(_top_auth_df) * 28),
+            # Author search + table
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-header">Recherche auteurs</div>',
+                unsafe_allow_html=True)
+            _pa1, _pa2 = st.columns(2)
+            with _pa1:
+                _author_search = st.text_input("Nom", key="stat_author_search")
+            with _pa2:
+                _all_units_stat = db_r.get_distinct_units()
+                _filter_unit = st.selectbox(
+                    "Unité", ["Toutes"] + _all_units_stat,
+                    key="stat_author_unit",
+                )
+            _authors_df = db_r.get_epfl_authors(
+                name_search=_author_search.strip() or None,
+                unit=_filter_unit if _filter_unit != "Toutes" else None,
+                limit=500,
             )
-            _fig_auth.update_layout(
-                margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
-                yaxis=dict(autorange="reversed"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                            xanchor="right", x=1),
-            )
-            st.plotly_chart(_fig_auth, width="stretch")
-        else:
-            st.caption("Aucun auteur EPFL réconcilié disponible.")
+            st.caption(f"{len(_authors_df)} auteur(s)")
+            if not _authors_df.empty:
+                st.dataframe(
+                    _authors_df.rename(columns={
+                        "sciper": "SCIPER", "full_name": "Nom",
+                        "first_name": "Prénom", "last_name": "Famille",
+                        "orcid": "ORCID", "epfl_orcid": "ORCID EPFL",
+                        "scopus_id": "Scopus", "wos_id": "WoS",
+                        "openalex_id": "OpenAlex", "epfl_status": "Statut",
+                        "epfl_position": "Poste", "main_unit": "Unité",
+                        "dspace_uuid": "UUID DSpace", "last_seen": "Vu le",
+                    }),
+                    width="stretch", hide_index=True,
+                    height=380,
+                )
+                st.download_button(
+                    "⬇ Auteurs CSV",
+                    data=_authors_df.to_csv(index=False).encode("utf-8"),
+                    file_name=f"epfl_authors_{date.today()}.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.info("Aucun auteur EPFL dans la base.")
 
-        # ── Author search + table ─────────────────────────────────────────
-        st.markdown(
-            '<div class="section-header">Auteurs EPFL réconciliés</div>',
-            unsafe_allow_html=True,
-        )
-        c1, c2 = st.columns(2)
-        with c1:
-            author_search = st.text_input("Rechercher par nom")
-        with c2:
-            all_units_list = db_r.get_distinct_units()
-            filter_unit = st.selectbox(
-                "Filtrer par unité", ["Toutes"] + all_units_list,
-                key="author_unit_filter",
-            )
+        # ── Right column: units panel ─────────────────────────────────────
+        with _col_units:
+            st.markdown(
+                '<div class="section-header">Unités EPFL</div>',
+                unsafe_allow_html=True)
 
-        authors_df = db_r.get_epfl_authors(
-            name_search=author_search.strip() or None,
-            unit=filter_unit if filter_unit != "Toutes" else None,
-            limit=500,
-        )
-        st.markdown(f"**{len(authors_df)} auteur(s)**")
-        if not authors_df.empty:
-            st.dataframe(
-                authors_df.rename(columns={
-                    "sciper": "SCIPER", "full_name": "Nom",
-                    "first_name": "Prénom", "last_name": "Nom de famille",
-                    "orcid": "ORCID", "epfl_orcid": "ORCID EPFL",
-                    "scopus_id": "Scopus ID", "wos_id": "WoS ID",
-                    "openalex_id": "OpenAlex ID", "epfl_status": "Statut",
-                    "epfl_position": "Poste", "main_unit": "Unité",
-                    "dspace_uuid": "UUID DSpace", "last_seen": "Vu le",
-                }),
-                width="stretch", hide_index=True,
-            )
-            st.download_button(
-                "⬇ Auteurs CSV",
-                data=authors_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"epfl_authors_{date.today()}.csv",
-                mime="text/csv",
-            )
-        else:
-            st.info(
-                "Aucun auteur EPFL dans la base. Lancez un run pour alimenter la table."
-            )
+            _unit_chart = db_r.get_pubs_by_unit(_stat_run_id, limit=30)
+            if not _unit_chart.empty:
+                _fig_u = px.bar(
+                    _unit_chart, x="count", y="acronym", orientation="h",
+                    color_discrete_sequence=[C_BLUE],
+                    labels={"count": "Publications", "acronym": ""},
+                    height=max(340, len(_unit_chart) * 22),
+                )
+                _fig_u.update_layout(
+                    margin=dict(l=0, r=8, t=4, b=0), plot_bgcolor="white",
+                    yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
+                    xaxis=dict(title_font=dict(size=11)),
+                    showlegend=False,
+                )
+                _fig_u.update_traces(
+                    hovertemplate="<b>%{y}</b> — %{x} publications<extra></extra>"
+                )
+                st.plotly_chart(_fig_u, width="stretch")
+            else:
+                st.caption("Aucune donnée d'unité disponible.")
 
-    # ── Tab 3 : unités ────────────────────────────────────────────────────
-    with tab_units:
-        st.markdown(
-            '<div class="section-header">Unités EPFL</div>', unsafe_allow_html=True
-        )
-        units_df = db_r.get_units()
-        st.markdown(f"**{len(units_df)} unité(s)**")
-        if not units_df.empty:
-            _fig_u = px.bar(
-                units_df.head(20), x="pub_count", y="acronym", orientation="h",
-                color_discrete_sequence=[EPFL_TEAL],
-                labels={"pub_count": "Publications", "acronym": "Unité"},
-                height=400,
-            )
-            _fig_u.update_layout(
-                margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="white",
-                yaxis=dict(autorange="reversed"),
-            )
-            st.plotly_chart(_fig_u, width="stretch")
-            st.dataframe(
-                units_df.rename(columns={
-                    "acronym": "Acronyme", "name_fr": "Nom",
-                    "unit_type": "Type", "epfl_unit_id": "ID EPFL",
-                    "author_count": "Auteurs", "pub_count": "Publications",
-                }),
-                width="stretch", hide_index=True,
-            )
-        else:
-            st.info("Aucune unité dans la base.")
+            # Compact units table
+            st.markdown("<br>", unsafe_allow_html=True)
+            _units_tbl = db_r.get_units()
+            if not _units_tbl.empty:
+                st.caption(f"{len(_units_tbl)} unités au total")
+                st.dataframe(
+                    _units_tbl[["acronym", "name_fr", "unit_type",
+                                "author_count", "pub_count"]]
+                    .rename(columns={
+                        "acronym": "Acr.", "name_fr": "Nom",
+                        "unit_type": "Type",
+                        "author_count": "Auteurs", "pub_count": "Pub.",
+                    }),
+                    width="stretch", hide_index=True,
+                    height=340,
+                )
+            else:
+                st.info("Aucune unité dans la base.")
 
 
 # ==============================================================================
