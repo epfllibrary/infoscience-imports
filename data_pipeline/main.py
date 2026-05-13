@@ -239,6 +239,7 @@ def run_pipeline(
     no_email: bool = False,
     sources: Optional[List[str]] = None,
     run_id: Optional[str] = None,
+    env: Optional[str] = None,
 ) -> Dict[str, pd.DataFrame | str | None]:
     """
     Harvest, deduplicate, enrich, and (optionally) load data into DSpace.
@@ -459,6 +460,7 @@ def run_pipeline(
                     import_end_date=end_date,
                     file_path=report_path,
                     run_id=execution_timestamp,
+                    env=env,
                 )
                 logger.info(f"Report emailed to {recipient_email}")
             else:
@@ -750,6 +752,7 @@ def main():
             no_email=args.no_email,
             sources=selected_sources,
             run_id=args.run_id,
+            env=active_env,
         )
         sys.exit(0)
     except Exception as e:

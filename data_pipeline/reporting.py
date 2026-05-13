@@ -207,25 +207,30 @@ class GenerateReports:
         import_end_date,
         file_path=None,
         run_id=None,
+        env=None,
     ):
         """Send the generated Excel report via email without authentication."""
         if file_path is None:
             file_path = self.generate_excel_report(run_id=run_id)
 
         subject = "Infoscience Import Report"
+        if env:
+            subject += f" [{env.upper()}]"
         if run_id:
             subject += f" — {run_id}"
+
+        body_meta = ""
+        if env:
+            body_meta += f" (env: {env.upper()})"
+        if run_id:
+            body_meta += f" [run: {run_id}]"
 
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = sender_email
         msg["To"] = recipient_email
         msg.set_content(
-            f"Please find attached the latest Infoscience Import Report"
-            f" [{run_id}]"
-            f" for the date interval from {import_start_date} to {import_end_date}."
-            if run_id else
-            f"Please find attached the latest Infoscience Import Report"
+            f"Please find attached the latest Infoscience Import Report{body_meta}"
             f" for the date interval from {import_start_date} to {import_end_date}."
         )
 
