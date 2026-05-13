@@ -59,20 +59,20 @@ _username, _role = login_wall()
 # ── constants ─────────────────────────────────────────────────────────────────
 SOURCES = ["scopus", "crossref", "openalex", "wos", "epo", "zenodo"]
 
-# EPFL Infoscience colour palette
-CANARD      = "#007480"   # info / main accent
-LEMAN       = "#00A79F"   # lighter teal
-C_GREEN     = "#92C642"   # success
-C_YELLOW    = "#ec9433"   # warning
-C_RED       = "#FF0000"   # danger
-C_RED_DARK  = "#B51F1F"   # danger dark
-C_DARK      = "#43515f"   # dark panels
-C_BLACK     = "#212121"   # body text
-C_GRAY_600  = "#707070"   # secondary text
-C_GRAY_100  = "#E6E6E6"   # light backgrounds
-C_BLUE      = "#2b4e72"   # deduplicated/info
+# Design system: Datadog aesthetic (DESIGN.md)
+CANARD      = "#632CA6"   # Datadog purple   — primary accent
+LEMAN       = "#7F56D9"   # Datadog purple bright — secondary accent
+C_GREEN     = "#16A34A"   # success
+C_YELLOW    = "#D97706"   # warning
+C_RED       = "#DC2626"   # danger
+C_RED_DARK  = "#991B1B"   # danger dark
+C_DARK      = "#101828"   # Datadog black    — dark surfaces
+C_BLACK     = "#1D2939"   # Datadog ink      — body text
+C_GRAY_600  = "#667085"   # Datadog muted    — secondary text
+C_GRAY_100  = "#E4E7EC"   # Datadog border   — light backgrounds
+C_BLUE      = "#3B82F6"   # info / deduplicated
 
-# Alias kept for existing f-string references throughout the file
+# Aliases kept for existing references throughout the file
 EPFL_TEAL = CANARD
 EPFL_RED  = C_RED
 
@@ -104,7 +104,19 @@ st.markdown(
 }}</style>""",
     unsafe_allow_html=True,
 )
-# Step 2 — load the external stylesheet (pure CSS, no Python templating).
+# Step 2 — inject Google Fonts via <link> (more reliable than CSS @import in
+#           Streamlit, which can be stripped or deferred unexpectedly).
+st.markdown(
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+    'family=Inter:wght@400;500;600;700'
+    '&family=Roboto+Mono:wght@400;500'
+    '&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200'
+    '&display=block" />',
+    unsafe_allow_html=True,
+)
+# Step 3 — load the external stylesheet (pure CSS, no Python templating).
 st.markdown(
     f"<style>{(ROOT / 'ui' / 'styles.css').read_text()}</style>",
     unsafe_allow_html=True,
@@ -125,6 +137,25 @@ def _make_run_id(name: str = "") -> str:
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     slug = _slugify(name) if name.strip() else ""
     return f"{ts}_{slug}" if slug else ts
+
+
+def mi(name: str, extra_class: str = "") -> str:
+    """Return a Material Symbols Outlined icon span."""
+    cls = f"ms {extra_class}".strip()
+    return f'<span class="{cls}">{name}</span>'
+
+
+def page_title(icon: str, label: str) -> None:
+    """Render a page title with a Material Symbols icon."""
+    st.markdown(
+        f'<h1 class="page-title">{mi(icon)}{label}</h1>',
+        unsafe_allow_html=True,
+    )
+
+
+def sh(icon: str, label: str) -> str:
+    """Return a section-header div with a Material Symbols icon."""
+    return f'<div class="section-header">{mi(icon)}{label}</div>'
 
 
 # ── DB helper ─────────────────────────────────────────────────────────────────
@@ -156,7 +187,12 @@ _ENV_STYLE = {
 }
 
 with st.sidebar:
-    st.markdown("## 📚 Infoscience Imports")
+    st.markdown(
+        f'<div style="font-size:1.15rem;font-weight:700;color:#C8D0E0;'
+        f'display:flex;align-items:center;gap:6px;margin-bottom:2px">'
+        f'{mi("cloud_sync","ms-neutral")} Infoscience Imports</div>',
+        unsafe_allow_html=True,
+    )
 
     # ── Environment selector ──────────────────────────────────────────────
     st.markdown("---")
@@ -182,16 +218,38 @@ with st.sidebar:
     if ACTIVE_ENV == "prod":
         st.warning("Connecté à la **production** — les actions sont réelles.")
 
-    # ── Navigation (pages filtrées par rôle) ─────────────────────────────
+    # ── Navigation ────────────────────────────────────────────────────────
+    _NAV_ICONS = {
+        "Tableau de bord": "dashboard",
+        "Lancer un run":   "rocket_launch",
+        "Programmation":   "schedule",
+        "Publications":    "article",
+        "Statistiques":    "bar_chart",
+        "Configuration":   "settings",
+    }
     st.markdown("---")
     _allowed = get_allowed_pages(_role)
-    page = st.radio(
-        "Navigation",
-        _allowed,
-        label_visibility="collapsed",
-    )
+    # Active page driven by query params — falls back to first allowed page.
+    _default_page = _allowed[0] if _allowed else ""
+    _qp = st.query_params.get("page", _default_page)
+    page = _qp if _qp in _allowed else _default_page
+
+    _nav_html = '<nav class="sidebar-nav">'
+    for _p in _allowed:
+        _ico  = _NAV_ICONS.get(_p, "circle")
+        _cls  = "nav-item active" if _p == page else "nav-item"
+        _href = f"?page={_p.replace(' ', '+')}"
+        _nav_html += (
+            f'<a class="{_cls}" href="{_href}">'
+            f'<span class="ms ms-neutral">{_ico}</span>'
+            f'<span>{_p}</span></a>'
+        )
+    _nav_html += "</nav>"
+    st.markdown(_nav_html, unsafe_allow_html=True)
+
     st.markdown("---")
-    if st.button("🔄 Rafraîchir", help="Recharge les données depuis la base"):
+    if st.button("Rafraîchir", help="Recharge les données depuis la base",
+                 icon=":material/refresh:"):
         st.cache_resource.clear()
         st.rerun()
 
@@ -200,14 +258,20 @@ with st.sidebar:
     _, _dname, _ = current_user()
     _role_label = {"admin": "Admin", "reporting": "Reporting"}.get(_role, _role)
     st.markdown(
-        f"<small style='color:#8898aa'>👤 {_dname or _username}"
-        f"<br><span style='color:#607080'>{_role_label}</span></small>",
+        f'<div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">'
+        f'<span class="ms ms-neutral" style="font-size:17px">person</span>'
+        f'<span style="color:#C8D0E0;font-size:0.88rem;font-weight:600">'
+        f'{_dname or _username}</span></div>'
+        f'<div style="color:#667085;font-size:0.76rem;padding-left:24px">'
+        f'{_role_label}</div>',
         unsafe_allow_html=True,
     )
-    if st.button("🚪 Déconnexion"):
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    if st.button("Déconnexion", icon=":material/logout:"):
         logout()
     st.markdown(
-        "<small style='color:#607080'>Infoscience · EPFL Library</small>",
+        "<div style='color:#4a5568;font-size:0.72rem;margin-top:8px'>"
+        "Infoscience · EPFL Library</div>",
         unsafe_allow_html=True,
     )
 
@@ -220,15 +284,15 @@ if _active:
     st.warning(
         f"⏳ **Run en cours** [{_run_env.upper()}] — `{_active['run_id']}` "
         f"(sources : {_active['sources']}, démarré : {_active['started_at'][:19].replace('T',' ')})  "
-        f"→ Allez sur **🚀 Lancer un run** pour suivre la progression.",
+        f"→ Allez sur **Lancer un run** pour suivre la progression.",
         icon=None,
     )
 
 # ==============================================================================
 # PAGE 1 — TABLEAU DE BORD
 # ==============================================================================
-if page == "🏠 Tableau de bord":
-    st.markdown("# 🏠 Tableau de bord")
+if page == "Tableau de bord":
+    page_title("dashboard", "Tableau de bord")
 
     db_d     = get_db()
     _kpis    = db_d.get_dashboard_kpis(months=12)
@@ -266,7 +330,7 @@ if page == "🏠 Tableau de bord":
 
     # ── Monthly imports trend ──────────────────────────────────────────────
     st.markdown(
-        '<div class="section-header">Importés par mois (12 derniers mois)</div>',
+        sh("trending_up", "Importés par mois (12 derniers mois)"),
         unsafe_allow_html=True)
     _month_df = db_d.get_imported_by_month(months=12)
     if not _month_df.empty:
@@ -295,7 +359,7 @@ if page == "🏠 Tableau de bord":
 
     with _da:
         st.markdown(
-            '<div class="section-header">Publications par run (20 derniers)</div>',
+            sh("bar_chart", "Publications par run (20 derniers)"),
             unsafe_allow_html=True)
         _spr_df = db_d.get_pubs_status_per_run(limit=20)
         if not _spr_df.empty:
@@ -321,7 +385,7 @@ if page == "🏠 Tableau de bord":
 
     with _db_col:
         st.markdown(
-            '<div class="section-header">Distribution globale</div>',
+            sh("donut_large", "Distribution globale"),
             unsafe_allow_html=True)
         _gs_df = db_d.get_pubs_by_status()
         if not _gs_df.empty:
@@ -345,7 +409,7 @@ if page == "🏠 Tableau de bord":
 
     # ── Recent runs table ──────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-header">Runs récents</div>', unsafe_allow_html=True)
+    st.markdown(sh("history", "Runs récents"), unsafe_allow_html=True)
     if not _runs_df.empty:
         def _fmt_dt(v):
             return str(v)[:19].replace("T", " ") if pd.notna(v) and v is not None else "—"
@@ -369,7 +433,7 @@ if page == "🏠 Tableau de bord":
     # ── Importés par source × type de document (stacked bar) ─────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-header">Importés par source et type de document</div>',
+        sh("stacked_bar_chart", "Importés par source et type de document"),
         unsafe_allow_html=True)
 
     _src_type_df = db_d.get_pubs_by_source_and_type()
@@ -403,8 +467,8 @@ if page == "🏠 Tableau de bord":
 # ==============================================================================
 # PAGE 2 — LANCER UN RUN
 # ==============================================================================
-elif page == "🚀 Lancer un run":
-    st.markdown("# 🚀 Lancer un run")
+elif page == "Lancer un run":
+    page_title("play_circle", "Lancer un run")
 
     active = read_active_run()
 
@@ -426,7 +490,7 @@ elif page == "🚀 Lancer un run":
                     st.rerun()
 
         st.markdown(
-            '<div class="section-header">Logs en direct</div>', unsafe_allow_html=True
+            sh("terminal", "Logs en direct"), unsafe_allow_html=True
         )
         log_box = st.empty()
         info_box = st.empty()
@@ -477,7 +541,7 @@ elif page == "🚀 Lancer un run":
         # de mode n'aurait aucun effet visible. Hors du formulaire, chaque
         # interaction relance le script et affiche immédiatement les bons contrôles.
         st.markdown(
-            '<div class="section-header">Fenêtre temporelle</div>',
+            sh("date_range", "Fenêtre temporelle"),
             unsafe_allow_html=True,
         )
         col1, col2, col3 = st.columns(3)
@@ -500,7 +564,7 @@ elif page == "🚀 Lancer un run":
 
         with st.form("run_form"):
             st.markdown(
-                '<div class="section-header">Nom du run (optionnel)</div>',
+                sh("label", "Nom du run (optionnel)"),
                 unsafe_allow_html=True,
             )
             run_name_input = st.text_input(
@@ -511,7 +575,7 @@ elif page == "🚀 Lancer un run":
             )
 
             st.markdown(
-                '<div class="section-header">Sources</div>', unsafe_allow_html=True
+                sh("hub", "Sources"), unsafe_allow_html=True
             )
             selected_sources = st.multiselect(
                 "Sources à inclure",
@@ -521,7 +585,7 @@ elif page == "🚀 Lancer un run":
             )
 
             st.markdown(
-                '<div class="section-header">Requêtes (optionnel)</div>',
+                sh("search", "Requêtes (optionnel)"),
                 unsafe_allow_html=True,
             )
             with st.expander("Personnaliser les requêtes par source", expanded=False):
@@ -543,7 +607,7 @@ elif page == "🚀 Lancer un run":
                         )
 
             st.markdown(
-                '<div class="section-header">Identifiants auteurs (optionnel)</div>',
+                sh("person_search", "Identifiants auteurs (optionnel)"),
                 unsafe_allow_html=True,
             )
             col_a, col_b, col_c = st.columns(3)
@@ -563,7 +627,7 @@ elif page == "🚀 Lancer un run":
                 )
 
             st.markdown(
-                '<div class="section-header">Options</div>', unsafe_allow_html=True
+                sh("tune", "Options"), unsafe_allow_html=True
             )
             col_o1, col_o2, col_o3 = st.columns(3)
             with col_o1:
@@ -664,14 +728,14 @@ elif page == "🚀 Lancer un run":
 # ==============================================================================
 # PAGE 3 — PROGRAMMATION
 # ==============================================================================
-elif page == "⏰ Programmation":
+elif page == "Programmation":
     import uuid as _uuid
     import json as _json_sched
     import tempfile as _tmp
     from apscheduler.triggers.cron import CronTrigger as _CT
     from datetime import timezone as _tz
 
-    st.markdown("# ⏰ Programmation des runs")
+    page_title("schedule", "Programmation des runs")
 
     _SCHED_FILE = ROOT / "data" / "schedules.json"
 
@@ -739,7 +803,7 @@ elif page == "⏰ Programmation":
     # ── Existing schedules ────────────────────────────────────────────────
     if _schedules:
         st.markdown(
-            '<div class="section-header">Schedules configurés</div>',
+            sh("event_repeat", "Schedules configurés"),
             unsafe_allow_html=True,
         )
         for _s in _schedules:
@@ -947,7 +1011,7 @@ elif page == "⏰ Programmation":
 
     # ── Scheduler log tail ────────────────────────────────────────────────
     if _sched_log.exists():
-        with st.expander("📋 Logs du scheduler (50 dernières lignes)"):
+        with st.expander("Logs du scheduler (50 dernières lignes)"):
             _log_lines = _sched_log.read_text(encoding="utf-8", errors="replace").splitlines()
             st.code("\n".join(_log_lines[-50:]), language=None)
 
@@ -955,8 +1019,8 @@ elif page == "⏰ Programmation":
 # ==============================================================================
 # PAGE 3 — PUBLICATIONS
 # ==============================================================================
-elif page == "📋 Publications":
-    st.markdown("# 📋 Publications")
+elif page == "Publications":
+    page_title("article", "Publications")
 
     db_r = get_db()
 
@@ -1346,8 +1410,8 @@ elif page == "📋 Publications":
 # ==============================================================================
 # PAGE 4 — STATISTIQUES
 # ==============================================================================
-elif page == "📊 Statistiques":
-    st.markdown("# 📊 Statistiques")
+elif page == "Statistiques":
+    page_title("bar_chart", "Statistiques")
 
     db_r = get_db()
     _stat_runs_df = db_r.get_runs(limit=100)
@@ -1365,7 +1429,7 @@ elif page == "📊 Statistiques":
     _stat_run_id = None if _sel_stat_run == "Tous les runs" else _sel_stat_run
 
     tab_overview, tab_pubs, tab_people = st.tabs(
-        ["📊 Vue d'ensemble", "📑 Publications", "👥 Auteurs & Unités"]
+        ["Vue d'ensemble", "Publications", "Auteurs & Unités"]
     )
 
     # ── Tab 1 : Vue d'ensemble ────────────────────────────────────────────
@@ -1375,7 +1439,7 @@ elif page == "📊 Statistiques":
         # Source funnel — uses get_sources_breakdown which supports run_id=None
         with _s1:
             st.markdown(
-                '<div class="section-header">Entonnoir par source</div>',
+                sh("filter_alt", "Entonnoir par source"),
                 unsafe_allow_html=True)
             _src_stat = db_r.get_sources_breakdown(run_id=_stat_run_id)
             _src_stat = _src_stat[_src_stat["source"] != "__total__"] if not _src_stat.empty else _src_stat
@@ -1400,7 +1464,7 @@ elif page == "📊 Statistiques":
         # Status distribution — uses get_pubs_by_status (no row limit)
         with _s2:
             st.markdown(
-                '<div class="section-header">Distribution des statuts</div>',
+                sh("donut_large", "Distribution des statuts"),
                 unsafe_allow_html=True)
             _st_df = db_r.get_pubs_by_status(_stat_run_id)
             if not _st_df.empty:
@@ -1426,7 +1490,7 @@ elif page == "📊 Statistiques":
 
         with _s3:
             st.markdown(
-                '<div class="section-header">Statut Open Access</div>',
+                sh("lock_open", "Statut Open Access"),
                 unsafe_allow_html=True)
             _oa_df = db_r.get_pubs_by_oa_status(_stat_run_id)
             if not _oa_df.empty:
@@ -1451,7 +1515,7 @@ elif page == "📊 Statistiques":
 
         with _s4:
             st.markdown(
-                '<div class="section-header">Proportion avec PDF récupéré</div>',
+                sh("picture_as_pdf", "Proportion avec PDF récupéré"),
                 unsafe_allow_html=True)
             _pdf_s = db_r.get_pdf_stats(_stat_run_id)
             if _pdf_s["total"] > 0:
@@ -1481,7 +1545,7 @@ elif page == "📊 Statistiques":
         if _stat_run_id:
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(
-                '<div class="section-header">Détail par source</div>',
+                sh("table_chart", "Détail par source"),
                 unsafe_allow_html=True)
             _detail_df = db_r.get_run_stats(_stat_run_id)
             if not _detail_df.empty:
@@ -1500,7 +1564,7 @@ elif page == "📊 Statistiques":
 
         with _p1:
             st.markdown(
-                '<div class="section-header">Types de documents importés</div>',
+                sh("category", "Types de documents importés"),
                 unsafe_allow_html=True)
             _type_stat = db_r.get_pubs_by_type(_stat_run_id)
             if not _type_stat.empty:
@@ -1521,7 +1585,7 @@ elif page == "📊 Statistiques":
 
         with _p2:
             st.markdown(
-                '<div class="section-header">Par année de publication</div>',
+                sh("calendar_today", "Par année de publication"),
                 unsafe_allow_html=True)
             _year_stat = db_r.get_pubs_by_year(_stat_run_id)
             if not _year_stat.empty:
@@ -1540,7 +1604,7 @@ elif page == "📊 Statistiques":
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
-            '<div class="section-header">Top journaux</div>', unsafe_allow_html=True)
+            sh("newspaper", "Top journaux"), unsafe_allow_html=True)
         _jour_stat = db_r.get_pubs_by_journal(_stat_run_id, limit=20)
         if not _jour_stat.empty:
             _fig_j = px.bar(
@@ -1564,7 +1628,7 @@ elif page == "📊 Statistiques":
         # ── Left column: authors ──────────────────────────────────────────
         with _col_auth:
             st.markdown(
-                '<div class="section-header">Top auteurs EPFL</div>',
+                sh("people", "Top auteurs EPFL"),
                 unsafe_allow_html=True)
             _top_auth = db_r.get_top_epfl_authors(run_id=_stat_run_id, limit=20)
             if not _top_auth.empty:
@@ -1597,7 +1661,7 @@ elif page == "📊 Statistiques":
             # Author search + table
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(
-                '<div class="section-header">Recherche auteurs</div>',
+                sh("manage_search", "Recherche auteurs"),
                 unsafe_allow_html=True)
             _pa1, _pa2 = st.columns(2)
             with _pa1:
@@ -1640,7 +1704,7 @@ elif page == "📊 Statistiques":
         # ── Right column: units panel ─────────────────────────────────────
         with _col_units:
             st.markdown(
-                '<div class="section-header">Unités EPFL</div>',
+                sh("account_balance", "Unités EPFL"),
                 unsafe_allow_html=True)
 
             _unit_chart = db_r.get_pubs_by_unit(_stat_run_id, limit=30)
@@ -1687,13 +1751,13 @@ elif page == "📊 Statistiques":
 # ==============================================================================
 # PAGE 5 — CONFIGURATION
 # ==============================================================================
-elif page == "⚙️ Configuration":
-    st.markdown("# ⚙️ Configuration")
+elif page == "Configuration":
+    page_title("settings", "Configuration")
     st.markdown("Variables d'environnement et état des connexions.")
 
     # ── Env vars status ────────────────────────────────────────────────────
     st.markdown(
-        '<div class="section-header">Variables d\'environnement</div>',
+        sh("key", "Variables d'environnement"),
         unsafe_allow_html=True,
     )
 
@@ -1741,7 +1805,7 @@ elif page == "⚙️ Configuration":
 
     # ── DuckDB info ─────────────────────────────────────────────────────────
     st.markdown(
-        '<div class="section-header">Base de données DuckDB</div>',
+        sh("storage", "Base de données DuckDB"),
         unsafe_allow_html=True,
     )
     db_path = db.db_path
@@ -1753,7 +1817,7 @@ elif page == "⚙️ Configuration":
         st.metric("Taille", f"{size_mb:.2f} MB")
 
     # ── Quick .env template ─────────────────────────────────────────────────
-    st.markdown('<div class="section-header">Modèle .env</div>', unsafe_allow_html=True)
+    st.markdown(sh("code", "Modèle .env"), unsafe_allow_html=True)
     st.code(
         """# Infoscience Import Pipeline — Variables d'environnement
 # Copier ce fichier en .env à la racine du projet

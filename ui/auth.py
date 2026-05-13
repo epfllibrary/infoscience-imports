@@ -53,17 +53,17 @@ AUTH_FILE = ROOT / ".streamlit" / "auth.yaml"
 
 ROLE_PAGES: dict[str, list[str]] = {
     "admin": [
-        "🏠 Tableau de bord",
-        "🚀 Lancer un run",
-        "⏰ Programmation",
-        "📋 Publications",
-        "📊 Statistiques",
-        "⚙️ Configuration",
+        "Tableau de bord",
+        "Lancer un run",
+        "Programmation",
+        "Publications",
+        "Statistiques",
+        "Configuration",
     ],
     "reporting": [
-        "🏠 Tableau de bord",
-        "📋 Publications",
-        "📊 Statistiques",
+        "Tableau de bord",
+        "Publications",
+        "Statistiques",
     ],
 }
 
