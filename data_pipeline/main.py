@@ -458,6 +458,7 @@ def run_pipeline(
                     import_start_date=start_date,
                     import_end_date=end_date,
                     file_path=report_path,
+                    run_id=execution_timestamp,
                 )
                 logger.info(f"Report emailed to {recipient_email}")
             else:
