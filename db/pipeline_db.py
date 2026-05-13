@@ -400,7 +400,9 @@ class PipelineDB:
     def get_runs(self, limit=50) -> pd.DataFrame:
         return self._query(
             "SELECT run_id, started_at, ended_at,"
-            " CAST(EPOCH(ended_at-started_at) AS INTEGER) AS duration_s,"
+            " CASE WHEN ended_at IS NOT NULL"
+            "      THEN CAST(epoch(ended_at) - epoch(started_at) AS INTEGER)"
+            "      ELSE NULL END AS duration_s,"
             " window_start, window_end, sources, dry_run, status"
             " FROM runs ORDER BY started_at DESC LIMIT ?", [limit])
 
