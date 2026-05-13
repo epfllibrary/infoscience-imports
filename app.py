@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html as _html
 import os
+import re
 import sys
 import subprocess
 import time
@@ -108,6 +109,22 @@ st.markdown(
     f"<style>{(ROOT / 'ui' / 'styles.css').read_text()}</style>",
     unsafe_allow_html=True,
 )
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _slugify(name: str) -> str:
+    """Convert a run name to a URL-safe slug for inclusion in run IDs."""
+    slug = re.sub(r"[^\w\s-]", "", name.lower().strip())
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug[:30]
+
+
+def _make_run_id(name: str = "") -> str:
+    """Build a run ID: timestamp[_slug] where slug is derived from name."""
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    slug = _slugify(name) if name.strip() else ""
+    return f"{ts}_{slug}" if slug else ts
 
 
 # ── DB helper ─────────────────────────────────────────────────────────────────
@@ -617,6 +634,17 @@ elif page == "🚀 Lancer un run":
 
         with st.form("run_form"):
             st.markdown(
+                '<div class="section-header">Nom du run (optionnel)</div>',
+                unsafe_allow_html=True,
+            )
+            run_name_input = st.text_input(
+                "Nom",
+                placeholder="ex : tests-scopus-janvier",
+                help="Inclus dans l'identifiant du run pour faciliter l'identification. "
+                     "Laissez vide pour utiliser uniquement la date.",
+            )
+
+            st.markdown(
                 '<div class="section-header">Sources</div>', unsafe_allow_html=True
             )
             selected_sources = st.multiselect(
@@ -682,7 +710,7 @@ elif page == "🚀 Lancer un run":
             submitted = st.form_submit_button("▶ Lancer le pipeline", width="stretch")
 
         if submitted:
-            run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            run_id = _make_run_id(run_name_input)
             log_file = ROOT / "logs" / f"run_{run_id}.log"
             log_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -901,7 +929,7 @@ elif page == "⏰ Programmation":
                         if st.button("▶ Now", key=f"run_{_sid}",
                                      help="Lance ce run immédiatement",
                                      use_container_width=True):
-                            _now_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                            _now_id = _make_run_id(_s.get("name", ""))
                             _now_log = ROOT / "logs" / f"run_{_now_id}.log"
                             _now_log.parent.mkdir(parents=True, exist_ok=True)
                             _now_cmd = [sys.executable,
