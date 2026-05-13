@@ -172,12 +172,12 @@ class GenerateReports:
         df_excluded = self.df[~self.df["row_id"].isin(self.df_loaded["row_id"])]
         return len(df_excluded), df_excluded
 
-    def generate_excel_report(self, file_path=None, output_dir="."):
+    def generate_excel_report(self, file_path=None, output_dir=".", run_id=None):
         """Generate an Excel report with all calculated indicators and corresponding data rows."""
         report = self.generate_report()
         if file_path is None:
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            file_path = f"{timestamp}_Import_Report.xlsx"
+            prefix = run_id if run_id else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            file_path = f"{prefix}_Import_Report.xlsx"
         output_path = os.path.join(output_dir, file_path)
 
         with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:

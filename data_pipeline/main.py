@@ -441,7 +441,7 @@ def run_pipeline(
             generator = GenerateReports(
                 df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
             )
-            report_path = generator.generate_excel_report(output_dir=export_dir)
+            report_path = generator.generate_excel_report(output_dir=export_dir, run_id=execution_timestamp)
             logger.info(f"Report generated: {report_path}")
 
             if (
