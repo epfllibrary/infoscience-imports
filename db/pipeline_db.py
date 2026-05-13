@@ -433,13 +433,58 @@ class PipelineDB:
             " GROUP BY day, status ORDER BY day", [days])
 
     def get_sources_breakdown(self, run_id=None) -> pd.DataFrame:
-        w = "WHERE run_id=?" if run_id else ""
-        p = [run_id] if run_id else []
+        # source_stats only stores harvested per source; loaded/rejected are derived
+        # from the publications table where status is accurate per source.
+        if run_id:
+            ss_sub = (
+                "SELECT source, SUM(harvested) AS total_harvested"
+                " FROM source_stats WHERE source != '__total__' AND run_id=?"
+                " GROUP BY source"
+            )
+            p_cond = "AND p.run_id = ?"
+            params = [run_id, run_id]
+        else:
+            ss_sub = (
+                "SELECT source, SUM(harvested) AS total_harvested"
+                " FROM source_stats WHERE source != '__total__'"
+                " GROUP BY source"
+            )
+            p_cond = ""
+            params = []
         return self._query(
-            f"SELECT source, SUM(harvested) AS harvested,"
-            f" SUM(deduplicated) AS deduplicated, SUM(loaded) AS loaded,"
-            f" SUM(rejected) AS rejected FROM source_stats {w}"
-            f" GROUP BY source ORDER BY loaded DESC", p)
+            f"SELECT p.source,"
+            f" COALESCE(MAX(ss.total_harvested), 0) AS harvested,"
+            f" COUNT(CASE WHEN p.status IN ('workflow','workspace') THEN 1 END) AS loaded,"
+            f" COUNT(CASE WHEN p.status = 'rejected'               THEN 1 END) AS rejected,"
+            f" COUNT(CASE WHEN p.status = 'deduplicated'           THEN 1 END) AS deduplicated"
+            f" FROM publications p"
+            f" LEFT JOIN ({ss_sub}) ss ON ss.source = p.source"
+            f" WHERE p.source IS NOT NULL {p_cond}"
+            f" GROUP BY p.source"
+            f" ORDER BY loaded DESC",
+            params or None)
+
+    def get_imported_by_month(self, months: int = 12) -> pd.DataFrame:
+        """Monthly imported publication counts for the last N months."""
+        return self._query(
+            "SELECT DATE_TRUNC('month', r.started_at) AS month, COUNT(*) AS count"
+            " FROM publications p"
+            " INNER JOIN runs r ON r.run_id = p.run_id"
+            " WHERE p.status IN ('workflow','workspace')"
+            " AND r.started_at >= NOW() - INTERVAL (?) MONTH"
+            " GROUP BY month ORDER BY month",
+            [months])
+
+    def get_pubs_by_source_and_type(self, run_id=None) -> pd.DataFrame:
+        """Imported publications grouped by source and document type (for stacked bar)."""
+        w, p = self._dash_where(run_id)   # filters to workflow/workspace
+        return self._query(
+            f"SELECT p.source, COALESCE(p.dc_type, 'Non défini') AS dc_type,"
+            f" COUNT(*) AS count"
+            f" FROM publications p {w}"
+            f" AND p.source IS NOT NULL"
+            f" GROUP BY p.source, p.dc_type"
+            f" ORDER BY p.source, count DESC", p)
 
     # ── read — dashboard charts ──────────────────────────────────────────
 
