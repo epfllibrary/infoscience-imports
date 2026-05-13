@@ -230,308 +230,174 @@ if _active:
 if page == "🏠 Tableau de bord":
     st.markdown("# 🏠 Tableau de bord")
 
-    # ── Run filter (scope all charts below) ────────────────────────────────
-    _all_runs = db.get_runs(limit=200)
-    _run_opts = ["Tous les runs"] + (
-        _all_runs["run_id"].tolist() if not _all_runs.empty else []
-    )
-    _dash_run = st.selectbox(
-        "Périmètre", _run_opts,
-        help="Filtrer toutes les visualisations sur un run spécifique.",
-        key="dash_run_filter",
-    )
-    _dash_run_id = None if _dash_run == "Tous les runs" else _dash_run
+    db_d     = get_db()
+    _kpis    = db_d.get_dashboard_kpis(months=12)
+    _runs_df = db_d.get_runs(limit=20)
 
-    # ── Top metrics ────────────────────────────────────────────────────────
-    summary = db.get_summary_stats()
-    runs_df = db.get_runs(limit=5)
+    # ── KPI tiles (last 12 months) ─────────────────────────────────────────
+    def _fmt_dur(s):
+        if s is None or pd.isna(s) or s <= 0:
+            return "—"
+        s = int(s)
+        return f"{s//3600}h {(s%3600)//60}m {s%60}s" if s >= 3600 else f"{s//60}m {s%60}s"
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    with col1:
-        st.markdown(metric_card("Runs", summary["total_runs"]), unsafe_allow_html=True)
-    with col2:
+    _kc1, _kc2, _kc3, _kc4, _kc5 = st.columns(5)
+    with _kc1:
+        st.markdown(metric_card("Runs (12 mois)", _kpis["total_runs"]), unsafe_allow_html=True)
+    with _kc2:
         st.markdown(
-            metric_card("Importées", summary["total_imported"]), unsafe_allow_html=True
-        )
-    with col3:
+            metric_card("Importés (12 mois)", f"{_kpis['total_imported']:,}"),
+            unsafe_allow_html=True)
+    with _kc3:
         st.markdown(
-            metric_card("Dédoublonnées", summary["total_deduped"]),
-            unsafe_allow_html=True,
-        )
-    with col4:
+            metric_card("Rejetés (12 mois)", f"{_kpis['total_rejected']:,}"),
+            unsafe_allow_html=True)
+    with _kc4:
         st.markdown(
-            metric_card("Rejetées", summary["total_rejected"]), unsafe_allow_html=True
-        )
-    with col5:
+            metric_card("Taux de succès", f"{_kpis['success_rate']} %",
+                        f"{_kpis['completed']} / {_kpis['total_runs']} complétés"),
+            unsafe_allow_html=True)
+    with _kc5:
         st.markdown(
-            metric_card("Auteurs EPFL", summary["total_authors"]),
-            unsafe_allow_html=True,
-        )
-    with col6:
-        st.markdown(
-            metric_card("Unités", summary["total_units"]), unsafe_allow_html=True
-        )
+            metric_card("Durée moyenne / run", _fmt_dur(_kpis["avg_duration_s"])),
+            unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Trend chart ────────────────────────────────────────────────────────
+    # ── Monthly imports trend ──────────────────────────────────────────────
     st.markdown(
-        '<div class="section-header">Tendance 30 jours</div>', unsafe_allow_html=True
-    )
-    trend_df = db.get_trend(days=30)
-    if not trend_df.empty:
-        fig = px.bar(
-            trend_df,
-            x="day",
-            y="count",
-            color="status",
-            color_discrete_map={"imported": EPFL_TEAL, "rejected": "#e74c3c"},
-            barmode="stack",
-            labels={"day": "Date", "count": "Publications", "status": "Statut"},
-            height=280,
+        '<div class="section-header">Importés par mois (12 derniers mois)</div>',
+        unsafe_allow_html=True)
+    _month_df = db_d.get_imported_by_month(months=12)
+    if not _month_df.empty:
+        _fig_month = px.bar(
+            _month_df, x="month", y="count",
+            color_discrete_sequence=[CANARD],
+            labels={"month": "Mois", "count": "Publications importées"},
+            height=220,
         )
-        fig.update_layout(
-            margin=dict(l=0, r=0, t=10, b=0),
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+        _fig_month.update_layout(
+            margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
+            xaxis=dict(
+                tickformat="%b %Y",
+                tickangle=-30,
+                dtick="M1",
             ),
-            plot_bgcolor="white",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(_fig_month, width="stretch")
     else:
-        st.info(
-            "Aucune donnée disponible. Lancez un premier run pour voir les tendances."
-        )
+        st.caption("Aucune donnée pour les 12 derniers mois.")
 
-    # ── Recent runs ────────────────────────────────────────────────────────
-    st.markdown(
-        '<div class="section-header">Runs récents</div>', unsafe_allow_html=True
-    )
-    if not runs_df.empty:
-        display = runs_df.copy()
-        display["status"] = display["status"].apply(lambda s: badge(s))
-        display["dry_run"] = display["dry_run"].apply(lambda v: "✓" if v else "")
-        display["duration"] = display["duration_s"].apply(
-            lambda s: f"{int(s)//60}m {int(s)%60}s" if pd.notna(s) and s else "—"
-        )
-        st.write(
-            display[
-                ["run_id", "started_at", "duration", "sources", "status", "dry_run"]
-            ]
-            .rename(
-                columns={
-                    "run_id": "Run",
-                    "started_at": "Démarré",
-                    "duration": "Durée",
-                    "sources": "Sources",
-                    "status": "Statut",
-                    "dry_run": "Dry-run",
-                }
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Per-run status breakdown + global status donut ─────────────────────
+    _da, _db_col = st.columns([3, 2])
+
+    with _da:
+        st.markdown(
+            '<div class="section-header">Publications par run (20 derniers)</div>',
+            unsafe_allow_html=True)
+        _spr_df = db_d.get_pubs_status_per_run(limit=20)
+        if not _spr_df.empty:
+            _SPR_COLORS = {
+                "workflow":    CANARD,    "workspace":    LEMAN,
+                "deduplicated": C_BLUE,  "rejected":     C_RED,
+                "error":        C_GRAY_600,
+            }
+            _fig_spr = px.bar(
+                _spr_df, x="run_id", y="count", color="status",
+                color_discrete_map=_SPR_COLORS,
+                labels={"run_id": "Run", "count": "Publications", "status": "Statut"},
+                barmode="stack", height=340,
             )
+            _fig_spr.update_layout(
+                margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
+                xaxis=dict(tickangle=-40, tickfont=dict(size=9)),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(_fig_spr, width="stretch")
+        else:
+            st.caption("Aucun run enregistré.")
+
+    with _db_col:
+        st.markdown(
+            '<div class="section-header">Distribution globale</div>',
+            unsafe_allow_html=True)
+        _gs_df = db_d.get_pubs_by_status()
+        if not _gs_df.empty:
+            _fig_gs = px.pie(
+                _gs_df, names="status", values="count", color="status",
+                color_discrete_map={
+                    "workflow":    CANARD,   "workspace":   LEMAN,
+                    "deduplicated": C_BLUE,  "rejected":    C_RED,
+                    "error":        C_GRAY_600,
+                },
+                hole=0.45, height=340,
+            )
+            _fig_gs.update_layout(
+                margin=dict(l=0, r=0, t=4, b=0),
+                legend=dict(orientation="h", yanchor="top", y=-0.08),
+            )
+            _fig_gs.update_traces(textposition="inside", textinfo="percent+label")
+            st.plotly_chart(_fig_gs, width="stretch")
+        else:
+            st.caption("Aucune donnée.")
+
+    # ── Recent runs table ──────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-header">Runs récents</div>', unsafe_allow_html=True)
+    if not _runs_df.empty:
+        def _fmt_dt(v):
+            return str(v)[:19].replace("T", " ") if pd.notna(v) and v is not None else "—"
+
+        _disp = _runs_df.copy()
+        _disp["Démarré"] = _disp["started_at"].apply(_fmt_dt)
+        _disp["Terminé"] = _disp["ended_at"].apply(_fmt_dt)
+        _disp["Durée"]   = _disp["duration_s"].apply(_fmt_dur)
+        _disp["Statut"]  = _disp["status"].apply(lambda s: badge(s))
+        _disp["DR"]      = _disp["dry_run"].apply(lambda v: "✓" if v else "")
+        _disp["Sources"] = _disp["sources"].apply(lambda v: v or "—")
+        st.write(
+            _disp[["run_id", "Démarré", "Terminé", "Durée", "Sources", "Statut", "DR"]]
+            .rename(columns={"run_id": "Run", "DR": "Dry-run"})
             .to_html(escape=False, index=False),
             unsafe_allow_html=True,
         )
     else:
         st.info("Aucun run enregistré.")
 
-    # ── Sources breakdown ──────────────────────────────────────────────────
+    # ── Importés par source × type de document (stacked bar) ─────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-header">Répartition par source (tous runs)</div>',
-        unsafe_allow_html=True,
-    )
-    src_df = db.get_sources_breakdown()
-    if not src_df.empty:
-        src_df = src_df[src_df["source"] != "__total__"]
-        fig2 = go.Figure(
-            data=[
-                go.Bar(
-                    name="Collectés",
-                    x=src_df["source"],
-                    y=src_df["harvested"],
-                    marker_color="#b0c4de",
-                ),
-                go.Bar(
-                    name="Importés",
-                    x=src_df["source"],
-                    y=src_df["loaded"],
-                    marker_color=EPFL_TEAL,
-                ),
-                go.Bar(
-                    name="Rejetés",
-                    x=src_df["source"],
-                    y=src_df["rejected"],
-                    marker_color="#e74c3c",
-                ),
-            ]
+        '<div class="section-header">Importés par source et type de document</div>',
+        unsafe_allow_html=True)
+
+    _src_type_df = db_d.get_pubs_by_source_and_type()
+
+    if not _src_type_df.empty:
+        _top8 = (
+            _src_type_df.groupby("dc_type")["count"].sum()
+            .nlargest(8).index.tolist()
         )
-        fig2.update_layout(
-            barmode="group",
-            height=260,
-            margin=dict(l=0, r=0, t=10, b=0),
-            plot_bgcolor="white",
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-            ),
+        _st = _src_type_df.copy()
+        _st["dc_type"] = _st["dc_type"].apply(
+            lambda t: t if t in _top8 else "Autre"
         )
-        st.plotly_chart(fig2, width="stretch")
+        _st = _st.groupby(["source", "dc_type"], as_index=False)["count"].sum()
 
-    # ── Analyse des contenus importés ──────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-header">Analyse des contenus importés</div>',
-        unsafe_allow_html=True,
-    )
-
-    _ca, _cb = st.columns(2)
-
-    # — Par type de document —
-    with _ca:
-        st.markdown("**Par type de document**")
-        _type_df = db.get_pubs_by_type(_dash_run_id)
-        if not _type_df.empty:
-            _type_df = _type_df[_type_df["type"].notna()].head(15)
-            _fig_type = px.bar(
-                _type_df, x="count", y="type", orientation="h",
-                color_discrete_sequence=[CANARD],
-                labels={"count": "Publications", "type": "Type"},
-                height=320,
-            )
-            _fig_type.update_layout(
-                margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
-                yaxis=dict(autorange="reversed"),
-            )
-            st.plotly_chart(_fig_type, width="stretch")
-        else:
-            st.caption("Aucune donnée.")
-
-    # — Statut Open Access —
-    with _cb:
-        st.markdown("**Statut Open Access**")
-        _oa_df = db.get_pubs_by_oa_status(_dash_run_id)
-        if not _oa_df.empty:
-            _OA_COLORS = {
-                "OA + PDF":    C_GREEN,
-                "OA sans PDF": LEMAN,
-                "OA non-libre": C_YELLOW,
-                "Non-OA":      C_GRAY_600,
-                "Non défini":  C_GRAY_100,
-            }
-            _fig_oa = px.pie(
-                _oa_df, names="oa_category", values="count",
-                color="oa_category",
-                color_discrete_map=_OA_COLORS,
-                hole=0.42, height=320,
-            )
-            _fig_oa.update_layout(
-                margin=dict(l=0, r=0, t=4, b=0),
-                legend=dict(orientation="h", yanchor="top", y=-0.1),
-                showlegend=True,
-            )
-            _fig_oa.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(_fig_oa, width="stretch")
-        else:
-            st.caption("Aucune donnée.")
-
-    # ── Publications par année & proportion PDF ─────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    _ya, _yb = st.columns(2)
-
-    # — Par année de publication —
-    with _ya:
-        st.markdown("**Par année de publication**")
-        _year_df = db.get_pubs_by_year(_dash_run_id)
-        if not _year_df.empty:
-            _fig_yr = px.bar(
-                _year_df, x="year", y="count",
-                color_discrete_sequence=[CANARD],
-                labels={"year": "Année", "count": "Publications"},
-                height=280,
-            )
-            _fig_yr.update_layout(
-                margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
-            )
-            st.plotly_chart(_fig_yr, width="stretch")
-        else:
-            st.caption("Aucune donnée.")
-
-    # — Proportion PDF récupéré —
-    with _yb:
-        st.markdown("**Proportion avec PDF récupéré**")
-        _pdf = db.get_pdf_stats(_dash_run_id)
-        if _pdf["total"] > 0:
-            _pdf_data = pd.DataFrame({
-                "label": ["PDF récupéré", "Sans PDF"],
-                "count": [_pdf["with_pdf"], _pdf["total"] - _pdf["with_pdf"]],
-            })
-            _fig_pdf = px.pie(
-                _pdf_data, names="label", values="count",
-                color="label",
-                color_discrete_map={
-                    "PDF récupéré": C_GREEN,
-                    "Sans PDF":     C_GRAY_100,
-                },
-                hole=0.42, height=280,
-            )
-            _fig_pdf.update_layout(
-                margin=dict(l=0, r=0, t=4, b=0),
-                legend=dict(orientation="h", yanchor="top", y=-0.1),
-            )
-            _fig_pdf.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(_fig_pdf, width="stretch")
-
-            # Summary sous le donut
-            pct = round(100 * _pdf["with_pdf"] / _pdf["total"]) if _pdf["total"] else 0
-            st.caption(
-                f"{_pdf['with_pdf']} PDF sur {_pdf['total']} publications importées ({pct} %)"
-            )
-        else:
-            st.caption("Aucune donnée.")
-
-    # ── Top unités et journaux ──────────────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    _ua, _ub = st.columns(2)
-
-    # — Top unités —
-    with _ua:
-        st.markdown("**Top unités EPFL**")
-        _unit_df = db.get_pubs_by_unit(_dash_run_id, limit=15)
-        if not _unit_df.empty:
-            _fig_unit = px.bar(
-                _unit_df, x="count", y="acronym", orientation="h",
-                color_discrete_sequence=[C_BLUE],
-                labels={"count": "Publications", "acronym": "Unité"},
-                height=360,
-            )
-            _fig_unit.update_layout(
-                margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
-                yaxis=dict(autorange="reversed"),
-            )
-            st.plotly_chart(_fig_unit, width="stretch")
-        else:
-            st.caption("Aucune donnée d'unité disponible.")
-
-    # — Top journaux —
-    with _ub:
-        st.markdown("**Top journaux**")
-        _jour_df = db.get_pubs_by_journal(_dash_run_id, limit=15)
-        if not _jour_df.empty:
-            _fig_jour = px.bar(
-                _jour_df, x="count", y="journal", orientation="h",
-                color_discrete_sequence=[CANARD],
-                labels={"count": "Publications", "journal": "Journal"},
-                height=360,
-            )
-            _fig_jour.update_layout(
-                margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
-                yaxis=dict(autorange="reversed"),
-            )
-            st.plotly_chart(_fig_jour, width="stretch")
-        else:
-            st.caption(
-                "Aucun journal disponible. "
-                "Les titres de journaux sont alimentés lors des prochains runs."
-            )
+        _fig_st = px.bar(
+            _st, x="source", y="count", color="dc_type",
+            barmode="stack", height=360,
+            color_discrete_sequence=px.colors.qualitative.Plotly,
+            labels={"source": "Source", "count": "Publications importées", "dc_type": "Type"},
+        )
+        _fig_st.update_layout(
+            margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(_fig_st, width="stretch")
+    else:
+        st.caption("Aucune donnée.")
 
 
 # ==============================================================================
