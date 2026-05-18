@@ -198,6 +198,7 @@ class PipelineDB:
                 "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_oa_status VARCHAR",
                 "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_license VARCHAR",
                 "ALTER TABLE publications ADD COLUMN IF NOT EXISTS journal_title VARCHAR",
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS internal_id VARCHAR",
                 """CREATE TABLE IF NOT EXISTS pub_detected_authors (
                     run_id VARCHAR NOT NULL, row_id VARCHAR NOT NULL,
                     author_name VARCHAR NOT NULL,
@@ -247,7 +248,8 @@ class PipelineDB:
                          ws, wf, None,
                          s(row.get("pubyear")), sb(row.get("upw_is_oa")),
                          sb(row.get("upw_valid_pdf")), s(row.get("upw_oa_status")),
-                         s(row.get("upw_license")), s(row.get("journalTitle"))))
+                         s(row.get("upw_license")), s(row.get("journalTitle")),
+                         s(row.get("internal_id"))))
         for _, row in df_rejected.iterrows():
             rows.append((run_id, s(row.get("row_id")), s(row.get("doi")),
                          s(row.get("title")), s(row.get("source")),
@@ -256,7 +258,8 @@ class PipelineDB:
                          s(row.get("reject_reason", row.get("is_duplicate"))),
                          s(row.get("pubyear")), sb(row.get("upw_is_oa")),
                          sb(row.get("upw_valid_pdf")), s(row.get("upw_oa_status")),
-                         s(row.get("upw_license")), None))
+                         s(row.get("upw_license")), None,
+                         s(row.get("internal_id"))))
         if df_deduplicated is not None and not df_deduplicated.empty:
             for _, row in df_deduplicated.iterrows():
                 rows.append((run_id, s(row.get("row_id")), s(row.get("doi")),
@@ -265,12 +268,13 @@ class PipelineDB:
                              "deduplicated", None, None, "Already exists in Infoscience",
                              s(row.get("pubyear")), sb(row.get("upw_is_oa")),
                              sb(row.get("upw_valid_pdf")), s(row.get("upw_oa_status")),
-                             s(row.get("upw_license")), None))
+                             s(row.get("upw_license")), None,
+                             s(row.get("internal_id"))))
         self._executemany(
             "INSERT INTO publications (run_id,row_id,doi,title,source,dc_type,collection,"
             "status,workspace_id,workflow_id,error_msg,"
-            "pub_year,upw_is_oa,upw_valid_pdf,upw_oa_status,upw_license,journal_title)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "pub_year,upw_is_oa,upw_valid_pdf,upw_oa_status,upw_license,journal_title,internal_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
     # ── epfl authors ─────────────────────────────────────────────────────
 
@@ -703,7 +707,8 @@ class PipelineDB:
             f"SELECT COUNT(*) FROM ("
             f"SELECT DISTINCT p.run_id,p.row_id,p.doi,p.title,p.source,p.dc_type,"
             f"p.status,p.workspace_id,p.workflow_id,p.error_msg,p.loaded_at,"
-            f"p.pub_year,p.upw_is_oa,p.upw_valid_pdf,p.upw_oa_status,p.upw_license"
+            f"p.pub_year,p.upw_is_oa,p.upw_valid_pdf,p.upw_oa_status,p.upw_license,"
+            f"p.internal_id"
             f" FROM publications p {join_a} {join_u} {where}"
             f") _c",
             params or None)
@@ -722,7 +727,8 @@ class PipelineDB:
         return self._query(
             f"SELECT DISTINCT p.run_id,p.row_id,p.doi,p.title,p.source,p.dc_type,"
             f" p.status,p.workspace_id,p.workflow_id,p.error_msg,p.loaded_at,"
-            f" p.pub_year,p.upw_is_oa,p.upw_valid_pdf,p.upw_oa_status,p.upw_license"
+            f" p.pub_year,p.upw_is_oa,p.upw_valid_pdf,p.upw_oa_status,p.upw_license,"
+            f" p.internal_id"
             f" FROM publications p {join_a} {join_u} {where}"
             f" ORDER BY p.loaded_at DESC LIMIT ? OFFSET ?", params)
 

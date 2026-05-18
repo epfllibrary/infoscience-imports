@@ -1300,6 +1300,47 @@ elif page == "Publications":
         )
 
         # Links — LinkColumn needs the full URL as cell value
+        def _source_api_url(source, internal_id, doi):
+            iid = str(internal_id).strip() if pd.notna(internal_id) and internal_id else None
+            d_  = str(doi).strip() if pd.notna(doi) and doi else None
+            if source == "crossref":
+                key = iid or d_
+                return f"https://api.crossref.org/works/{key}" if key else None
+            if source == "openalex+crossref":
+                key = iid or d_
+                return f"https://api.openalex.org/works/https://doi.org/{key}" if key else None
+            if source == "scopus":
+                if iid:
+                    return f"https://www.scopus.com/record/display.uri?eid={iid}&origin=resultslist"
+                if d_:
+                    _doi_enc = d_.replace("/", "%2F")
+                    return f"https://www.scopus.com/results/results.url?s=DOI%28{_doi_enc}%29&origin=searchbasic"
+                return None
+            if source == "wos":
+                return f"https://www.webofscience.com/wos/woscc/full-record/{iid}" if iid else None
+            if source == "zenodo":
+                if iid and iid.isdigit():
+                    return f"https://zenodo.org/api/records/{iid}"
+                if d_:
+                    m = re.search(r"zenodo\.(\d+)", d_)
+                    if m:
+                        return f"https://zenodo.org/api/records/{m.group(1)}"
+                return None
+            if source == "epo":
+                return f"https://ops.epo.org/rest-services/published-data/publication/docdb/{iid}/biblio" if iid else None
+            if source == "datacite":
+                key = iid or d_
+                return f"https://api.datacite.org/dois/{key}" if key else None
+            # Fallback: CrossRef for any DOI-bearing record
+            if d_:
+                return f"https://api.crossref.org/works/{d_}"
+            return None
+
+        d["src_url"] = d.apply(
+            lambda r: _source_api_url(r.get("source"), r.get("internal_id"), r.get("doi")),
+            axis=1,
+        )
+
         d["doi_url"] = d["doi"].apply(
             lambda x: f"https://doi.org/{x}" if pd.notna(x) and str(x).startswith("10.") else None
         )
@@ -1336,11 +1377,11 @@ elif page == "Publications":
 
         # Select and order columns
         _cols = (
-            (["run_id"] if sel_run == "Tous" else [])
+            (["run_id"] if not sel_run else [])
             + ["pub_year", "title", "source", "dc_type", "status",
                "OA", "Licence", "PDF", "⚠️",
                "Auteurs EPFL", "Unités",
-               "doi_url", "ws_url", "wf_url", "error_msg"]
+               "src_url", "doi_url", "ws_url", "wf_url", "error_msg"]
         )
         _cols = [c for c in _cols if c in d.columns]
 
@@ -1361,6 +1402,8 @@ elif page == "Publications":
                 "⚠️":          st.column_config.CheckboxColumn("⚠️ Statut faible", width="small"),
                 "Auteurs EPFL": st.column_config.TextColumn("Auteurs EPFL", width="large"),
                 "Unités":      st.column_config.TextColumn("Unités",  width="medium"),
+                "src_url":     st.column_config.LinkColumn("Voir source", width="small",
+                                   display_text="raw_data"),
                 "doi_url":     st.column_config.LinkColumn("DOI",       width="medium",
                                    display_text=r"https://doi\.org/(.+)"),
                 "ws_url":      st.column_config.LinkColumn("Workspace", width="small",
