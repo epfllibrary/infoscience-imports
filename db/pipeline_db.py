@@ -222,9 +222,12 @@ class PipelineDB:
 
             # Run idempotent migration from v1 (per-run publications) to v2
             # (canonical publications + run_publications).
-            self._migrate_publications_v2(con)
         finally:
             con.close()
+
+        # Run migration AFTER closing the schema connection so that every step
+        # opens a fresh connection and sees a fully committed catalog.
+        self._migrate_publications_v2()
 
     @staticmethod
     def _compute_pub_id(doi, source, internal_id) -> str | None:
@@ -239,42 +242,63 @@ class PipelineDB:
             return f"{source}:{internal_id}"
         return None
 
-    def _migrate_publications_v2(self, con) -> None:
+    def _migrate_publications_v2(self) -> None:
         """Migrate from per-run publications (v1) to normalised schema (v2).
 
         Migration is triggered when the publications table has a run_id column
         but no pub_id column — the definitive v1 indicator.
 
+        Each step uses its own short-lived connection so that DuckDB's schema
+        catalog is always fully refreshed between DDL and DML operations.
         Safe to call multiple times — it is a no-op if already migrated.
         """
-        pub_has_run_id = con.execute(
-            "SELECT COUNT(*) FROM information_schema.columns"
-            " WHERE table_name = 'publications' AND column_name = 'run_id'"
-        ).fetchone()[0]
-        pub_has_pub_id = con.execute(
-            "SELECT COUNT(*) FROM information_schema.columns"
-            " WHERE table_name = 'publications' AND column_name = 'pub_id'"
-        ).fetchone()[0]
+        # Detection — fresh connection so schema state is authoritative.
+        det = self._connect()
+        try:
+            pub_has_run_id = det.execute(
+                "SELECT COUNT(*) FROM information_schema.columns"
+                " WHERE table_name = 'publications' AND column_name = 'run_id'"
+            ).fetchone()[0]
+            pub_has_pub_id = det.execute(
+                "SELECT COUNT(*) FROM information_schema.columns"
+                " WHERE table_name = 'publications' AND column_name = 'pub_id'"
+            ).fetchone()[0]
+        finally:
+            det.close()
 
         if not pub_has_run_id or pub_has_pub_id:
-            # Either no v1 schema, or already migrated to v2
             return
 
         logger.info("DB: migrating publications schema from v1 to v2 …")
 
-        # Step 0 — ensure all additive columns exist on the v1 table before
-        # renaming it, so the INSERT … SELECT below can reference them safely
-        # regardless of how far the previous incremental migrations had run.
-        for col_sql in [
-            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS pub_year VARCHAR",
-            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_is_oa BOOLEAN",
-            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_valid_pdf BOOLEAN",
-            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_oa_status VARCHAR",
-            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_license VARCHAR",
-            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS journal_title VARCHAR",
-            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS internal_id VARCHAR",
-        ]:
-            con.execute(col_sql)
+        # Step 0 — ensure all additive v1 columns exist before renaming.
+        # Separate connection: DDL must be committed and the catalog refreshed
+        # before subsequent connections can see the new columns in queries.
+        prep = self._connect()
+        try:
+            for col_sql in [
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS pub_year VARCHAR",
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_is_oa BOOLEAN",
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_valid_pdf BOOLEAN",
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_oa_status VARCHAR",
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_license VARCHAR",
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS journal_title VARCHAR",
+                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS internal_id VARCHAR",
+            ]:
+                prep.execute(col_sql)
+        finally:
+            prep.close()
+
+        # Steps 1-6 — rename, populate, drop. Fresh connection sees the columns
+        # added in step 0 because prep was fully closed and committed.
+        mig = self._connect()
+        try:
+            self._migrate_publications_v2_steps(mig)
+        finally:
+            mig.close()
+
+    def _migrate_publications_v2_steps(self, con) -> None:
+        """Execute the rename + data population steps of the v1→v2 migration."""
 
         # Step 1 — drop old indexes so the rename can proceed, then rename
         for old_idx in [
