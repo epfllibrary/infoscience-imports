@@ -55,6 +55,11 @@ SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex", "zenodo", "epo")
 def setup_logger(verbosity: int = 0) -> logging.Logger:
     logger = logging.getLogger("pipeline")
     logger.setLevel(logging.DEBUG)
+    # Prevent propagation to root logger: third-party libs (e.g. dspace_rest_client)
+    # call logging.basicConfig() at import time, adding a root StreamHandler with
+    # level=NOTSET. Python's propagation bypasses the root logger's own level check,
+    # so without this flag every DEBUG record leaks into the run log via stderr.
+    logger.propagate = False
 
     # Console handler (cron sees stdout/stderr)
     ch = logging.StreamHandler(sys.stdout)
