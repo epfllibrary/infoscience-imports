@@ -125,6 +125,7 @@ def run_job(schedule_id: str) -> None:
     sources  = schedule.get("sources") or []
     dry_run  = bool(schedule.get("dry_run"))
 
+    t_start = datetime.now()
     logger.info("Scheduled run %s starting (schedule %r)", run_id, schedule.get("name", schedule_id))
 
     # Acquire run lock (exclusive file creation — POSIX atomic)
@@ -197,7 +198,8 @@ def run_job(schedule_id: str) -> None:
     finally:
         sf.unlink(missing_ok=True)
 
-    logger.info("Scheduled run %s finished — %s", run_id, status)
+    elapsed = int((datetime.now() - t_start).total_seconds())
+    logger.info("Scheduled run %s finished in %ds — %s", run_id, elapsed, status)
     _patch_schedule(schedule_id, last_run_status=status)
 
 

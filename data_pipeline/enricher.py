@@ -449,9 +449,9 @@ class AuthorProcessor:
 
         try:
             response = self.dspace_wrapper.search_authority(filter_text=query)
-            self.logger.info("Querying DSpace for author %s", query)
+            self.logger.debug("DSpace authority query for %s", query)
             sciper_id = self.dspace_wrapper.get_sciper_from_authority(response)
-            self.logger.info("Sciper %s was retrieved in DSpace for author %s", sciper_id, query)
+            self.logger.debug("DSpace: sciper %s matched for %s", sciper_id, query)
             return sciper_id
         except Exception as e:
             self.logger.error(
@@ -510,7 +510,7 @@ class AuthorProcessor:
                 queries.append(f"person.identifier.rid:({row['internal_author_id']})")
 
             for query in queries:
-                self.logger.info("Find person in DSpace with query: %s", query)
+                self.logger.debug("DSpace person lookup: %s", query)
                 try:
                     result = self.dspace_wrapper.find_person(query=query)
                     if isinstance(result, dict) and all(
@@ -645,6 +645,12 @@ class AuthorProcessor:
 
         enrichment_df = self.df.apply(query_and_enrich_person, axis=1, result_type="expand")
         self.df = pd.concat([self.df, enrichment_df], axis=1)
+
+        total   = len(self.df)
+        matched = self.df["sciper_id"].notna().sum() if "sciper_id" in self.df.columns else 0
+        self.logger.info(
+            "Author reconciliation: %d/%d matched to SCIPER", matched, total
+        )
 
         return self.df if return_df else self
 

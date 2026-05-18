@@ -57,13 +57,9 @@ class Harvester(abc.ABC):
 
         :return: List of publications
         """
-        self.logger.info("Harvesting publications from %s...", self.source_name)
+        self.logger.info("[%s] Starting harvest", self.source_name)
         publications = self.fetch_and_parse_publications()
-        self.logger.info(
-            "Found %d %s's publications to be processed for Infoscience",
-            len(publications),
-            self.source_name,
-        )
+        self.logger.info("[%s] %d publication(s) ready for processing", self.source_name, len(publications))
         return publications
 
 
@@ -92,23 +88,22 @@ class WosHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
-        self.logger.info("Fetching records from WOS with query: %s", self.query)
+        self.logger.debug("[WOS] Query: %s", self.query)
         createdTimeSpan = f"{self.start_date}+{self.end_date}"
         total = WosClient.count_results(
             usrQuery=self.query, createdTimeSpan=createdTimeSpan
         )
-        self.logger.info("Total publications found in WOS: %s", total)
+        self.logger.info("[WOS] %s result(s) found", total)
 
         if total == 0:
-            self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
 
-        total = int(total) 
+        total = int(total)
         count = 20
         recs = []
 
         if total == 1:
-            self.logger.info("Only one publication found. Fetching the single record.")
+            self.logger.debug("[WOS] Single record — fetching directly")
             recs = WosClient.fetch_records(
                 format=self.format,
                 usrQuery=self.query,
@@ -118,8 +113,8 @@ class WosHarvester(Harvester):
             )
         else:
             for i in range(1, total + 1, count):
-                self.logger.info(
-                    "Harvesting publications %d to %d on a total of %d publications",
+                self.logger.debug(
+                    "[WOS] Fetching records %d–%d / %d",
                     i, min(i + count - 1, total), total
                 )
                 h_recs = WosClient.fetch_records(
@@ -174,30 +169,27 @@ class ScopusHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors, each represented as a dictionary containing `author`, `orcid_id`, `internal_author_id`, `organizations`, and `suborganization`.
         """
-        self.logger.info("Fetching records from Scopus with query: %s", self.query)
-        # updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.strftime("%Y-%m-%d").replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.strftime("%Y-%m-%d").replace("-","")})'
         updated_query = f'({self.query}) AND (ORIG-LOAD-DATE AFT {self.start_date.replace("-","")}) AND (ORIG-LOAD-DATE BEF {self.end_date.replace("-","")})'
+        self.logger.debug("[Scopus] Query: %s", updated_query)
         total = ScopusClient.count_results(query=updated_query)
-        self.logger.info("Total publications found in Scopus: %s", total)
+        self.logger.info("[Scopus] %s result(s) found", total)
 
-        if total == "0":  # scopus API returns 0 as string
-            self.logger.debug("No publications found. Returning an empty DataFrame.")
+        if total == "0":
             return pd.DataFrame()
 
-        total = int(total)  # Convert total to integer for calculations
+        total = int(total)
         count = 50
         recs = []
 
-        # Special case: Handle single result
         if total == 1:
-            self.logger.info("Only one publication found. Fetching the single record.")
+            self.logger.debug("[Scopus] Single record — fetching directly")
             recs = ScopusClient.fetch_records(
                 format=self.format, query=updated_query, count=1, start=0
             )
         else:
             for i in range(0, total, count):
-                self.logger.info(
-                    "Harvest publications %d to %d on a total of %d publications",
+                self.logger.debug(
+                    "[Scopus] Fetching records %d–%d / %d",
                     i + 1, min(i + count, total), total
                 )
                 h_recs = ScopusClient.fetch_records(
@@ -248,7 +240,7 @@ class ZenodoHarvester(Harvester):
             - `organizations`
             - `suborganization`
         """
-        self.logger.info("Fetching records from Zenodo with query: %s", self.query)
+        self.logger.debug("[Zenodo] Query: %s", self.query)
         columns = (
             "source",
             "internal_id",
@@ -268,27 +260,20 @@ class ZenodoHarvester(Harvester):
         )
 
         total = int(ZenodoClient.count_results(q=updated_query))
-        self.logger.info("- Number of objects found in Zenodo: %s", total)
+        self.logger.info("[Zenodo] %d result(s) found", total)
 
         if total == 0:
-            self.logger.warning("No object found. Returning an empty DataFrame.")
             return pd.DataFrame(columns=columns)
 
         size = 25
         recs: list[dict] = []
 
-        # nombre de pages = ceil(total / size)
         num_pages = (total + size - 1) // size
 
         for page in range(1, num_pages + 1):
             start_idx = (page - 1) * size + 1
             end_idx = min(page * size, total)
-            self.logger.info(
-                "Harvest objects %d to %d out of %d",
-                start_idx,
-                end_idx,
-                total,
-            )
+            self.logger.debug("[Zenodo] Fetching records %d–%d / %d", start_idx, end_idx, total)
 
             h_recs = ZenodoClient.fetch_records(
                 format=self.format,
@@ -346,23 +331,19 @@ class OpenAlexHarvester(Harvester):
 
         # Count total publications to manage progress logging
         total = OpenAlexClient.count_results(filter=filters)
-        self.logger.info("Total publications found in OpenAlex: %s", total)
+        self.logger.info("[OpenAlex] %s result(s) found", total)
 
         try:
             openalex_records = OpenAlexClient.fetch_records(
                 format=self.format, filter=filters
             )
         except Exception as e:
-            self.logger.error("Failed to fetch records from OpenAlex: %s", e)
+            self.logger.error("[OpenAlex] Failed to fetch records: %s", e)
             return pd.DataFrame()
 
         if not openalex_records:
-            self.logger.warning(
-                "No records found in OpenAlex. Returning empty DataFrame."
-            )
+            self.logger.info("[OpenAlex] No records returned")
             return pd.DataFrame()
-
-        self.logger.info("- %d records retrieved from OpenAlex.", len(openalex_records))
 
         df = pd.DataFrame(openalex_records)
 
@@ -444,10 +425,9 @@ class CrossrefHarvester(Harvester):
             f"from-created-date:{self.start_date},until-created-date:{self.end_date}"
         )
         total = CrossrefClient.count_results(**params)
-        self.logger.info("Total publications found in Crossref: %s", total)
+        self.logger.info("[Crossref] %s result(s) found", total)
 
         if total == 0:
-            self.logger.debug("No publications found. Returning an empty DataFrame.")
             return pd.DataFrame()
 
         total = int(total)
@@ -455,8 +435,8 @@ class CrossrefHarvester(Harvester):
         recs = []
 
         for offset in range(0, total, count):
-            self.logger.info(
-                "Harvesting records %d to %d of %d",
+            self.logger.debug(
+                "[Crossref] Fetching records %d–%d / %d",
                 offset + 1, min(offset + count, total), total
             )
             try:
@@ -469,9 +449,9 @@ class CrossrefHarvester(Harvester):
                 if h_recs:
                     recs.extend(h_recs)
                 else:
-                    self.logger.warning("No records found at offset %d.", offset)
+                    self.logger.warning("[Crossref] No records at offset %d", offset)
             except Exception as e:
-                self.logger.error("Error fetching records at offset %d: %s", offset, e)
+                self.logger.error("[Crossref] Error at offset %d: %s", offset, e)
 
         if recs:
             df = (
@@ -525,7 +505,7 @@ class OpenAlexCrossrefHarvester(Harvester):
         2. Enrich each DOI with Crossref metadata (title, type, etc.).
         3. Merge and return a normalized DataFrame.
         """
-        self.logger.info("Fetching records from OpenAlex with query: %s", self.query)
+        self.logger.debug("[OpenAlex+Crossref] Query: %s", self.query)
 
         filters = (
             f"from_publication_date:{self.start_date},"
@@ -538,14 +518,14 @@ class OpenAlexCrossrefHarvester(Harvester):
                 format="openalex", filter=filters
             )
         except Exception as e:
-            self.logger.error("Failed to fetch records from OpenAlex: %s", e)
+            self.logger.error("[OpenAlex+Crossref] Failed to fetch OpenAlex records: %s", e)
             return pd.DataFrame()
 
         if not openalex_records:
-            self.logger.warning("No records found in OpenAlex. Returning empty DataFrame.")
+            self.logger.info("[OpenAlex+Crossref] No records returned")
             return pd.DataFrame()
 
-        self.logger.info("- %d records retrieved from OpenAlex.", len(openalex_records))
+        self.logger.info("[OpenAlex+Crossref] %d OpenAlex record(s) — enriching with Crossref", len(openalex_records))
 
         results = []
 
@@ -554,9 +534,7 @@ class OpenAlexCrossrefHarvester(Harvester):
             if not doi:
                 continue
 
-            self.logger.info(
-                "[%d/%d] Fetching Crossref metadata for DOI: %s", idx, len(openalex_records), doi
-            )
+            self.logger.debug("[OpenAlex+Crossref] [%d/%d] Enriching DOI: %s", idx, len(openalex_records), doi)
             try:
                 record = CrossrefClient.fetch_record_by_unique_id(
                     doi=doi, format=self.format
@@ -566,13 +544,11 @@ class OpenAlexCrossrefHarvester(Harvester):
                     record["authors"] = OpenAlexClient.extract_ifs3_authors(oa_rec)
                     results.append(record)
             except Exception as e:
-                self.logger.warning("Failed to enrich DOI %s: %s", doi, e)
+                self.logger.warning("[OpenAlex+Crossref] Failed to enrich DOI %s: %s", doi, e)
                 continue
 
         if not results:
-            self.logger.warning(
-                "No valid enriched records returned. Returning empty DataFrame."
-            )
+            self.logger.warning("[OpenAlex+Crossref] No enriched records after Crossref lookup")
             return pd.DataFrame()
 
         return (
@@ -605,13 +581,13 @@ class DataCiteHarvester(Harvester):
         }
         api_filters.update(self.filters)
 
-        self.logger.info("Querying DataCite with filters: %s", api_filters)
+        self.logger.debug("[DataCite] Filters: %s", api_filters)
 
         total = DataCiteClient.count_results(
             query=self.query,
             filters=api_filters,
         )
-        self.logger.info("Total publications found in DataCite : %s", total)
+        self.logger.info("[DataCite] %s result(s) found", total)
 
         if not total:
             return pd.DataFrame()
@@ -817,14 +793,13 @@ class EPOHarvester(Harvester):
         and any extra patent-specific fields (family_id, applicants, inventors, issueDate, etc.).
         """
         cql = self._build_cql()
-        self.logger.info("Fetching records from EPO OPS with CQL: %s", cql)
+        self.logger.debug("[EPO] CQL: %s", cql)
 
         try:
-            # Optional: quick count for logging (can be slow on OPS; keep if useful)
             total = self.client.count_results(cql=cql)
-            self.logger.info("Total publications found in EPO OPS: %s", total)
+            self.logger.info("[EPO] %s result(s) found", total)
         except Exception as e:
-            self.logger.warning("Could not count EPO OPS results (continuing): %s", e)
+            self.logger.warning("[EPO] Could not count results (continuing): %s", e)
             total = None
 
         try:

@@ -323,9 +323,14 @@ def run_pipeline(
             "report_path": None,
         }
 
+    total_harvested = sum(len(d) for d in non_empty)
     deduplicator = DataFrameProcessor(*non_empty)
     df_deduplicated = deduplicator.deduplicate_dataframes()
     save_csv(df_deduplicated, "DeduplicatedItems.csv", export_dir, logger)
+    logger.info(
+        "Cross-source dedup: %d harvested → %d unique",
+        total_harvested, len(df_deduplicated),
+    )
 
     # DSpace-aware dedup (what to import vs duplicates)
     if df_deduplicated.empty:
@@ -334,6 +339,10 @@ def run_pipeline(
     else:
         df_final, df_unloaded = deduplicator.deduplicate_infoscience(df_deduplicated)
     save_csv(df_unloaded, "UnloadedItems.csv", export_dir, logger)
+    logger.info(
+        "Infoscience dedup: %d to load, %d already in Infoscience",
+        len(df_final), len(df_unloaded),
+    )
 
     # -------------------- Build main dataframes
     if df_final.empty:
@@ -358,6 +367,12 @@ def run_pipeline(
         )
 
     save_csv(df_epfl_authors, "EpflAuthors.csv", export_dir, logger)
+    if not df_epfl_authors.empty:
+        matched = df_epfl_authors["sciper_id"].notna().sum() if "sciper_id" in df_epfl_authors.columns else 0
+        logger.info(
+            "Author reconciliation: %d EPFL author(s) detected, %d matched to SCIPER",
+            len(df_epfl_authors), matched,
+        )
 
     # -------------------- Publication enrichment (OA, fulltexts, etc.)
     if df_metadata.empty:
@@ -366,6 +381,13 @@ def run_pipeline(
         df_oa_metadata = PublicationProcessor(df_metadata).process(return_df=True)
 
     save_csv(df_oa_metadata, "ItemsWithOAMetadata.csv", export_dir, logger)
+    if not df_oa_metadata.empty:
+        oa_count  = df_oa_metadata["upw_is_oa"].notna().sum() if "upw_is_oa" in df_oa_metadata.columns else 0
+        pdf_count = df_oa_metadata["upw_valid_pdf"].eq(True).sum() if "upw_valid_pdf" in df_oa_metadata.columns else 0
+        logger.info(
+            "OA enrichment: %d/%d with OA metadata, %d with PDF",
+            oa_count, len(df_oa_metadata), pdf_count,
+        )
 
     # -------------------- Load into DSpace (unless dry-run)
     if dry_run or df_oa_metadata.empty:

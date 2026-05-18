@@ -528,7 +528,7 @@ class Loader:
                 logger.error(f"Error message: {error_message}")
                 logger.error(f"Paths concerned: {error_paths}")
 
-            logger.info(f"Metadata patched successfully for workspace {workspace_id}.")
+            logger.debug("Metadata patched for workspace %s", workspace_id)
 
         except Exception as e:
             logger.error(f"An error occurred while patching additional metadata: {e}")
@@ -1561,7 +1561,7 @@ class Loader:
             filtered_publications = self.df_metadata[
                 self.df_metadata["row_id"].isin(valid_author_ids)
             ]
-            logger.info(f"Filtered publications count: {len(filtered_publications)}")
+            logger.info("%d publication(s) ready to load into DSpace", len(filtered_publications))
             return filtered_publications
         else:
             logger.warning("No valid authors found with 'final_mainunit'.")
@@ -1576,6 +1576,7 @@ class Loader:
             logger.error("No valid publications to process.")
             return df_items_imported
 
+        logger.info("Loading %d publication(s) into DSpace", len(df_items_to_import))
         for index, row in df_items_to_import.iterrows():
             source = row.get("source", "")
             source_id = row.get("internal_id", "")
@@ -1611,7 +1612,7 @@ class Loader:
 
             if workspace_response and isinstance(workspace_response, dict) and "id" in workspace_response:
                 workspace_id = workspace_response["id"]
-                logger.info(f"Successfully pushed publication with ID: {workspace_id}")
+                logger.debug("Workspace item created: %s", workspace_id)
                 df_items_imported.at[index, "workspace_id"] = workspace_id
 
                 matching_authors = self.df_epfl_authors[
@@ -1630,9 +1631,7 @@ class Loader:
                     if file_path and os.path.exists(file_path):
                         file_response = self._add_file(workspace_id, file_path)
                         if hasattr(file_response, "status_code") and file_response.status_code in [200, 201]:
-                            logger.info(
-                                f"File added successfully to workspace item {workspace_id}"
-                            )
+                            logger.debug("PDF attached to workspace %s", workspace_id)
                             self._patch_file_metadata(
                                 workspace_id,
                                 row.get("upw_license"),
@@ -1660,9 +1659,7 @@ class Loader:
                     )
                     if workflow_response and isinstance(workflow_response, dict) and "id" in workflow_response:
                         workflow_id = workflow_response["id"]
-                        logger.info(
-                            f"Successfully created workflow item with ID: {workflow_id}"
-                        )
+                        logger.info("Loaded: workspace=%s → workflow=%s", workspace_id, workflow_id)
                         df_items_imported.at[index, "workflow_id"] = workflow_id
                     else:
                         logger.error(f"Unable to create workflow item for workspace item {workspace_id}")
@@ -1677,4 +1674,11 @@ class Loader:
                     f"internal_id: {row.get('internal_id')}, and collection_id: {row.get('ifs3_collection_id')}"
                 )
 
+        ws_count = df_items_imported["workspace_id"].notna().sum()
+        wf_count = df_items_imported["workflow_id"].notna().sum()
+        errors   = len(df_items_imported) - ws_count
+        logger.info(
+            "Load complete: %d workspace item(s), %d submitted to workflow, %d error(s)",
+            ws_count, wf_count, errors,
+        )
         return df_items_imported

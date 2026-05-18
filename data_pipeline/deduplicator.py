@@ -147,7 +147,7 @@ class DataFrameProcessor:
         """
         Deduplicate on existing Infoscience publications.
         """
-        self.logger.info(f"- Processus de dédoublonnage avec Infoscience")
+        self.logger.info("Running Infoscience deduplication")
         wrapper = DSpaceClientWrapper()
 
         # Apply the DSpaceClientWrapper.find_publication_duplicate function to each row
@@ -162,7 +162,7 @@ class DataFrameProcessor:
         return filtered_df, duplicates_df
 
     def deduplicate_infoscience_enhanced(self, df):
-        self.logger.info("Recherche avancée de doublons avec métadonnées...")
+        self.logger.debug("Falling back to metadata-based duplicate detection")
         wrapper = DSpaceClientWrapper()
 
         results = df.apply(
