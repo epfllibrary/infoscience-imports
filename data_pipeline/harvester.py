@@ -401,7 +401,10 @@ class CrossrefHarvester(Harvester):
         - `ifs3_collection_id`: The IFS3 collection ID of the publication.
         - `authors`: A list of authors as dictionaries.
         """
-        self.logger.info("Fetching records from Crossref with query: %s", self.query)
+        self.logger.info(
+            "Fetching records from Crossref with query: %s | field_queries: %s",
+            self.query, self.field_queries or "(none)",
+        )
         # Build the parameter dictionary for targeted queries.
         params = {}
         if isinstance(self.query, dict):
@@ -421,9 +424,12 @@ class CrossrefHarvester(Harvester):
             params["query"] = self.query
 
         params.update(self.field_queries)
-        params["filter"] = (
-            f"from-created-date:{self.start_date},until-created-date:{self.end_date}"
-        )
+        # Date filters are always enforced; any user-supplied filter entries are kept.
+        date_filter = f"from-created-date:{self.start_date},until-created-date:{self.end_date}"
+        if "filter" in params:
+            params["filter"] = f"{params['filter']},{date_filter}"
+        else:
+            params["filter"] = date_filter
         total = CrossrefClient.count_results(**params)
         self.logger.info("[Crossref] %s result(s) found", total)
 

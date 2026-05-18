@@ -288,8 +288,7 @@ def run_pipeline(
         "crossref": lambda: CrossrefHarvester(
             start_date,
             end_date,
-            query=None,
-            field_queries={"query.affiliation": queries["crossref"]},
+            query=queries["crossref"],
         ).harvest(),
         "openalex": lambda: OpenAlexCrossrefHarvester(
             start_date, end_date, queries["openalex"]
@@ -748,15 +747,23 @@ def main():
         if v is not None
     }
 
-    # Si des IDs sont fournis, on fabrique des queries par identifiant
+    # Si des IDs sont fournis, on fabrique des queries par identifiant.
+    # Priority: explicit --query-{src} > ID-based query > default from config.py.
     if scopus_ids or wos_ids or orcid_ids or openalex_ids:
         id_q = build_id_queries(scopus_ids, wos_ids, orcid_ids, openalex_ids)
-        # Remplace uniquement les sources concernées
-        override.update(id_q)
-        logger.info(
-            "ID-based harvesting active for: "
-            + ", ".join(sorted(id_q.keys()))  # ex: scopus,wos,crossref,openalex
-        )
+        id_q_applied = {src: q for src, q in id_q.items() if src not in override}
+        override.update(id_q_applied)
+        if id_q_applied:
+            logger.info(
+                "ID-based harvesting active for: %s",
+                ", ".join(sorted(id_q_applied.keys())),
+            )
+        skipped = set(id_q) - set(id_q_applied)
+        if skipped:
+            logger.info(
+                "ID-based query overridden by custom --query-{src} for: %s",
+                ", ".join(sorted(skipped)),
+            )
 
     queries = ensure_queries(override)
 

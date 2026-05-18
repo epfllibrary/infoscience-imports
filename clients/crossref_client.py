@@ -470,7 +470,7 @@ class Client(APIClient):
         try:
             openalex_id = f"https://doi.org/{doi}"
             openalex_record = OpenAlexClient.fetch_record_by_unique_id(openalex_id, format="openalex")
-            self.logger.debug(f"Get OpenAlex Record by DOI {openalex_record}")
+            # self.logger.debug(f"Get OpenAlex Record by DOI {openalex_record}")
             if openalex_record:
                 return OpenAlexClient.extract_abstract(openalex_record)
         except Exception as e:
