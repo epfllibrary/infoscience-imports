@@ -863,7 +863,7 @@ class Client(APIClient):
             family = author.get("family", "")
             full_name = f"{family}, {given}".strip()
             affiliations = author.get("affiliation", [])
-            orgs = "|".join([aff.get("name", "") for aff in affiliations])
+            orgs = "|".join([self._aff_to_str(aff) for aff in affiliations])
             authors.append(
                 {
                     "author": full_name,
@@ -873,6 +873,20 @@ class Client(APIClient):
                 }
             )
         return authors
+
+    @staticmethod
+    def _aff_to_str(aff: dict) -> str:
+        """Build a searchable string from an affiliation dict.
+
+        Crossref affiliations may carry structured ROR IDs alongside the text name:
+        ``{"name": "EPFL", "id": [{"id": "https://ror.org/02s376052", "id-type": "ROR", ...}]}``.
+        Both the name and any ROR URLs are included so downstream regex/ROR checks work.
+        """
+        parts = [aff.get("name", "")]
+        for id_entry in aff.get("id", []):
+            if id_entry.get("id-type") == "ROR":
+                parts.append(id_entry.get("id", ""))
+        return " ".join(p for p in parts if p)
 
     def _normalize_issn(self, issn_field):
         """
