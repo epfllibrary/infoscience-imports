@@ -58,7 +58,7 @@ def setup_logger(verbosity: int = 0) -> logging.Logger:
 
     # Console handler (cron sees stdout/stderr)
     ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.DEBUG if verbosity > 0 else logging.INFO)
+    ch.setLevel(logging.DEBUG if verbosity >= 2 else logging.INFO)
     ch_formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
     ch.setFormatter(ch_formatter)
 
