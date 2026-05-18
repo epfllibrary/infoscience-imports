@@ -609,7 +609,7 @@ elif page == "Lancer un run":
                 sh("person_search", "Identifiants auteurs (optionnel)"),
                 unsafe_allow_html=True,
             )
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b = st.columns(2)
             with col_a:
                 scopus_ids = st.text_area(
                     "Scopus Author IDs",
@@ -620,9 +620,14 @@ elif page == "Lancer un run":
                 wos_ids = st.text_area(
                     "WoS ResearcherIDs", placeholder="A-1234-2010", height=80
                 )
+            col_c, col_d = st.columns(2)
             with col_c:
                 orcid_ids = st.text_area(
                     "ORCID iDs", placeholder="0000-0002-1825-0097", height=80
+                )
+            with col_d:
+                openalex_ids = st.text_area(
+                    "OpenAlex Author IDs", placeholder="A5023888391", height=80
                 )
 
             st.markdown(
@@ -666,6 +671,8 @@ elif page == "Lancer un run":
                 cmd += ["--wos-ids", wos_ids.strip().replace("\n", ",")]
             if orcid_ids.strip():
                 cmd += ["--orcid-ids", orcid_ids.strip().replace("\n", ",")]
+            if openalex_ids.strip():
+                cmd += ["--openalex-ids", openalex_ids.strip().replace("\n", ",")]
             if dry_run:
                 cmd.append("--dry-run")
             if no_email:
