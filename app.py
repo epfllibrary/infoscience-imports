@@ -1381,6 +1381,7 @@ elif page == "Publications":
             + ["pub_year", "title", "source", "dc_type", "status",
                "OA", "Licence", "PDF", "⚠️",
                "Auteurs EPFL", "Unités",
+               "seen_count", "infoscience_dedup_count",
                "src_url", "doi_url", "ws_url", "wf_url", "error_msg"]
         )
         _cols = [c for c in _cols if c in d.columns]
@@ -1402,6 +1403,11 @@ elif page == "Publications":
                 "⚠️":          st.column_config.CheckboxColumn("⚠️ Statut faible", width="small"),
                 "Auteurs EPFL": st.column_config.TextColumn("Auteurs EPFL", width="large"),
                 "Unités":      st.column_config.TextColumn("Unités",  width="medium"),
+                "seen_count":  st.column_config.NumberColumn("Vu", width="small",
+                                   help="Nombre de fois collectée tous runs confondus"),
+                "infoscience_dedup_count": st.column_config.NumberColumn(
+                                   "Déjà dans IS", width="small",
+                                   help="Nombre de fois déjà présente dans Infoscience lors de la collecte"),
                 "src_url":     st.column_config.LinkColumn("Voir source", width="small",
                                    display_text="raw_data"),
                 "doi_url":     st.column_config.LinkColumn("DOI",       width="medium",

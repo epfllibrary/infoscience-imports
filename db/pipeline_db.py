@@ -1,12 +1,12 @@
 """DuckDB persistence layer — Infoscience import pipeline v2.
 
-Stratégie de connexion :
-  Toutes les connexions sont courtes (open → execute → close).
-  Aucune connexion n'est jamais maintenue ouverte entre deux opérations.
-  Cela évite le conflit de verrou DuckDB (une seule connexion write à la fois
-  sur macOS / DuckDB ≥ 0.9), que la connexion soit read-only ou write.
-  Un retry avec backoff absorbe les collisions dans la fenêtre de quelques ms
-  où deux opérations s'exécuteraient simultanément.
+Connection strategy:
+  All connections are short-lived (open → execute → close).
+  No connection is ever kept open between two operations.
+  This avoids the DuckDB write-lock conflict (one write connection at a time
+  on macOS / DuckDB >= 0.9), whether the connection is read-only or write.
+  A retry with backoff absorbs collisions within the few-millisecond window
+  where two operations might execute simultaneously.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import pandas as pd
 
 logger = logging.getLogger("pipeline.db")
 
-_SCHEMA_VERSION = 2   # bump when schema changes
+_SCHEMA_VERSION = 3   # bump when schema changes
 
 
 def _default_db_path() -> Path:
@@ -147,12 +147,37 @@ class PipelineDB:
                     harvested INTEGER DEFAULT 0, deduplicated INTEGER DEFAULT 0,
                     loaded INTEGER DEFAULT 0, rejected INTEGER DEFAULT 0,
                     PRIMARY KEY (run_id, source))""",
+                # Canonical publications table — one row per unique article.
+                # pub_id = normalised DOI, or {source}:{internal_id} fallback.
                 """CREATE TABLE IF NOT EXISTS publications (
-                    run_id VARCHAR NOT NULL, row_id VARCHAR, doi VARCHAR,
-                    title VARCHAR, source VARCHAR, dc_type VARCHAR,
-                    collection VARCHAR, status VARCHAR,
-                    workspace_id VARCHAR, workflow_id VARCHAR,
-                    error_msg VARCHAR, loaded_at TIMESTAMP DEFAULT NOW())""",
+                    pub_id VARCHAR PRIMARY KEY,
+                    doi VARCHAR,
+                    title VARCHAR,
+                    source VARCHAR,
+                    dc_type VARCHAR,
+                    collection VARCHAR,
+                    pub_year VARCHAR,
+                    upw_is_oa BOOLEAN,
+                    upw_valid_pdf BOOLEAN,
+                    upw_oa_status VARCHAR,
+                    upw_license VARCHAR,
+                    journal_title VARCHAR,
+                    internal_id VARCHAR,
+                    first_seen_at TIMESTAMP DEFAULT NOW(),
+                    last_seen_at TIMESTAMP DEFAULT NOW(),
+                    seen_count INTEGER DEFAULT 1,
+                    infoscience_dedup_count INTEGER DEFAULT 0)""",
+                # Per-run publication records — one row per (run_id, pub_id).
+                """CREATE TABLE IF NOT EXISTS run_publications (
+                    run_id VARCHAR NOT NULL,
+                    pub_id VARCHAR NOT NULL,
+                    row_id VARCHAR,
+                    status VARCHAR,
+                    workspace_id VARCHAR,
+                    workflow_id VARCHAR,
+                    error_msg VARCHAR,
+                    loaded_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (run_id, pub_id))""",
                 """CREATE TABLE IF NOT EXISTS epfl_authors (
                     sciper VARCHAR PRIMARY KEY, full_name VARCHAR,
                     first_name VARCHAR, last_name VARCHAR,
@@ -176,37 +201,202 @@ class PipelineDB:
                 """CREATE TABLE IF NOT EXISTS run_logs (
                     log_id INTEGER PRIMARY KEY, run_id VARCHAR NOT NULL,
                     ts TIMESTAMP DEFAULT NOW(), level VARCHAR, message VARCHAR)""",
+                """CREATE TABLE IF NOT EXISTS pub_detected_authors (
+                    run_id VARCHAR NOT NULL, row_id VARCHAR NOT NULL,
+                    author_name VARCHAR NOT NULL,
+                    PRIMARY KEY (run_id, row_id, author_name))""",
             ]:
                 con.execute(stmt)
 
             for idx in [
-                "CREATE INDEX IF NOT EXISTS idx_pubs_run    ON publications(run_id)",
-                "CREATE INDEX IF NOT EXISTS idx_pubs_status ON publications(status)",
+                "CREATE INDEX IF NOT EXISTS idx_pubs_run    ON run_publications(run_id)",
+                "CREATE INDEX IF NOT EXISTS idx_pubs_status ON run_publications(status)",
                 "CREATE INDEX IF NOT EXISTS idx_pubs_source ON publications(source)",
                 "CREATE INDEX IF NOT EXISTS idx_pubs_type   ON publications(dc_type)",
+                "CREATE INDEX IF NOT EXISTS idx_rp_pubid    ON run_publications(pub_id)",
                 "CREATE INDEX IF NOT EXISTS idx_pa_sciper   ON pub_authors(sciper)",
                 "CREATE INDEX IF NOT EXISTS idx_pa_run      ON pub_authors(run_id)",
                 "CREATE INDEX IF NOT EXISTS idx_pu_acronym  ON pub_units(acronym)",
             ]:
                 con.execute(idx)
 
-            # Schema migrations — additive only, safe on existing DBs
-            for migration in [
-                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS pub_year VARCHAR",
-                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_is_oa BOOLEAN",
-                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_valid_pdf BOOLEAN",
-                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_oa_status VARCHAR",
-                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_license VARCHAR",
-                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS journal_title VARCHAR",
-                "ALTER TABLE publications ADD COLUMN IF NOT EXISTS internal_id VARCHAR",
-                """CREATE TABLE IF NOT EXISTS pub_detected_authors (
-                    run_id VARCHAR NOT NULL, row_id VARCHAR NOT NULL,
-                    author_name VARCHAR NOT NULL,
-                    PRIMARY KEY (run_id, row_id, author_name))""",
-            ]:
-                con.execute(migration)
+            # Run idempotent migration from v1 (per-run publications) to v2
+            # (canonical publications + run_publications).
+            self._migrate_publications_v2(con)
         finally:
             con.close()
+
+    @staticmethod
+    def _compute_pub_id(doi, source, internal_id) -> str | None:
+        """Compute a stable publication identifier.
+
+        Prefers normalised DOI; falls back to {source}:{internal_id}.
+        Returns None if neither is available.
+        """
+        if doi:
+            return doi.lower().strip()
+        if internal_id and source:
+            return f"{source}:{internal_id}"
+        return None
+
+    def _migrate_publications_v2(self, con) -> None:
+        """Migrate from per-run publications (v1) to normalised schema (v2).
+
+        Migration is triggered when the publications table has a run_id column
+        but no pub_id column — the definitive v1 indicator.
+
+        Safe to call multiple times — it is a no-op if already migrated.
+        """
+        pub_has_run_id = con.execute(
+            "SELECT COUNT(*) FROM information_schema.columns"
+            " WHERE table_name = 'publications' AND column_name = 'run_id'"
+        ).fetchone()[0]
+        pub_has_pub_id = con.execute(
+            "SELECT COUNT(*) FROM information_schema.columns"
+            " WHERE table_name = 'publications' AND column_name = 'pub_id'"
+        ).fetchone()[0]
+
+        if not pub_has_run_id or pub_has_pub_id:
+            # Either no v1 schema, or already migrated to v2
+            return
+
+        logger.info("DB: migrating publications schema from v1 to v2 …")
+
+        # Step 1 — drop old indexes so the rename can proceed, then rename
+        for old_idx in [
+            "idx_pubs_run", "idx_pubs_status", "idx_pubs_source", "idx_pubs_type",
+        ]:
+            try:
+                con.execute(f"DROP INDEX IF EXISTS {old_idx}")
+            except Exception:
+                pass
+        con.execute("ALTER TABLE publications RENAME TO _pub_v1_legacy")
+
+        # Step 2 — create run_publications (new schema)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS run_publications (
+                run_id VARCHAR NOT NULL,
+                pub_id VARCHAR NOT NULL,
+                row_id VARCHAR,
+                status VARCHAR,
+                workspace_id VARCHAR,
+                workflow_id VARCHAR,
+                error_msg VARCHAR,
+                loaded_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (run_id, pub_id))
+        """)
+
+        # Step 3 — populate run_publications from legacy data
+        con.execute("""
+            INSERT INTO run_publications
+                (run_id, pub_id, row_id, status, workspace_id, workflow_id,
+                 error_msg, loaded_at)
+            SELECT run_id,
+                COALESCE(
+                    LOWER(TRIM(doi)),
+                    source || ':' || COALESCE(
+                        TRIM(CAST(internal_id AS VARCHAR)),
+                        CAST(row_id AS VARCHAR)
+                    )
+                ) AS pub_id,
+                CAST(row_id AS VARCHAR),
+                status, workspace_id, workflow_id, error_msg, loaded_at
+            FROM _pub_v1_legacy
+            WHERE COALESCE(
+                LOWER(TRIM(doi)),
+                source || ':' || COALESCE(
+                    TRIM(CAST(internal_id AS VARCHAR)),
+                    CAST(row_id AS VARCHAR)
+                )
+            ) IS NOT NULL
+        """)
+
+        # Step 4 — create canonical publications table (new schema)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS publications (
+                pub_id VARCHAR PRIMARY KEY,
+                doi VARCHAR,
+                title VARCHAR,
+                source VARCHAR,
+                dc_type VARCHAR,
+                collection VARCHAR,
+                pub_year VARCHAR,
+                upw_is_oa BOOLEAN,
+                upw_valid_pdf BOOLEAN,
+                upw_oa_status VARCHAR,
+                upw_license VARCHAR,
+                journal_title VARCHAR,
+                internal_id VARCHAR,
+                first_seen_at TIMESTAMP DEFAULT NOW(),
+                last_seen_at TIMESTAMP DEFAULT NOW(),
+                seen_count INTEGER DEFAULT 1,
+                infoscience_dedup_count INTEGER DEFAULT 0)
+        """)
+
+        # Step 5 — populate canonical publications using window functions to
+        # pick the most recent metadata per pub_id and aggregate counts.
+        con.execute("""
+            WITH base AS (
+                SELECT *,
+                    COALESCE(
+                        LOWER(TRIM(doi)),
+                        source || ':' || COALESCE(
+                            TRIM(CAST(internal_id AS VARCHAR)),
+                            CAST(row_id AS VARCHAR)
+                        )
+                    ) AS pub_id
+                FROM _pub_v1_legacy
+            ),
+            ranked AS (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pub_id
+                        ORDER BY COALESCE(loaded_at, '1970-01-01') DESC
+                    ) AS rn,
+                    COUNT(*) OVER (PARTITION BY pub_id) AS seen_count_v,
+                    COUNT(CASE WHEN status = 'deduplicated' THEN 1 END)
+                        OVER (PARTITION BY pub_id) AS dedup_count_v,
+                    MIN(COALESCE(loaded_at, NOW()))
+                        OVER (PARTITION BY pub_id) AS first_seen_v,
+                    MAX(COALESCE(loaded_at, NOW()))
+                        OVER (PARTITION BY pub_id) AS last_seen_v
+                FROM base
+                WHERE pub_id IS NOT NULL
+            )
+            INSERT INTO publications (
+                pub_id, doi, title, source, dc_type, collection, pub_year,
+                upw_is_oa, upw_valid_pdf, upw_oa_status, upw_license,
+                journal_title, internal_id,
+                first_seen_at, last_seen_at, seen_count, infoscience_dedup_count)
+            SELECT pub_id, doi, title, source, dc_type, collection, pub_year,
+                upw_is_oa, upw_valid_pdf, upw_oa_status, upw_license,
+                journal_title, internal_id,
+                first_seen_v, last_seen_v, seen_count_v, dedup_count_v
+            FROM ranked
+            WHERE rn = 1
+        """)
+
+        # Step 6 — recreate indexes on new tables
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pubs_run ON run_publications(run_id)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pubs_status ON run_publications(status)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rp_pubid ON run_publications(pub_id)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pubs_source ON publications(source)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pubs_type ON publications(dc_type)"
+        )
+
+        # Step 7 — drop legacy table
+        con.execute("DROP TABLE _pub_v1_legacy")
+
+        logger.info("DB: publications v2 migration completed")
 
     # ── run lifecycle ────────────────────────────────────────────────────
 
@@ -237,44 +427,78 @@ class PipelineDB:
                             df_deduplicated=None):
         s = self._safe
         sb = self._safe_bool
-        rows = []
-        for _, row in df_imported.iterrows():
-            wf = s(row.get("workflow_id"))
-            ws = s(row.get("workspace_id"))
-            rows.append((run_id, s(row.get("row_id")), s(row.get("doi")),
-                         s(row.get("title")), s(row.get("source")),
-                         s(row.get("dc.type")), s(row.get("ifs3_collection_id")),
-                         "workflow" if wf else ("workspace" if ws else "workflow"),
-                         ws, wf, None,
-                         s(row.get("pubyear")), sb(row.get("upw_is_oa")),
-                         sb(row.get("upw_valid_pdf")), s(row.get("upw_oa_status")),
-                         s(row.get("upw_license")), s(row.get("journalTitle")),
-                         s(row.get("internal_id"))))
-        for _, row in df_rejected.iterrows():
-            rows.append((run_id, s(row.get("row_id")), s(row.get("doi")),
-                         s(row.get("title")), s(row.get("source")),
-                         s(row.get("dc.type")), s(row.get("ifs3_collection_id")),
-                         "rejected", None, None,
-                         s(row.get("reject_reason", row.get("is_duplicate"))),
-                         s(row.get("pubyear")), sb(row.get("upw_is_oa")),
-                         sb(row.get("upw_valid_pdf")), s(row.get("upw_oa_status")),
-                         s(row.get("upw_license")), None,
-                         s(row.get("internal_id"))))
+
+        # Build canonical publication rows and run_publication link rows in one pass.
+        pub_rows = []    # for canonical publications upsert
+        rp_rows = []     # for run_publications insert
+
+        def _process(df, status_override, error_override=None):
+            for _, row in df.iterrows():
+                doi = s(row.get("doi"))
+                source = s(row.get("source"))
+                internal_id = s(row.get("internal_id"))
+                pub_id = self._compute_pub_id(doi, source, internal_id)
+                if not pub_id:
+                    continue
+
+                wf = s(row.get("workflow_id"))
+                ws = s(row.get("workspace_id"))
+                if status_override:
+                    status = status_override
+                else:
+                    status = "workflow" if wf else ("workspace" if ws else "workflow")
+
+                is_dedup = 1 if status == "deduplicated" else 0
+                error = error_override or s(row.get("reject_reason", row.get("is_duplicate")))
+
+                pub_rows.append((
+                    pub_id, doi, s(row.get("title")), source,
+                    s(row.get("dc.type")), s(row.get("ifs3_collection_id")),
+                    s(row.get("pubyear")),
+                    sb(row.get("upw_is_oa")), sb(row.get("upw_valid_pdf")),
+                    s(row.get("upw_oa_status")), s(row.get("upw_license")),
+                    s(row.get("journalTitle")), internal_id,
+                    is_dedup,
+                ))
+                rp_rows.append((
+                    run_id, pub_id, s(row.get("row_id")),
+                    status, ws, wf, error,
+                ))
+
+        _process(df_imported, status_override=None)
+        _process(df_rejected, status_override="rejected")
         if df_deduplicated is not None and not df_deduplicated.empty:
-            for _, row in df_deduplicated.iterrows():
-                rows.append((run_id, s(row.get("row_id")), s(row.get("doi")),
-                             s(row.get("title")), s(row.get("source")),
-                             s(row.get("dc.type")), s(row.get("ifs3_collection_id")),
-                             "deduplicated", None, None, "Already exists in Infoscience",
-                             s(row.get("pubyear")), sb(row.get("upw_is_oa")),
-                             sb(row.get("upw_valid_pdf")), s(row.get("upw_oa_status")),
-                             s(row.get("upw_license")), None,
-                             s(row.get("internal_id"))))
+            _process(df_deduplicated, status_override="deduplicated",
+                     error_override="Already exists in Infoscience")
+
+        # Upsert canonical publications — update counters and refresh OA metadata.
         self._executemany(
-            "INSERT INTO publications (run_id,row_id,doi,title,source,dc_type,collection,"
-            "status,workspace_id,workflow_id,error_msg,"
-            "pub_year,upw_is_oa,upw_valid_pdf,upw_oa_status,upw_license,journal_title,internal_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "INSERT INTO publications"
+            " (pub_id, doi, title, source, dc_type, collection, pub_year,"
+            "  upw_is_oa, upw_valid_pdf, upw_oa_status, upw_license,"
+            "  journal_title, internal_id,"
+            "  first_seen_at, last_seen_at, seen_count, infoscience_dedup_count)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),NOW(),1,?)"
+            " ON CONFLICT (pub_id) DO UPDATE SET"
+            "  seen_count = seen_count + 1,"
+            "  last_seen_at = NOW(),"
+            "  infoscience_dedup_count ="
+            "    infoscience_dedup_count + excluded.infoscience_dedup_count,"
+            "  upw_is_oa     = COALESCE(excluded.upw_is_oa,     upw_is_oa),"
+            "  upw_valid_pdf = COALESCE(excluded.upw_valid_pdf, upw_valid_pdf),"
+            "  upw_oa_status = COALESCE(excluded.upw_oa_status, upw_oa_status),"
+            "  upw_license   = COALESCE(excluded.upw_license,   upw_license)",
+            pub_rows,
+        )
+
+        # Insert per-run records — ignore duplicates (same pub seen twice in one run).
+        self._executemany(
+            "INSERT INTO run_publications"
+            " (run_id, pub_id, row_id, status, workspace_id, workflow_id, error_msg)"
+            " VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT (run_id, pub_id) DO NOTHING",
+            rp_rows,
+        )
 
     # ── epfl authors ─────────────────────────────────────────────────────
 
@@ -412,13 +636,16 @@ class PipelineDB:
 
     def get_summary_stats(self) -> dict:
         r = self._query_one(
-            "SELECT COUNT(DISTINCT run_id),"
-            " SUM(CASE WHEN status IN ('workflow','workspace') THEN 1 ELSE 0 END),"
-            " SUM(CASE WHEN status='deduplicated' THEN 1 ELSE 0 END),"
-            " SUM(CASE WHEN status='rejected'     THEN 1 ELSE 0 END),"
+            "SELECT COUNT(DISTINCT rp.run_id),"
+            " COUNT(DISTINCT CASE WHEN rp.status IN ('workflow','workspace')"
+            "   THEN rp.pub_id END),"
+            " COUNT(DISTINCT CASE WHEN rp.status = 'deduplicated'"
+            "   THEN rp.pub_id END),"
+            " COUNT(DISTINCT CASE WHEN rp.status = 'rejected'"
+            "   THEN rp.pub_id END),"
             " (SELECT COUNT(*) FROM epfl_authors),"
             " (SELECT COUNT(*) FROM units)"
-            " FROM publications")
+            " FROM run_publications rp")
         return {"total_runs": r[0] or 0, "total_imported": r[1] or 0,
                 "total_deduped": r[2] or 0, "total_rejected": r[3] or 0,
                 "total_authors": r[4] or 0, "total_units": r[5] or 0}
@@ -430,22 +657,23 @@ class PipelineDB:
 
     def get_trend(self, days=30) -> pd.DataFrame:
         return self._query(
-            "SELECT CAST(loaded_at AS DATE) AS day, status, COUNT(*) AS count"
-            " FROM publications"
-            " WHERE loaded_at >= NOW() - INTERVAL (?) DAY"
-            " AND status IN ('workflow','workspace','rejected','deduplicated')"
-            " GROUP BY day, status ORDER BY day", [days])
+            "SELECT CAST(rp.loaded_at AS DATE) AS day, rp.status,"
+            " COUNT(DISTINCT rp.pub_id) AS count"
+            " FROM run_publications rp"
+            " WHERE rp.loaded_at >= NOW() - INTERVAL (?) DAY"
+            " AND rp.status IN ('workflow','workspace','rejected','deduplicated')"
+            " GROUP BY day, rp.status ORDER BY day", [days])
 
     def get_sources_breakdown(self, run_id=None) -> pd.DataFrame:
         # source_stats only stores harvested per source; loaded/rejected are derived
-        # from the publications table where status is accurate per source.
+        # from run_publications where status is accurate per source.
         if run_id:
             ss_sub = (
                 "SELECT source, SUM(harvested) AS total_harvested"
                 " FROM source_stats WHERE source != '__total__' AND run_id=?"
                 " GROUP BY source"
             )
-            p_cond = "AND p.run_id = ?"
+            p_cond = "AND rp.run_id = ?"
             params = [run_id, run_id]
         else:
             ss_sub = (
@@ -458,10 +686,14 @@ class PipelineDB:
         return self._query(
             f"SELECT p.source,"
             f" COALESCE(MAX(ss.total_harvested), 0) AS harvested,"
-            f" COUNT(CASE WHEN p.status IN ('workflow','workspace') THEN 1 END) AS loaded,"
-            f" COUNT(CASE WHEN p.status = 'rejected'               THEN 1 END) AS rejected,"
-            f" COUNT(CASE WHEN p.status = 'deduplicated'           THEN 1 END) AS deduplicated"
-            f" FROM publications p"
+            f" COUNT(DISTINCT CASE WHEN rp.status IN ('workflow','workspace')"
+            f"   THEN rp.pub_id END) AS loaded,"
+            f" COUNT(DISTINCT CASE WHEN rp.status = 'rejected'"
+            f"   THEN rp.pub_id END) AS rejected,"
+            f" COUNT(DISTINCT CASE WHEN rp.status = 'deduplicated'"
+            f"   THEN rp.pub_id END) AS deduplicated"
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id"
             f" LEFT JOIN ({ss_sub}) ss ON ss.source = p.source"
             f" WHERE p.source IS NOT NULL {p_cond}"
             f" GROUP BY p.source"
@@ -471,39 +703,42 @@ class PipelineDB:
     def get_imported_by_month(self, months: int = 12) -> pd.DataFrame:
         """Monthly imported publication counts for the last N months."""
         return self._query(
-            "SELECT DATE_TRUNC('month', r.started_at) AS month, COUNT(*) AS count"
-            " FROM publications p"
-            " INNER JOIN runs r ON r.run_id = p.run_id"
-            " WHERE p.status IN ('workflow','workspace')"
+            "SELECT DATE_TRUNC('month', r.started_at) AS month,"
+            " COUNT(DISTINCT rp.pub_id) AS count"
+            " FROM run_publications rp"
+            " INNER JOIN runs r ON r.run_id = rp.run_id"
+            " WHERE rp.status IN ('workflow','workspace')"
             " AND r.started_at >= NOW() - INTERVAL (?) MONTH"
             " GROUP BY month ORDER BY month",
             [months])
 
     def get_pubs_by_source_and_type(self, run_id=None) -> pd.DataFrame:
         """Imported publications grouped by source and document type (for stacked bar)."""
-        w, p = self._dash_where(run_id)   # filters to workflow/workspace
+        w, p = self._dash_where(run_id)
         return self._query(
             f"SELECT p.source, COALESCE(p.dc_type, 'Non défini') AS dc_type,"
             f" COUNT(*) AS count"
-            f" FROM publications p {w}"
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id {w}"
             f" AND p.source IS NOT NULL"
             f" GROUP BY p.source, p.dc_type"
             f" ORDER BY p.source, count DESC", p)
 
     # ── read — dashboard charts ──────────────────────────────────────────
 
-    _IMPORTED = "p.status IN ('workflow','workspace')"
+    _IMPORTED = "rp.status IN ('workflow','workspace')"
 
     def _dash_where(self, run_id):
         if run_id:
-            return f"WHERE {self._IMPORTED} AND p.run_id = ?", [run_id]
+            return f"WHERE {self._IMPORTED} AND rp.run_id = ?", [run_id]
         return f"WHERE {self._IMPORTED}", []
 
     def get_pubs_by_type(self, run_id=None) -> pd.DataFrame:
         w, p = self._dash_where(run_id)
         return self._query(
             f"SELECT p.dc_type AS type, COUNT(*) AS count"
-            f" FROM publications p {w}"
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id {w}"
             f" GROUP BY p.dc_type ORDER BY count DESC", p)
 
     def get_pubs_by_oa_status(self, run_id=None) -> pd.DataFrame:
@@ -517,14 +752,16 @@ class PipelineDB:
             f"  WHEN p.upw_valid_pdf = TRUE                       THEN 'OA + PDF'"
             f"  ELSE 'OA sans PDF'"
             f" END AS oa_category, COUNT(*) AS count"
-            f" FROM publications p {w}"
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id {w}"
             f" GROUP BY oa_category ORDER BY count DESC", p)
 
     def get_pubs_by_year(self, run_id=None) -> pd.DataFrame:
         w, p = self._dash_where(run_id)
         return self._query(
             f"SELECT p.pub_year AS year, COUNT(*) AS count"
-            f" FROM publications p {w}"
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id {w}"
             f" AND p.pub_year IS NOT NULL"
             f" GROUP BY p.pub_year ORDER BY p.pub_year", p)
 
@@ -535,7 +772,8 @@ class PipelineDB:
             f" SUM(CASE WHEN p.upw_valid_pdf = TRUE THEN 1 ELSE 0 END) AS with_pdf,"
             f" SUM(CASE WHEN p.upw_is_oa = TRUE THEN 1 ELSE 0 END) AS oa,"
             f" SUM(CASE WHEN p.upw_is_oa = FALSE THEN 1 ELSE 0 END) AS closed"
-            f" FROM publications p {w}", p or None)
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id {w}", p or None)
         if not r:
             return {"total": 0, "with_pdf": 0, "oa": 0, "closed": 0}
         return {"total": r[0] or 0, "with_pdf": r[1] or 0,
@@ -543,15 +781,15 @@ class PipelineDB:
 
     def get_pubs_by_unit(self, run_id=None, limit=15) -> pd.DataFrame:
         if run_id:
-            w = "WHERE p.status IN ('workflow','workspace') AND p.run_id = ?"
+            w = ("WHERE rp.status IN ('workflow','workspace') AND rp.run_id = ?")
             p = [run_id, limit]
         else:
-            w = "WHERE p.status IN ('workflow','workspace')"
+            w = "WHERE rp.status IN ('workflow','workspace')"
             p = [limit]
         return self._query(
-            f"SELECT pu.acronym, COUNT(DISTINCT p.row_id) AS count"
-            f" FROM publications p"
-            f" INNER JOIN pub_units pu ON pu.run_id=p.run_id AND pu.row_id=p.row_id"
+            f"SELECT pu.acronym, COUNT(DISTINCT rp.pub_id) AS count"
+            f" FROM run_publications rp"
+            f" INNER JOIN pub_units pu ON pu.run_id=rp.run_id AND pu.row_id=rp.row_id"
             f" {w} GROUP BY pu.acronym ORDER BY count DESC LIMIT ?", p)
 
     def get_pubs_by_journal(self, run_id=None, limit=15) -> pd.DataFrame:
@@ -559,7 +797,8 @@ class PipelineDB:
         p = p + [limit]
         return self._query(
             f"SELECT p.journal_title AS journal, COUNT(*) AS count"
-            f" FROM publications p {w}"
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id {w}"
             f" AND p.journal_title IS NOT NULL AND p.journal_title != ''"
             f" GROUP BY p.journal_title ORDER BY count DESC LIMIT ?", p)
 
@@ -617,18 +856,25 @@ class PipelineDB:
         filters, params = [], []
         join_a = join_u = ""
         if sciper:
-            join_a = "INNER JOIN pub_authors pa ON pa.run_id=p.run_id AND pa.row_id=p.row_id"
+            join_a = (
+                "INNER JOIN pub_authors pa"
+                " ON pa.run_id=rp.run_id AND pa.row_id=rp.row_id"
+            )
             filters.append("pa.sciper = ?"); params.append(sciper)
 
         unit_list = self._as_filter_list(unit_acronym)
         if unit_list:
-            join_u = "INNER JOIN pub_units pu ON pu.run_id=p.run_id AND pu.row_id=p.row_id"
+            join_u = (
+                "INNER JOIN pub_units pu"
+                " ON pu.run_id=rp.run_id AND pu.row_id=rp.row_id"
+            )
             cond, vals = self._in_clause("pu.acronym", unit_list)
             filters.append(cond); params.extend(vals)
 
+        # run_id and status live on run_publications; source and dc_type on publications.
         for col, val in [
-            ("p.run_id", run_id), ("p.status", status),
-            ("p.source", source),  ("p.dc_type", dc_type),
+            ("rp.run_id", run_id), ("rp.status", status),
+            ("p.source",  source),  ("p.dc_type", dc_type),
         ]:
             val_list = self._as_filter_list(val)
             if val_list:
@@ -677,12 +923,12 @@ class PipelineDB:
             )
             _has_author = (
                 "EXISTS (SELECT 1 FROM pub_authors pa_w"
-                " WHERE pa_w.run_id=p.run_id AND pa_w.row_id=p.row_id)"
+                " WHERE pa_w.run_id=rp.run_id AND pa_w.row_id=rp.row_id)"
             )
             _has_strong = (
                 "EXISTS (SELECT 1 FROM pub_authors pa_w"
                 " INNER JOIN epfl_authors ea ON ea.sciper=pa_w.sciper"
-                f" WHERE pa_w.run_id=p.run_id AND pa_w.row_id=p.row_id AND {_strong})"
+                f" WHERE pa_w.run_id=rp.run_id AND pa_w.row_id=rp.row_id AND {_strong})"
             )
             if epfl_strength == "weak":
                 filters.append(f"{_has_author} AND NOT {_has_strong}")
@@ -699,17 +945,16 @@ class PipelineDB:
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength)
-        # Use a subquery with the same DISTINCT columns as get_publications so
-        # the count matches the actual number of rows the paginated query returns.
-        # COUNT(DISTINCT row_id) under-counts when the same row_id appears with
-        # different status/field values (e.g. workflow + deduplicated in same run).
         r = self._query_one(
             f"SELECT COUNT(*) FROM ("
-            f"SELECT DISTINCT p.run_id,p.row_id,p.doi,p.title,p.source,p.dc_type,"
-            f"p.status,p.workspace_id,p.workflow_id,p.error_msg,p.loaded_at,"
-            f"p.pub_year,p.upw_is_oa,p.upw_valid_pdf,p.upw_oa_status,p.upw_license,"
-            f"p.internal_id"
-            f" FROM publications p {join_a} {join_u} {where}"
+            f"  SELECT DISTINCT rp.run_id, rp.pub_id, p.doi, p.title,"
+            f"    p.source, p.dc_type, rp.status, rp.workspace_id,"
+            f"    rp.workflow_id, rp.error_msg, rp.loaded_at,"
+            f"    p.pub_year, p.upw_is_oa, p.upw_valid_pdf,"
+            f"    p.upw_oa_status, p.upw_license, p.internal_id"
+            f"  FROM run_publications rp"
+            f"  JOIN publications p ON p.pub_id = rp.pub_id"
+            f"  {join_a} {join_u} {where}"
             f") _c",
             params or None)
         return int(r[0]) if r and r[0] else 0
@@ -725,12 +970,16 @@ class PipelineDB:
             epfl_strength=epfl_strength)
         params += [limit, offset]
         return self._query(
-            f"SELECT DISTINCT p.run_id,p.row_id,p.doi,p.title,p.source,p.dc_type,"
-            f" p.status,p.workspace_id,p.workflow_id,p.error_msg,p.loaded_at,"
-            f" p.pub_year,p.upw_is_oa,p.upw_valid_pdf,p.upw_oa_status,p.upw_license,"
-            f" p.internal_id"
-            f" FROM publications p {join_a} {join_u} {where}"
-            f" ORDER BY p.loaded_at DESC LIMIT ? OFFSET ?", params)
+            f"SELECT DISTINCT rp.run_id, rp.row_id, p.doi, p.title,"
+            f" p.source, p.dc_type, rp.status, rp.workspace_id,"
+            f" rp.workflow_id, rp.error_msg, rp.loaded_at,"
+            f" p.pub_year, p.upw_is_oa, p.upw_valid_pdf,"
+            f" p.upw_oa_status, p.upw_license, p.internal_id,"
+            f" p.seen_count, p.infoscience_dedup_count"
+            f" FROM run_publications rp"
+            f" JOIN publications p ON p.pub_id = rp.pub_id"
+            f" {join_a} {join_u} {where}"
+            f" ORDER BY rp.loaded_at DESC LIMIT ? OFFSET ?", params)
 
     # ── read — authors & units ───────────────────────────────────────────
 
@@ -763,15 +1012,16 @@ class PipelineDB:
 
     def get_pub_authors_for_run(self, run_id) -> pd.DataFrame:
         return self._query(
-            "SELECT p.row_id,p.doi,p.title,p.source,p.dc_type,p.status,"
-            " p.workspace_id,p.workflow_id,"
-            " a.sciper,a.full_name,a.first_name,a.last_name,"
-            " a.orcid,a.epfl_status,a.epfl_position,a.main_unit,"
+            "SELECT rp.row_id, p.doi, p.title, p.source, p.dc_type, rp.status,"
+            " rp.workspace_id, rp.workflow_id,"
+            " a.sciper, a.full_name, a.first_name, a.last_name,"
+            " a.orcid, a.epfl_status, a.epfl_position, a.main_unit,"
             " a.dspace_uuid AS author_dspace_uuid, pa.role"
-            " FROM publications p"
-            " INNER JOIN pub_authors pa ON pa.run_id=p.run_id AND pa.row_id=p.row_id"
+            " FROM run_publications rp"
+            " JOIN publications p ON p.pub_id = rp.pub_id"
+            " INNER JOIN pub_authors pa ON pa.run_id=rp.run_id AND pa.row_id=rp.row_id"
             " INNER JOIN epfl_authors a ON a.sciper=pa.sciper"
-            " WHERE p.run_id=? ORDER BY p.row_id,a.last_name", [run_id])
+            " WHERE rp.run_id=? ORDER BY rp.row_id, a.last_name", [run_id])
 
     def get_detected_authors_for_run(self, run_id: str) -> pd.DataFrame:
         return self._query(
@@ -801,16 +1051,19 @@ class PipelineDB:
         cte, params = self._pairs_cte(run_row_pairs)
         return self._query(
             f"{cte}"
-            " SELECT p.run_id, p.row_id, p.doi, p.title, p.source, p.dc_type, p.status,"
-            " p.workspace_id, p.workflow_id,"
+            " SELECT rp.run_id, rp.row_id, p.doi, p.title, p.source, p.dc_type,"
+            " rp.status, rp.workspace_id, rp.workflow_id,"
             " a.sciper, a.full_name, a.first_name, a.last_name,"
             " a.orcid, a.epfl_status, a.epfl_position, a.main_unit,"
             " a.dspace_uuid AS author_dspace_uuid, pa.role"
-            " FROM publications p"
-            " INNER JOIN _pairs       ON _pairs.run_id = p.run_id AND _pairs.row_id = p.row_id"
-            " INNER JOIN pub_authors pa ON pa.run_id = p.run_id AND pa.row_id = p.row_id"
+            " FROM run_publications rp"
+            " JOIN publications p ON p.pub_id = rp.pub_id"
+            " INNER JOIN _pairs       ON _pairs.run_id = rp.run_id"
+            "                       AND _pairs.row_id  = rp.row_id"
+            " INNER JOIN pub_authors pa ON pa.run_id = rp.run_id"
+            "                          AND pa.row_id = rp.row_id"
             " INNER JOIN epfl_authors a ON a.sciper = pa.sciper"
-            " ORDER BY p.run_id, p.row_id, a.last_name",
+            " ORDER BY rp.run_id, rp.row_id, a.last_name",
             params,
         )
 
@@ -881,15 +1134,15 @@ class PipelineDB:
         completed = int(r[1] or 0)
         avg_s     = float(r[2]) if r[2] is not None else None
         imp = self._query_one(
-            "SELECT COUNT(*) FROM publications p"
-            " INNER JOIN runs r ON r.run_id=p.run_id"
-            " WHERE p.status IN ('workflow','workspace')"
+            "SELECT COUNT(*) FROM run_publications rp"
+            " INNER JOIN runs r ON r.run_id = rp.run_id"
+            " WHERE rp.status IN ('workflow','workspace')"
             " AND r.started_at >= NOW() - INTERVAL (?) MONTH",
             [months])
         rej = self._query_one(
-            "SELECT COUNT(*) FROM publications p"
-            " INNER JOIN runs r ON r.run_id=p.run_id"
-            " WHERE p.status = 'rejected'"
+            "SELECT COUNT(*) FROM run_publications rp"
+            " INNER JOIN runs r ON r.run_id = rp.run_id"
+            " WHERE rp.status = 'rejected'"
             " AND r.started_at >= NOW() - INTERVAL (?) MONTH",
             [months])
         return {
@@ -904,20 +1157,21 @@ class PipelineDB:
     def get_pubs_status_per_run(self, limit: int = 20) -> pd.DataFrame:
         """Per-run publication status counts for the most recent N runs."""
         return self._query(
-            "SELECT p.run_id, p.status, COUNT(*) AS count"
-            " FROM publications p"
-            " WHERE p.run_id IN ("
+            "SELECT rp.run_id, rp.status, COUNT(*) AS count"
+            " FROM run_publications rp"
+            " WHERE rp.run_id IN ("
             "   SELECT run_id FROM runs ORDER BY started_at DESC LIMIT ?"
-            " ) GROUP BY p.run_id, p.status",
+            " ) GROUP BY rp.run_id, rp.status",
             [limit])
 
     def get_pubs_by_status(self, run_id=None) -> pd.DataFrame:
         """Publication counts grouped by status (works for both a specific run and all runs)."""
-        w = "WHERE run_id=?" if run_id else ""
+        w = "WHERE rp.run_id=?" if run_id else ""
         p = [run_id] if run_id else []
         return self._query(
-            f"SELECT status, COUNT(*) AS count FROM publications {w}"
-            f" GROUP BY status ORDER BY count DESC", p)
+            f"SELECT rp.status AS status, COUNT(*) AS count"
+            f" FROM run_publications rp {w}"
+            f" GROUP BY rp.status ORDER BY count DESC", p)
 
     # ── close (no-op: no persistent connection) ──────────────────────────
 
