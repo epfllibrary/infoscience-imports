@@ -2,6 +2,21 @@ import logging
 import re
 import string
 import unicodedata
+from datetime import datetime
+
+
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^\w\s-]", "", name.lower().strip())
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug[:30]
+
+
+def make_run_id(name: str = "") -> str:
+    """Build a run ID: timestamp[_slug] where slug is derived from name."""
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    slug = _slugify(name) if name.strip() else ""
+    return f"{ts}_{slug}" if slug else ts
 
 
 def get_pipeline_logger(module_name: str) -> logging.Logger:

@@ -27,6 +27,7 @@ from dotenv import dotenv_values
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from utils import make_run_id
 
 ROOT            = Path(__file__).resolve().parent
 SCHEDULES_FILE  = ROOT / "data" / "schedules.json"
@@ -116,7 +117,7 @@ def run_job(schedule_id: str) -> None:
         return
 
     env     = schedule.get("env", "dev")
-    run_id  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_id  = make_run_id(schedule.get("name", ""))
     sf      = _state_file(env)
     log_file = ROOT / "logs" / f"run_{run_id}.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)

@@ -36,6 +36,7 @@ ACTIVE_ENV = env_loader.load_env()   # loads .env.{active_env} at startup
 from config import default_queries
 from db.pipeline_db import PipelineDB
 from ui.auth import login_wall, logout, get_allowed_pages, current_user
+from utils import make_run_id
 from ui.run_state import (
     write_active_run,
     try_acquire_run_lock,
@@ -124,19 +125,8 @@ st.markdown(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def _slugify(name: str) -> str:
-    """Convert a run name to a URL-safe slug for inclusion in run IDs."""
-    slug = re.sub(r"[^\w\s-]", "", name.lower().strip())
-    slug = re.sub(r"[\s_]+", "-", slug)
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return slug[:30]
-
-
 def _make_run_id(name: str = "") -> str:
-    """Build a run ID: timestamp[_slug] where slug is derived from name."""
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    slug = _slugify(name) if name.strip() else ""
-    return f"{ts}_{slug}" if slug else ts
+    return make_run_id(name)
 
 
 def mi(name: str, extra_class: str = "") -> str:
