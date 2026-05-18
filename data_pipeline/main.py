@@ -2,6 +2,7 @@
 """Main script to run the data pipeline (cron-friendly)."""
 
 import os
+import signal
 import sys
 import argparse
 import logging
@@ -17,11 +18,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
 # --- Project imports
+import env_loader
 from config import default_queries
 from data_pipeline.deduplicator import DataFrameProcessor
 from data_pipeline.enricher import AuthorProcessor, PublicationProcessor
 from data_pipeline.loader import Loader
 from data_pipeline.reporting import GenerateReports
+from db.pipeline_db import PipelineDB
 from data_pipeline.harvester import (
     WosHarvester,
     ScopusHarvester,
@@ -34,11 +37,9 @@ from data_pipeline.harvester import (
 # -----------------------------------------------------------------------------
 # Environment & constants
 # -----------------------------------------------------------------------------
-load_dotenv()
-
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SMTP_SERVER = os.getenv("SMTP_SERVER")
+# load_dotenv() is intentionally NOT called here at module level.
+# env_loader.load_env() is called inside main() after --env is parsed,
+# so the correct .env.{env} file is loaded before any os.getenv() access.
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -55,10 +56,15 @@ SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex", "zenodo", "epo")
 def setup_logger(verbosity: int = 0) -> logging.Logger:
     logger = logging.getLogger("pipeline")
     logger.setLevel(logging.DEBUG)
+    # Prevent propagation to root logger: third-party libs (e.g. dspace_rest_client)
+    # call logging.basicConfig() at import time, adding a root StreamHandler with
+    # level=NOTSET. Python's propagation bypasses the root logger's own level check,
+    # so without this flag every DEBUG record leaks into the run log via stderr.
+    logger.propagate = False
 
     # Console handler (cron sees stdout/stderr)
     ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.DEBUG if verbosity > 0 else logging.INFO)
+    ch.setLevel(logging.DEBUG if verbosity >= 2 else logging.INFO)
     ch_formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
     ch.setFormatter(ch_formatter)
 
@@ -238,6 +244,8 @@ def run_pipeline(
     dry_run: bool = False,
     no_email: bool = False,
     sources: Optional[List[str]] = None,
+    run_id: Optional[str] = None,
+    env: Optional[str] = None,
 ) -> Dict[str, pd.DataFrame | str | None]:
     """
     Harvest, deduplicate, enrich, and (optionally) load data into DSpace.
@@ -252,10 +260,15 @@ def run_pipeline(
         f"dry_run={dry_run} | sources={','.join(active_sources)} ==="
     )
 
-    # Timestamped export dir
-    execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    # Use caller-supplied run_id (e.g. from UI) so DuckDB and the UI state
+    # file share the same identifier; fall back to a local timestamp.
+    execution_timestamp = run_id or datetime.now().strftime("%Y-%m-%d_%H-%M")
     export_dir = output_dir / execution_timestamp
     export_dir.mkdir(parents=True, exist_ok=True)
+
+    db = PipelineDB()
+    db.start_run(run_id=execution_timestamp, window_start=start_date, window_end=end_date,
+                 sources=active_sources, dry_run=dry_run)
 
     # -------------------- Harvest
     def safe_harvest(name: str, fn) -> pd.DataFrame:
@@ -276,8 +289,7 @@ def run_pipeline(
         "crossref": lambda: CrossrefHarvester(
             start_date,
             end_date,
-            query=None,
-            field_queries={"query.affiliation": queries["crossref"]},
+            query=queries["crossref"],
         ).harvest(),
         "openalex": lambda: OpenAlexCrossrefHarvester(
             start_date, end_date, queries["openalex"]
@@ -304,6 +316,8 @@ def run_pipeline(
     non_empty = [df for df in publications.values() if not df.empty]
     if not non_empty:
         logger.warning("No harvested data from selected sources; nothing to process.")
+        db.finish_run(execution_timestamp, status="completed")
+        db.close()
         return {
             "df_metadata": pd.DataFrame(),
             "df_authors": pd.DataFrame(),
@@ -314,9 +328,14 @@ def run_pipeline(
             "report_path": None,
         }
 
+    total_harvested = sum(len(d) for d in non_empty)
     deduplicator = DataFrameProcessor(*non_empty)
     df_deduplicated = deduplicator.deduplicate_dataframes()
     save_csv(df_deduplicated, "DeduplicatedItems.csv", export_dir, logger)
+    logger.info(
+        "Cross-source dedup: %d harvested → %d unique",
+        total_harvested, len(df_deduplicated),
+    )
 
     # DSpace-aware dedup (what to import vs duplicates)
     if df_deduplicated.empty:
@@ -325,6 +344,10 @@ def run_pipeline(
     else:
         df_final, df_unloaded = deduplicator.deduplicate_infoscience(df_deduplicated)
     save_csv(df_unloaded, "UnloadedItems.csv", export_dir, logger)
+    logger.info(
+        "Infoscience dedup: %d to load, %d already in Infoscience",
+        len(df_final), len(df_unloaded),
+    )
 
     # -------------------- Build main dataframes
     if df_final.empty:
@@ -349,6 +372,12 @@ def run_pipeline(
         )
 
     save_csv(df_epfl_authors, "EpflAuthors.csv", export_dir, logger)
+    if not df_epfl_authors.empty:
+        matched = df_epfl_authors["sciper_id"].notna().sum() if "sciper_id" in df_epfl_authors.columns else 0
+        logger.info(
+            "Author reconciliation: %d EPFL author(s) detected, %d matched to SCIPER",
+            len(df_epfl_authors), matched,
+        )
 
     # -------------------- Publication enrichment (OA, fulltexts, etc.)
     if df_metadata.empty:
@@ -357,6 +386,13 @@ def run_pipeline(
         df_oa_metadata = PublicationProcessor(df_metadata).process(return_df=True)
 
     save_csv(df_oa_metadata, "ItemsWithOAMetadata.csv", export_dir, logger)
+    if not df_oa_metadata.empty:
+        oa_count  = df_oa_metadata["upw_is_oa"].notna().sum() if "upw_is_oa" in df_oa_metadata.columns else 0
+        pdf_count = df_oa_metadata["upw_valid_pdf"].eq(True).sum() if "upw_valid_pdf" in df_oa_metadata.columns else 0
+        logger.info(
+            "OA enrichment: %d/%d with OA metadata, %d with PDF",
+            oa_count, len(df_oa_metadata), pdf_count,
+        )
 
     # -------------------- Load into DSpace (unless dry-run)
     if dry_run or df_oa_metadata.empty:
@@ -384,7 +420,53 @@ def run_pipeline(
 
     save_csv(df_rejected, "RejectedItems.csv", export_dir, logger)
 
+    # -------------------- Persist to DuckDB
+    run_id = execution_timestamp
+    try:
+        # Stats par source
+        for src, df_src in publications.items():
+            db.record_source_stats(run_id=run_id, source=src, harvested=len(df_src))
+        db.record_source_stats(
+            run_id=run_id, source="__total__",
+            harvested=sum(len(d) for d in publications.values()),
+            deduplicated=len(df_unloaded),
+            loaded=len(df_loaded) if not df_loaded.empty else 0,
+            rejected=len(df_rejected) if not df_rejected.empty else 0,
+        )
+
+        # Publications (importées + rejetées + dédoublonnées)
+        db.record_publications(run_id, df_loaded, df_rejected,
+                               df_deduplicated=df_unloaded if not df_unloaded.empty else None)
+
+        # Auteurs EPFL et unités (upsert)
+        if df_epfl_authors is not None and not df_epfl_authors.empty:
+            db.record_epfl_authors(df_epfl_authors)
+            db.record_units(df_epfl_authors)
+            db.record_pub_author_links(run_id, df_epfl_authors)
+            db.record_pub_unit_links(run_id, df_epfl_authors)
+            db.record_detected_authors(run_id, df_epfl_authors)
+
+        db.finish_run(run_id, status="completed")
+        db.close()
+        logger.info("DuckDB: run %s enregistré (%d importés, %d rejetés, %d dédoublonnés)",
+                    run_id,
+                    len(df_loaded) if not df_loaded.empty else 0,
+                    len(df_rejected) if not df_rejected.empty else 0,
+                    len(df_unloaded))
+    except Exception as e:
+        logger.warning("DuckDB: échec de l'enregistrement (non bloquant) — %s: %s",
+                       type(e).__name__, e, exc_info=True)
+        try:
+            db.finish_run(run_id, status="failed")
+            db.close()
+        except Exception:
+            pass
+
     # -------------------- Report & email
+    recipient_email = os.getenv("RECIPIENT_EMAIL")
+    sender_email    = os.getenv("SENDER_EMAIL")
+    smtp_server     = os.getenv("SMTP_SERVER")
+
     report_path = None
     can_report = any(
         not df.empty for df in [df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded]
@@ -394,25 +476,27 @@ def run_pipeline(
             generator = GenerateReports(
                 df_oa_metadata, df_unloaded, df_epfl_authors, df_loaded
             )
-            report_path = generator.generate_excel_report(output_dir=export_dir)
+            report_path = generator.generate_excel_report(output_dir=export_dir, run_id=execution_timestamp)
             logger.info(f"Report generated: {report_path}")
 
             if (
                 not no_email
                 and not dry_run
-                and RECIPIENT_EMAIL
-                and SENDER_EMAIL
-                and SMTP_SERVER
+                and recipient_email
+                and sender_email
+                and smtp_server
             ):
                 generator.send_report_by_email(
-                    recipient_email=RECIPIENT_EMAIL,
-                    sender_email=SENDER_EMAIL,
-                    smtp_server=SMTP_SERVER,
+                    recipient_email=recipient_email,
+                    sender_email=sender_email,
+                    smtp_server=smtp_server,
                     import_start_date=start_date,
                     import_end_date=end_date,
                     file_path=report_path,
+                    run_id=execution_timestamp,
+                    env=env,
                 )
-                logger.info(f"Report emailed to {RECIPIENT_EMAIL}")
+                logger.info(f"Report emailed to {recipient_email}")
             else:
                 logger.info("Email sending skipped (no_email/dry_run or env not set).")
         except Exception as e:
@@ -529,6 +613,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Do not send the report email (even if env is set).",
     )
 
+    # Environment
+    p.add_argument(
+        "--env",
+        choices=env_loader.ENVIRONMENTS,
+        default=None,
+        help=(
+            "Target environment — loads the corresponding .env.{env} file. "
+            f"Choices: {', '.join(env_loader.ENVIRONMENTS)}. "
+            "Defaults to the persisted selection (or 'dev' if none)."
+        ),
+    )
+
+    # Internal — set by the UI to keep run_id consistent between the state
+    # file and DuckDB; not intended for manual use.
+    p.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+
     # Misc
     p.add_argument(
         "-v",
@@ -541,11 +646,76 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _validate_env(logger: logging.Logger) -> None:
+    """Warn early if key environment variables are missing.
+
+    Nothing here is hard-blocking, but surfacing missing vars at startup
+    avoids cryptic failures deep inside a harvesting or loading step.
+
+    Variable names are taken directly from the client source files:
+      - dspace_rest_client/client.py → DS_API_ENDPOINT, DS_API_TOKEN
+      - dspace_client_wrapper.py     → DS_API_ENDPOINT
+      - api_epfl_client.py           → API_EPFL_USER, API_EPFL_PWD
+      - unpaywall_client.py          → ELS_API_KEY
+      - scopus_client.py             → SCOPUS_API_KEY, SCOPUS_INST_TOKEN
+      - wos_client_v2.py             → WOS_TOKEN
+      - epo_ops_client.py            → EPO_OPS_KEY, EPO_OPS_SECRET
+      - crossref/unpaywall/openalex  → CONTACT_API_EMAIL
+      - openalex_client.py           → OPENALEX_API_KEY
+      - zenodo_client.py             → ZENODO_API_KEY
+      - orcid_client.py              → ORCID_API_TOKEN
+      - main.py                      → RECIPIENT_EMAIL, SENDER_EMAIL, SMTP_SERVER
+    """
+    # Truly required: without the DSpace endpoint the loader cannot run at all.
+    if not os.getenv("DS_API_ENDPOINT"):
+        logger.warning(
+            "DS_API_ENDPOINT is not set — DSpace loading will fail. "
+            "Set it in your .env file (see dspace/.sample.env)."
+        )
+
+    # Per-source optional vars — warn only, never exit.
+    optional = {
+        "DS_API_TOKEN":     "DSpace REST API static token (dspace_rest_client auth)",
+        "API_EPFL_USER":    "EPFL People API authentication (author reconciliation)",
+        "API_EPFL_PWD":     "EPFL People API authentication (author reconciliation)",
+        "ELS_API_KEY":      "Elsevier API key (PDF retrieval via Unpaywall)",
+        "SCOPUS_API_KEY":   "Scopus harvesting",
+        "SCOPUS_INST_TOKEN":"Scopus institutional token (full-text & extended metadata)",
+        "WOS_TOKEN":        "Web of Science harvesting",
+        "EPO_OPS_KEY":      "EPO Open Patent Services harvesting",
+        "EPO_OPS_SECRET":   "EPO Open Patent Services harvesting",
+        "CONTACT_API_EMAIL":"Crossref / Unpaywall / OpenAlex polite pool",
+        "OPENALEX_API_KEY": "OpenAlex authenticated API access",
+        "ZENODO_API_KEY":   "Zenodo harvesting (authenticated rate limit)",
+        "ORCID_API_TOKEN":  "ORCID author reconciliation",
+        "RECIPIENT_EMAIL":  "Email report delivery (recipient)",
+        "SENDER_EMAIL":     "Email report delivery (sender)",
+        "SMTP_SERVER":      "Email report delivery (SMTP server)",
+    }
+    missing_optional = [
+        f"  {var}: {desc}"
+        for var, desc in optional.items()
+        if not os.getenv(var)
+    ]
+    if missing_optional:
+        logger.debug(
+            "Optional env vars not set (related sources will degrade gracefully):\n%s",
+            "\n".join(missing_optional),
+        )
+
+
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    # Load the correct .env.{env} before any os.getenv() access
+    active_env = env_loader.load_env(args.env)
+
     logger = setup_logger(args.verbose)
+    logger.info("Environment: %s (.env.%s)", active_env, active_env)
+
+    # Validate environment before doing anything else
+    _validate_env(logger)
 
     # Compute date window
     if args.start_date and not args.end_date:
@@ -578,15 +748,23 @@ def main():
         if v is not None
     }
 
-    # Si des IDs sont fournis, on fabrique des queries par identifiant
+    # Si des IDs sont fournis, on fabrique des queries par identifiant.
+    # Priority: explicit --query-{src} > ID-based query > default from config.py.
     if scopus_ids or wos_ids or orcid_ids or openalex_ids:
         id_q = build_id_queries(scopus_ids, wos_ids, orcid_ids, openalex_ids)
-        # Remplace uniquement les sources concernées
-        override.update(id_q)
-        logger.info(
-            "ID-based harvesting active for: "
-            + ", ".join(sorted(id_q.keys()))  # ex: scopus,wos,crossref,openalex
-        )
+        id_q_applied = {src: q for src, q in id_q.items() if src not in override}
+        override.update(id_q_applied)
+        if id_q_applied:
+            logger.info(
+                "ID-based harvesting active for: %s",
+                ", ".join(sorted(id_q_applied.keys())),
+            )
+        skipped = set(id_q) - set(id_q_applied)
+        if skipped:
+            logger.info(
+                "ID-based query overridden by custom --query-{src} for: %s",
+                ", ".join(sorted(skipped)),
+            )
 
     queries = ensure_queries(override)
 
@@ -604,6 +782,21 @@ def main():
             + ", ".join(SUPPORTED_SOURCES)
         )
 
+    # Determine run_id before run_pipeline so the SIGTERM handler can reference it.
+    effective_run_id = args.run_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    def _handle_sigterm(signum, frame):
+        logger.warning("SIGTERM received — marking run %s as killed.", effective_run_id)
+        try:
+            _db = PipelineDB()
+            _db.finish_run(effective_run_id, status="killed")
+            _db.close()
+        except Exception as _e:
+            logger.debug("Could not update DB on SIGTERM: %s", _e)
+        sys.exit(130)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     try:
         run_pipeline(
             logger=logger,
@@ -615,11 +808,21 @@ def main():
             dry_run=args.dry_run,
             no_email=args.no_email,
             sources=selected_sources,
+            run_id=effective_run_id,
+            env=active_env,
         )
         sys.exit(0)
     except Exception as e:
         logger.exception(f"Pipeline crashed: {e}")
         sys.exit(1)
+    finally:
+        # Explicitly remove the UI run-lock so the live-log while loop in
+        # the Streamlit UI exits promptly, even when this process becomes a
+        # zombie before the UI calls os.kill() on it again.
+        try:
+            env_loader.run_lock_path().unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@
 
 import os
 import re
-from typing import List
+from pathlib import Path
+from typing import List, Optional
+import requests
 import tenacity
 from nameparser import HumanName
 from apiclient import (
@@ -13,8 +15,7 @@ from apiclient import (
 )
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 import mappings
 
 # Base URL for OpenAlex API
@@ -34,6 +35,11 @@ def normalize_openalex_id(full_id: str) -> str:
         return ""
     full_id = full_id.strip()
     return full_id[len(_OA_PREFIX):] if full_id.startswith(_OA_PREFIX) else full_id
+
+_script_dir = Path(__file__).resolve().parent
+_project_root = _script_dir.parent
+PDF_FOLDER = _project_root / "data" / "pdfs"
+PDF_FOLDER.mkdir(parents=True, exist_ok=True)
 
 # Load environment variables
 load_dotenv(os.path.join(os.getcwd(), ".env"))
@@ -62,8 +68,7 @@ class OpenAlexEndpoint:
     work_id = "works/{openalexId}"
     doi = "works/doi:{doi}"
 class Client(APIClient):
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('openalex')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -327,7 +332,8 @@ class Client(APIClient):
             (
                 "corresponding_institution_ids",
                 self._extract_corresponding_institution_ids,
-            ), 
+            ),
+            ("content_info", self._extract_content_info),
         ]:
             try:
                 result = func(x)
@@ -763,6 +769,52 @@ class Client(APIClient):
         flatten("apc_paid")
 
         return out
+
+    def _extract_content_info(self, x: dict) -> dict:
+        has_content = x.get("has_content") or {}
+        content_urls = x.get("content_urls") or {}
+        return {
+            "has_content_pdf": bool(has_content.get("pdf", False)),
+            "content_url_pdf": content_urls.get("pdf", ""),
+        }
+
+    def download_content_pdf(self, content_url: str, doi: str) -> Optional[str]:
+        """Download a PDF from the OpenAlex content endpoint and save to data/pdfs/.
+
+        Validates the PDF magic bytes before writing to disk.
+        Returns the local filename on success, None otherwise.
+        """
+        if not content_url or not openalex_token:
+            return None
+
+        url = f"{content_url}?api_key={openalex_token}"
+        filename = f"{doi.replace('/', '_')}.pdf"
+        file_path = PDF_FOLDER / filename
+
+        try:
+            response = requests.get(url, stream=True, timeout=60)
+            response.raise_for_status()
+
+            content_type = response.headers.get("Content-Type", "").lower()
+            if "application/pdf" not in content_type:
+                self.logger.warning(
+                    "OpenAlex content returned non-PDF for DOI %s (Content-Type: %s)",
+                    doi, content_type,
+                )
+                return None
+
+            raw = b"".join(response.iter_content(8192))
+            if not raw.startswith(b"%PDF"):
+                self.logger.warning("OpenAlex content: invalid PDF magic bytes for DOI %s", doi)
+                return None
+
+            file_path.write_bytes(raw)
+            self.logger.info("OpenAlex content PDF saved: %s", filename)
+            return filename
+
+        except Exception as e:
+            self.logger.error("OpenAlex content PDF download failed for DOI %s: %s", doi, e)
+            return None
 
     def _extract_corresponding_institution_ids(self, x: dict) -> dict:
         """

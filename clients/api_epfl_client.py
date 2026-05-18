@@ -12,8 +12,7 @@ from apiclient import (
 from apiclient.retrying import retry_if_api_request_error
 from apiclient.error_handlers import ErrorHandler
 from dotenv import load_dotenv
-from utils import manage_logger, clean_value
-from config import logs_dir
+from utils import get_pipeline_logger, clean_value
 
 
 api_epfl_base_url = "https://api.epfl.ch/v1"
@@ -46,8 +45,7 @@ class Endpoint:
 
 class Client(APIClient):
 
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('api_epfl')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -111,8 +109,8 @@ class Client(APIClient):
             if (
                 firstname and lastname
             ):  # Vérifie que firstname et lastname ne sont ni None ni vides
-                self.logger.info(
-                    f"Attempting personsFirstnameLastname for {lastname} {firstname}."
+                self.logger.debug(
+                    "EPFL API: personsFirstnameLastname query for %s %s", lastname, firstname
                 )
                 try:
                     results.append(attempt_query(lastname, firstname))
@@ -120,8 +118,8 @@ class Client(APIClient):
                     self.logger.error(f"{lastname} {firstname} caused an EPFL API error")
                     pass
 
-                self.logger.info(
-                    f"Attempting personsFirstnameLastname for {firstname} {lastname}."
+                self.logger.debug(
+                    "EPFL API: personsFirstnameLastname query for %s %s", firstname, lastname
                 )
                 try:
                     results.append(attempt_query(firstname, lastname))
@@ -129,7 +127,7 @@ class Client(APIClient):
                     self.logger.error(f"{firstname} {lastname} caused an EPFL API error")
                     pass
             else:
-                self.logger.info("Firstname or lastname is missing; skipping query.")
+                self.logger.debug("EPFL API: firstname or lastname missing, skipping")
 
         # Always attempt personsQuery
         if query:
@@ -141,7 +139,7 @@ class Client(APIClient):
                 )
                 return None
 
-            self.logger.info(f"Attempting personsQuery for {query}.")
+            self.logger.debug("EPFL API: personsQuery for %s", query)
             result_query = self.get(Endpoint.personsQuery.format(query=query))
             self.logger.debug(
                 f"Received response for {query} from personsQuery: {result_query}"
@@ -152,7 +150,7 @@ class Client(APIClient):
             for result in results:
                 if result and result.get("count") == 1 and result.get("persons"):
                     person_record = result["persons"][0]
-                    self.logger.info(f"Single record found for {query}. Processing record.")
+                    self.logger.debug("EPFL API: single match for %s", query)
 
                     # Vérifie le nom *seulement* si `lastname` est défini (donc utilisé dans la requête)
                     if lastname:
@@ -189,9 +187,7 @@ class Client(APIClient):
             )
 
             if best_candidate:
-                self.logger.info(
-                    f"Best candidate identified: {best_candidate['display']}"
-                )
+                self.logger.debug("EPFL API: best candidate selected: %s", best_candidate['display'])
                 return self._process_person_record(
                     {"count": 1, "persons": [best_candidate]}, query, format
                 )
@@ -206,27 +202,21 @@ class Client(APIClient):
 
     @retry_decorator
     def fetch_accred_by_unique_id(self, sciper_id: str, format="digest"):
-        self.logger.info(
-            f"Fetching accreditation for sciper_id: '{sciper_id}' using format: '{format}'"
-        )
+        self.logger.debug("EPFL API: accreditation for sciper %s", sciper_id)
         result = self.get(Endpoint.accredsId.format(sciperID=sciper_id))
         self.logger.debug(f"Received response for {sciper_id}: {result}")
         return self._process_accred_record(result, sciper_id, format)
 
     @retry_decorator
     def fetch_unit_by_unique_id(self, unit_id: str, format="digest"):
-        self.logger.info(
-            f"Fetching units for unit_id: '{unit_id}' using format: '{format}'"
-        )
+        self.logger.debug("EPFL API: unit lookup for id %s", unit_id)
         result = self.get(Endpoint.unitsId.format(unitID=unit_id))
         self.logger.debug(f"Received response for {unit_id}: {result}")
         return self._process_unit_record(result, unit_id, format)
 
     @retry_decorator
     def fetch_unit_by_query(self, query: str, format="digest"):
-        self.logger.info(
-            f"Fetching units for query: '{query}' using format: '{format}'"
-        )
+        self.logger.debug("EPFL API: unit query for %s", query)
         result = self.get(Endpoint.unitsQuery.format(query=query))
         self.logger.debug(f"Received response for {query}: {result}")
         return self._process_unit_record(result, query, format)

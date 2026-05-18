@@ -8,14 +8,12 @@ import datetime
 from email.message import EmailMessage
 import pandas as pd
 from typing import List, Optional
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 
 class GenerateReports:
     def __init__(self, dataframe, df_unloaded, df_epfl_authors, df_loaded):
         """Initialize the GenerateReports with given DataFrames."""
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = get_pipeline_logger(self.__class__.__name__.lower())
 
         self.df = dataframe.copy()
         self.df_unloaded = df_unloaded.copy()
@@ -114,14 +112,20 @@ class GenerateReports:
         return df_reconciled_unit["row_id"].nunique(), df_reconciled_unit
 
     def imported_publications_workspace(self):
-        """Imported publications in workspace (drafts)."""
+        """Imported publications still in workspace (draft, not yet submitted to workflow)."""
         if (
             self.df_loaded is None
             or self.df_loaded.empty
             or "workspace_id" not in self.df_loaded.columns
         ):
             return 0, self._empty_result()
-        df_workspace = self.df_loaded[self.df_loaded["workspace_id"].notna()]
+        wf_col = self.df_loaded.get("workflow_id") if "workflow_id" in self.df_loaded.columns else None
+        if wf_col is not None:
+            df_workspace = self.df_loaded[
+                self.df_loaded["workspace_id"].notna() & self.df_loaded["workflow_id"].isna()
+            ]
+        else:
+            df_workspace = self.df_loaded[self.df_loaded["workspace_id"].notna()]
         return df_workspace.shape[0], df_workspace
 
     def imported_publications_workflow(self):
@@ -165,6 +169,13 @@ class GenerateReports:
         ]
         return df_failed.shape[0], df_failed
 
+    def flagged_publications(self):
+        """Publications flagged during Infoscience deduplication (preprint superseded, cross-type DOI)."""
+        if self.df is None or self.df.empty or "dedup_note" not in self.df.columns:
+            return 0, self._empty_result()
+        df_flagged = self.df[self.df["dedup_note"].notna()]
+        return len(df_flagged), df_flagged
+
     def excluded_publications_count(self):
         """Excluded publications (present in df but not in df_loaded)."""
         if not self._has_cols(self.df, ["row_id"]) or not self._has_cols(
@@ -174,12 +185,12 @@ class GenerateReports:
         df_excluded = self.df[~self.df["row_id"].isin(self.df_loaded["row_id"])]
         return len(df_excluded), df_excluded
 
-    def generate_excel_report(self, file_path=None, output_dir="."):
+    def generate_excel_report(self, file_path=None, output_dir=".", run_id=None):
         """Generate an Excel report with all calculated indicators and corresponding data rows."""
         report = self.generate_report()
         if file_path is None:
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            file_path = f"{timestamp}_Import_Report.xlsx"
+            prefix = run_id if run_id else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            file_path = f"{prefix}_Import_Report.xlsx"
         output_path = os.path.join(output_dir, file_path)
 
         with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
@@ -208,17 +219,32 @@ class GenerateReports:
         import_start_date,
         import_end_date,
         file_path=None,
+        run_id=None,
+        env=None,
     ):
         """Send the generated Excel report via email without authentication."""
         if file_path is None:
-            file_path = self.generate_excel_report()
+            file_path = self.generate_excel_report(run_id=run_id)
+
+        subject = "Infoscience Import Report"
+        if env:
+            subject += f" [{env.upper()}]"
+        if run_id:
+            subject += f" — {run_id}"
+
+        body_meta = ""
+        if env:
+            body_meta += f" (env: {env.upper()})"
+        if run_id:
+            body_meta += f" [run: {run_id}]"
 
         msg = EmailMessage()
-        msg["Subject"] = "Infoscience Import Report"
+        msg["Subject"] = subject
         msg["From"] = sender_email
         msg["To"] = recipient_email
         msg.set_content(
-            f"Please find attached the latest Infoscience Import Report for the date interval from  {import_start_date} to {import_end_date}."
+            f"Please find attached the latest Infoscience Import Report{body_meta}"
+            f" for the date interval from {import_start_date} to {import_end_date}."
         )
 
         with open(file_path, "rb") as f:
@@ -257,4 +283,5 @@ class GenerateReports:
             "Matched EPFL Authors": self.epfl_reconciled_authors(),
             "EPFL Authors with Unit": self.epfl_reconciled_authors_with_unit(),
             "Failed Imports": self.failed_imports(),
+            "Flagged Publications": self.flagged_publications(),
         }

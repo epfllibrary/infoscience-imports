@@ -1,5 +1,5 @@
 api-client
-fuzzywuzzy
+rapidfuzz
 ipywidgets
 ipykernel
 itables
@@ -9,7 +9,6 @@ numpy
 pyarrow
 plotly
 python-dotenv
-python-Levenshtein
 requests
 pylint
 flake8
@@ -19,9 +18,17 @@ tenacity
 pycountry
 openpyxl
 xlsxwriter
+xlwt
+duckdb
 flask
 marimo
 lxml
 bs4
 dateparser
 python-epo-ops-client
+streamlit
+apscheduler
+streamlit-authenticator
+
+bcrypt
+PyYAML

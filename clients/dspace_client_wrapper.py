@@ -4,9 +4,8 @@ import os
 import re
 import pandas as pd
 from dotenv import load_dotenv
-from config import logs_dir
 from dspace.dspace_rest_client.client import DSpaceClient
-from utils import manage_logger
+from utils import get_pipeline_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
@@ -14,8 +13,7 @@ ds_api_endpoint = os.environ.get("DS_API_ENDPOINT")
 class DSpaceClientWrapper:
     """Wrapper for Dspace client"""
     def __init__(self):
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = get_pipeline_logger(self.__class__.__name__.lower())
 
         self.client = DSpaceClient()
 
@@ -160,6 +158,197 @@ class DSpaceClientWrapper:
             f"Publication searched with id:{item_id} not found in Infoscience."
         )
         return False  # No duplicates found
+
+    # ── Type-aware duplicate check ────────────────────────────────────────
+
+    _ENTITY_FILTER  = "(entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
+    _TYPE_PREPRINT  = "types:(*preprint*)"
+    _TYPE_DATASET   = "entityType:(Product) AND types:(*dataset*)"
+    _TYPE_SOFTWARE  = "entityType:(Product) AND types:(*software*)"
+    _TYPE_PUBLISHED = "entityType:(Publication) AND -types:(*preprint*)"
+    _WORKFLOW_FILTER = (
+        "(search.resourcetype:(XmlWorkflowItem) OR "
+        "((search.resourcetype:(WorkspaceItem) AND submitter_authority:(4e8d183f-1309-470c-955e-c45a99c6f1b8)) OR "
+        "(search.resourcetype:(WorkspaceItem) AND epfl.workflow.rejected:(true))))"
+    )
+
+    def _count_items(self, base_query: str, scope: str = None) -> int:
+        """Return the true count of archived items matching base_query.
+
+        Uses count_results (reads totalElements) rather than len(search_objects)
+        so that scoped comparisons like doi_preprint == doi_total are accurate
+        when multiple items share the same DOI (e.g. a preprint and a published
+        version both present in Infoscience).
+        """
+        full_q = f"({base_query}) AND {self._ENTITY_FILTER}"
+        return self.client.count_results(
+            query=full_q,
+            dso_type="item",
+            configuration="administrativeView",
+            scope=scope,
+        ) or 0
+
+    def _fetch_item_info(self, base_query: str, scope: str = None, max_items: int = 5) -> list:
+        """Return a list of {uuid, doi, dc_type} dicts for items matching base_query.
+
+        Up to ``max_items`` results are returned so that all known duplicates are
+        captured rather than silently dropping matches beyond the first one.
+        Returns an empty list when nothing is found.
+        """
+        full_q = f"({base_query}) AND {self._ENTITY_FILTER}"
+        dsos = self._search_objects(
+            query=full_q, page=0, size=max_items, dso_type="item",
+            configuration="administrativeView", scope=scope, max_pages=1,
+        )
+        results = []
+        for item in dsos:
+            meta = getattr(item, "metadata", {}) or {}
+            doi_list  = meta.get("dc.identifier.doi", [])
+            type_list = meta.get("dc.type", [])
+            results.append({
+                "uuid":    getattr(item, "uuid", None),
+                "doi":     doi_list[0]["value"]  if doi_list  else None,
+                "dc_type": type_list[0]["value"] if type_list else None,
+            })
+        return results
+
+    def _count_workflow_items(self, base_query: str) -> int:
+        """Count workflow/workspace items matching base_query."""
+        full_q = f"({base_query}) AND {self._WORKFLOW_FILTER}"
+        dsos = self._search_objects(
+            query=full_q, page=0, size=1, configuration="supervision", max_pages=1,
+        )
+        return len(dsos)
+
+    def find_publication_duplicate_typed(self, x: dict) -> tuple:
+        """Type-aware duplicate check against Infoscience.
+
+        Returns ``(is_duplicate: bool, dedup_note: str | None, flagged_info: dict | None)``.
+
+        dedup_note values:
+        - ``"supersedes_preprint"``: published record passed; preprint with same
+          title+year already in Infoscience. ``flagged_info`` holds the preprint.
+        - ``"cross_type_doi"``: published record passed; same DOI exists only as
+          a preprint in Infoscience. ``flagged_info`` holds that item.
+        - ``"dataset_in_other_collection"``: dataset passed; title+year match found
+          outside "Datasets and Code". ``flagged_info`` holds that item.
+        """
+        from mappings import (
+            classify_record_type,
+            PREPRINT_COLLECTION_UUID,
+            DATASET_COLLECTION_UUID,
+        )
+
+        rec_type = classify_record_type(x)
+
+        identifier_type = x["source"]
+        cleaned_title = clean_title(x["title"])
+        pubyear = x.get("pubyear")
+        if pd.notna(pubyear):
+            try:
+                pubyear = int(float(pubyear))
+            except (ValueError, TypeError):
+                pubyear = None
+        else:
+            pubyear = None
+
+        prev_year = pubyear - 1 if pubyear else None
+        next_year = pubyear + 1 if pubyear else None
+
+        handlers = {
+            "wos":               lambda r: str(r["internal_id"]).replace("WOS:", "").strip(),
+            "scopus":            lambda r: str(r["internal_id"]).replace("SCOPUS_ID:", "").strip(),
+            "crossref":          lambda r: str(r["internal_id"]).strip(),
+            "openalex+crossref": lambda r: str(r["internal_id"]).strip(),
+            "openalex":          lambda r: str(r["doi"]).strip(),
+            "zenodo":            lambda r: r["internal_id"].strip(),
+            "datacite":          lambda r: str(r["internal_id"]).strip(),
+            "epo":               lambda r: str(r["family_id"]).strip(),
+            "orcidWorks":        lambda r: None,
+        }
+        item_id = handlers.get(identifier_type, lambda r: None)(x)
+        doi = str(x.get("doi") or "").strip()
+
+        # Title+year query
+        if pubyear is not None:
+            ty_q = (
+                f"(title:({cleaned_title}) AND "
+                f"(dateIssued.year:{pubyear} OR dateIssued.year:{prev_year} OR dateIssued.year:{next_year}))"
+            )
+        else:
+            ty_q = f"(title:({cleaned_title}))"
+
+        self.logger.info(
+            "Type-aware dedup [%s] — rec_type=%s doi=%s",
+            cleaned_title[:60], rec_type, doi or "(none)",
+        )
+
+        # ── DOI check ─────────────────────────────────────────────────
+        if doi:
+            doi_q = f'(itemidentifier_keyword:"{doi}")'
+            doi_total = self._count_items(doi_q)
+            if doi_total > 0:
+                if rec_type == "published":
+                    doi_preprint_q = f"{doi_q} AND {self._TYPE_PREPRINT}"
+                    doi_preprint = self._count_items(doi_preprint_q, scope=PREPRINT_COLLECTION_UUID)
+                    if doi_preprint == doi_total:
+                        items = self._fetch_item_info(doi_preprint_q, scope=PREPRINT_COLLECTION_UUID)
+                        return False, "cross_type_doi", items or None
+                return True, None, None
+            if self._count_workflow_items(doi_q) > 0:
+                return True, None, None
+
+        # ── Item identifier check ──────────────────────────────────────
+        if item_id:
+            id_q = f'(itemidentifier_keyword:"{item_id}")'
+            if self._count_items(id_q) > 0 or self._count_workflow_items(id_q) > 0:
+                return True, None, None
+
+        # ── Title+year check (type-scoped) ────────────────────────────
+        if rec_type == "dataset":
+            dc_type = str(x.get("dc.type") or "")
+            product_type_filter = (
+                self._TYPE_SOFTWARE if dc_type.startswith("software")
+                else self._TYPE_DATASET
+            )
+            if self._count_items(f"{ty_q} AND {product_type_filter}", scope=DATASET_COLLECTION_UUID) > 0:
+                return True, None, None
+            # Title+year exists outside "Datasets and Code" — different entity, flag it
+            ty_total = self._count_items(ty_q)
+            if ty_total > 0:
+                items = self._fetch_item_info(ty_q)
+                return False, "dataset_in_other_collection", items or None
+            return False, None, None
+
+        elif rec_type == "preprint":
+            ty_preprint_q = f"{ty_q} AND {self._TYPE_PREPRINT}"
+            if self._count_items(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID) > 0:
+                return True, None, None
+            if self._count_workflow_items(ty_q) > 0:
+                return True, None, None
+            # Check if a published version exists
+            ty_total   = self._count_items(ty_q)
+            ty_preprint = self._count_items(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID)
+            if ty_total > ty_preprint:
+                all_items = self._fetch_item_info(ty_q, max_items=5)
+                published_items = [i for i in all_items if i.get("dc_type") != "text::preprint"]
+                return False, "published_version_exists", published_items or all_items or None
+            return False, None, None
+
+        else:  # published
+            ty_total = self._count_items(ty_q)
+            if ty_total > 0:
+                ty_preprint_q = f"{ty_q} AND {self._TYPE_PREPRINT}"
+                ty_preprint   = self._count_items(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID)
+                ty_published  = self._count_items(f"{ty_q} AND {self._TYPE_PUBLISHED}")
+                if ty_published > 0:
+                    return True, None, None
+                if ty_preprint > 0:
+                    items = self._fetch_item_info(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID)
+                    return False, "supersedes_preprint", items or None
+            if self._count_workflow_items(ty_q) > 0:
+                return True, None, None
+            return False, None, None
 
     def find_duplicate_enhanced(self, x):
         identifier_type = x.get("source")
@@ -356,6 +545,288 @@ class DSpaceClientWrapper:
 
     def delete_workflow(self, workflow_id):
         return self.client.delete_workflow_item(workflow_id)
+
+    def find_workspaceitem_by_item_uuid(self, item_uuid: str) -> int | None:
+        """Return the workspace item ID for the given DSpace item UUID, or None if not found.
+
+        Uses the supervision search configuration with the query:
+            namedresourcetype_authority:workspace "Item-{item_uuid}"
+
+        This is the same search strategy used for Infoscience deduplication and is the
+        only reliable way to find a workspace item after a workflow rejection, since
+        DSpace assigns a new workspace_id that differs from the original stored value.
+        """
+        query = f'namedresourcetype_authority:workspace "Item-{item_uuid}"'
+        try:
+            results = self._search_objects(
+                query=query,
+                page=0,
+                size=1,
+                configuration="supervision",
+                max_pages=1,
+            )
+            if results:
+                ws_id = getattr(results[0], "id", None)
+                if ws_id is not None:
+                    self.logger.info(
+                        "Found workspace item %s for item %s via supervision search.",
+                        ws_id, item_uuid,
+                    )
+                    return int(ws_id)
+        except Exception as exc:
+            self.logger.warning("find_workspaceitem_by_item_uuid failed: %s", exc)
+        return None
+
+    def delete_item(
+        self,
+        workspace_id: str | None,
+        workflow_id: str | None,
+        item_uuid: str | None = None,
+    ) -> tuple[bool, str]:
+        """Delete an imported item from DSpace, handling the two-step sequence for workflow items.
+
+        For workflow items: calls DELETE with ?expunge=true — DSpace rejects the item
+        back to workspace as a new draft with a NEW workspace_id returned in the response
+        body. That new workspace_id is used to permanently delete the workspace item.
+        Falls back to find_workspaceitem_by_item_uuid if the response contains no body.
+        For workspace-only items: deletes directly.
+
+        Returns (success, message).
+        """
+        workflow_done = False
+        try:
+            if workflow_id:
+                url = f"{self.client.API_ENDPOINT}/workflow/workflowitems/{int(float(workflow_id))}?expunge=true"
+                response = self.client.api_delete(url)
+                workflow_done = True
+                self.logger.info("Workflow item %s rejected back to workspace.", workflow_id)
+
+                # DSpace returns the new workspace item in the response body.
+                # Parse its id to use for the workspace deletion step.
+                new_ws_id = self._parse_workspace_id_from_response(response)
+                if new_ws_id is not None:
+                    workspace_id = str(new_ws_id)
+                    self.logger.info("New workspace item %s found in response.", new_ws_id)
+                else:
+                    # Fallback: search by item UUID if the response had no body.
+                    self.logger.warning(
+                        "No workspace item in rejection response — searching by UUID."
+                    )
+                    if item_uuid:
+                        found = self.find_workspaceitem_by_item_uuid(item_uuid)
+                        if found is not None:
+                            workspace_id = str(found)
+                            self.logger.info("Found workspace item %s via UUID search.", found)
+
+            if workspace_id:
+                self.delete_workspace(int(float(str(workspace_id))))
+                self.logger.info("Workspace item %s deleted.", workspace_id)
+
+            return True, "Item supprimé avec succès."
+        except Exception as exc:
+            self.logger.error("delete_item failed (workflow_done=%s): %s", workflow_done, exc)
+            if workflow_done:
+                return False, (
+                    f"Le workflow a été rejeté mais la suppression du workspace a échoué : {exc}. "
+                    "Relancez la suppression — l'item est maintenant en workspace."
+                )
+            return False, f"Échec de la suppression : {exc}"
+
+    def _parse_workspace_id_from_response(self, response) -> int | None:
+        """Extract the workspace item id from a DSpace rejection response.
+
+        DSpace returns the new workspace item in the response body when a workflow
+        item is rejected with ?expunge=true. Returns None if the body is absent or
+        unparseable (204 No Content, network error, etc.).
+        """
+        if response is None:
+            return None
+        try:
+            if response.status_code in (200, 201) and response.content:
+                ws_id = response.json().get("id")
+                return int(ws_id) if ws_id is not None else None
+        except Exception as exc:
+            self.logger.warning("Could not parse workspace id from response: %s", exc)
+        return None
+
+    @staticmethod
+    def _extract_item_quality(data: dict) -> dict:
+        """Extract quality indicators from a fully-embedded DSpace item response.
+
+        Checks performed:
+          abstract_ok — dc.description.abstract present and non-empty.
+          pdf_ok      — at least one bitstream in the ORIGINAL bundle has
+                        dc.type = "main document" with an openaccess resource
+                        policy (falls back to True if policy embed is absent).
+        """
+        meta = data.get("metadata") or {}
+        abstract_ok = any(
+            str(v.get("value", "")).strip()
+            for v in meta.get("dc.description.abstract", [])
+            if isinstance(v, dict)
+        )
+
+        pdf_ok = False
+        for bundle in (
+            data.get("_embedded", {})
+                .get("bundles", {})
+                .get("_embedded", {})
+                .get("bundles", [])
+        ):
+            if bundle.get("name") != "ORIGINAL":
+                continue
+            for bs in (
+                bundle.get("_embedded", {})
+                      .get("bitstreams", {})
+                      .get("_embedded", {})
+                      .get("bitstreams", [])
+            ):
+                bs_meta = bs.get("metadata") or {}
+                is_main = any(
+                    "main document" in str(v.get("value", "")).lower()
+                    for v in bs_meta.get("dc.type", [])
+                    if isinstance(v, dict)
+                )
+                if not is_main:
+                    continue
+                # Verify openaccess resource policy when embedded; trust main
+                # document type alone if the embed is not supported.
+                policies = (
+                    bs.get("_embedded", {})
+                      .get("accessConditions", {})
+                      .get("_embedded", {})
+                      .get("resourcepolicies", [])
+                )
+                is_open = (
+                    any(
+                        str(p.get("name", "")).lower() == "openaccess"
+                        for p in policies if isinstance(p, dict)
+                    )
+                    if policies else True
+                )
+                if is_open:
+                    pdf_ok = True
+                    break
+            if pdf_ok:
+                break
+
+        return {"abstract_ok": abstract_ok, "pdf_ok": pdf_ok}
+
+    def check_item_infoscience_status(
+        self,
+        dspace_item_uuid: "str | None",
+        workspace_id: "str | None",
+        workflow_id: "str | None",
+        check_quality: bool = False,
+    ) -> "tuple[str, str | None, dict | None]":
+        """Check the current Infoscience status of a previously imported item.
+
+        Returns (status, handle, quality) where:
+          status  — one of: 'published', 'withdrawn', 'deleted', 'rejected',
+                    'still_pending'
+          handle  — Infoscience handle (e.g. "20.500.14299/12345") when
+                    status='published', None otherwise
+          quality — dict {"abstract_ok": bool, "pdf_ok": bool} when
+                    status='published' and check_quality=True, None otherwise
+
+        When check_quality=True the published-item call embeds bundles and
+        bitstreams so that status, abstract, and PDF presence are resolved in
+        a single round-trip.
+        """
+        # Step 1 — try the canonical item endpoint via dspace_item_uuid
+        if dspace_item_uuid:
+            url = f"{self.client.API_ENDPOINT}/core/items/{dspace_item_uuid}"
+            if check_quality:
+                url += (
+                    "?embed=bundles"
+                    "&embed=bundles/bitstreams"
+                    "&embed=bundles/bitstreams/accessConditions"
+                )
+            r = self.client.api_get(url)
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                except Exception:
+                    data = {}
+                if data.get("inArchive"):
+                    handle = data.get("handle") or None
+                    quality = self._extract_item_quality(data) if check_quality else None
+                    return "published", handle, quality
+                if data.get("withdrawn"):
+                    return "withdrawn", None, None
+                # Item exists but is neither published nor withdrawn — could be
+                # still_pending or rejected (workspace). Fall through to the
+                # workspace check to detect the rejection flag.
+            elif r.status_code == 404:
+                # Item UUID not found — fall through to workspace/workflow checks.
+                pass
+            else:
+                self.logger.warning(
+                    "Unexpected status %s fetching item %s",
+                    r.status_code, dspace_item_uuid,
+                )
+                return "still_pending", None, None
+
+        # Step 2 — resolve the live workspace item.
+        # After a workflow rejection DSpace assigns a NEW workspace id, so the
+        # stored workspace_id is stale.  Search by item UUID via the supervision
+        # configuration first, then fall back to the stored id.
+        live_ws_id = None
+        if dspace_item_uuid:
+            live_ws_id = self.find_workspaceitem_by_item_uuid(dspace_item_uuid)
+        if live_ws_id is None and workspace_id:
+            try:
+                live_ws_id = int(float(str(workspace_id)))
+            except (ValueError, TypeError):
+                pass
+
+        if live_ws_id is not None:
+            try:
+                url = (
+                    f"{self.client.API_ENDPOINT}/submission/workspaceitems/{live_ws_id}"
+                    "?embed=item&embed=collection"
+                )
+                r = self.client.api_get(url)
+                if r.status_code == 200:
+                    try:
+                        ws_data = r.json()
+                    except Exception:
+                        ws_data = {}
+                    item_meta = (
+                        ws_data.get("_embedded", {})
+                        .get("item", {})
+                        .get("metadata", {})
+                    )
+                    rejected = item_meta.get("epfl.workflow.rejected", [])
+                    if any(
+                        str(entry.get("value", "")).lower() == "true"
+                        for entry in rejected
+                    ):
+                        return "rejected", None, None
+                    return "still_pending", None, None
+                elif r.status_code == 404:
+                    pass  # workspace item gone — fall through
+            except Exception as exc:
+                self.logger.warning("Workspace check failed for %s: %s", live_ws_id, exc)
+
+        # Step 3 — check workflow item
+        if workflow_id:
+            try:
+                wf_int = int(float(str(workflow_id)))
+                url = f"{self.client.API_ENDPOINT}/workflow/workflowitems/{wf_int}"
+                r = self.client.api_get(url)
+                if r.status_code == 200:
+                    return "still_pending", None, None
+                # 404 → workflow item gone too
+            except Exception as exc:
+                self.logger.warning("Workflow check failed for %s: %s", workflow_id, exc)
+
+        # Nothing found — item has been fully deleted or never existed
+        if dspace_item_uuid or workspace_id or workflow_id:
+            return "deleted", None, None
+
+        # No identifiers at all — cannot determine status
+        return "still_pending", None, None
 
     def search_authority(
         self,

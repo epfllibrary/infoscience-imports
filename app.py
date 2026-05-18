@@ -1,164 +1,203 @@
-'''Lightweight Flask app to start the data pipeline.'''
+"""Infoscience Import Pipeline — Supervision UI.
 
-import os
-import time
-import glob
-import threading
-import signal
-from flask import Flask, render_template, request, jsonify, Response, send_file
+Launch:
+    streamlit run app.py
+    ./run_ui.sh          # also starts the background scheduler
+"""
 
-from data_pipeline.main import main
+from __future__ import annotations
 
-app = Flask(__name__)
+import sys
+from pathlib import Path
 
-LOG_DIR = "logs"  # Directory where logs are stored
-DATA_DIR = "data"  # Directory where reports are saved
-pipeline_thread = None  # Track the running pipeline thread
-pipeline_running = False  # Track if the pipeline is running
+import streamlit as st
 
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 
-def get_latest_log_file():
-    """Returns the latest log file from the logs directory."""
-    log_files = sorted(
-        glob.glob(os.path.join(LOG_DIR, "*.log")), key=os.path.getmtime, reverse=True
+import env_loader
+ACTIVE_ENV = env_loader.load_env()
+
+from ui.auth import current_user, get_allowed_pages, login_wall, logout
+from ui.constants import (
+    PRIMARY, C_BLACK, C_BLUE, C_DARK, C_GRAY_100, C_GRAY_600,
+    C_GREEN, C_RED, C_RED_DARK, C_YELLOW, SECONDARY, SOURCES,
+)
+from ui.helpers import get_db, mi
+from ui.run_state import read_active_run
+
+# ── Page config ───────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Infoscience Imports",
+    page_icon="📚",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── Authentication ────────────────────────────────────────────────────────────
+_username, _role = login_wall()
+
+# ── CSS ───────────────────────────────────────────────────────────────────────
+st.markdown(
+    f"""<style>:root {{
+    --primary:   {PRIMARY};
+    --secondary:    {SECONDARY};
+    --green:    {C_GREEN};
+    --yellow:   {C_YELLOW};
+    --red:      {C_RED};
+    --red-dark: {C_RED_DARK};
+    --dark:     {C_DARK};
+    --black:    {C_BLACK};
+    --gray-600: {C_GRAY_600};
+    --gray-100: {C_GRAY_100};
+    --blue:     {C_BLUE};
+}}</style>""",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+    'family=Inter:wght@400;500;600;700'
+    '&family=Roboto+Mono:wght@400;500'
+    '&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200'
+    '&display=block" />',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f"<style>{(ROOT / 'ui' / 'styles.css').read_text()}</style>",
+    unsafe_allow_html=True,
+)
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+_ENV_STYLE = {
+    "dev":  ("background:#dff0c8;color:#3a5a10", "DEV"),
+    "test": ("background:#fdefd5;color:#7a4400", "TEST"),
+    "prod": ("background:#ffd5d5;color:#7a0000", "PROD ⚠️"),
+}
+_NAV_ICONS = {
+    "Tableau de bord": "dashboard",
+    "Lancer un run":   "rocket_launch",
+    "Programmation":   "schedule",
+    "Publications":    "article",
+    "Statistiques":    "bar_chart",
+    "Configuration":   "settings",
+    "Aide":            "menu_book",
+}
+
+with st.sidebar:
+    st.markdown(
+        f'<div style="font-size:1.15rem;font-weight:700;color:#C8D0E0;'
+        f'display:flex;align-items:center;gap:6px;margin-bottom:2px">'
+        f'{mi("cloud_sync","ms-neutral")} Infoscience Imports</div>',
+        unsafe_allow_html=True,
     )
-    return log_files[0] if log_files else None
+    st.markdown("---")
 
-
-def get_latest_execution_folder():
-    """Returns the latest timestamped execution folder."""
-    subdirs = sorted(
-        [d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))],
-        key=lambda x: os.path.getmtime(os.path.join(DATA_DIR, x)),
-        reverse=True,
+    _style, _label = _ENV_STYLE.get(ACTIVE_ENV, _ENV_STYLE["dev"])
+    st.markdown(
+        f'<div style="{_style};border-radius:6px;padding:5px 12px;'
+        f'text-align:center;font-weight:700;font-size:0.85rem;'
+        f'letter-spacing:.06em;margin-bottom:6px;">{_label}</div>',
+        unsafe_allow_html=True,
     )
-    return os.path.join(DATA_DIR, subdirs[0]) if subdirs else None
-
-
-def get_latest_report():
-    """Returns the latest generated Excel report from the newest execution folder."""
-    latest_folder = get_latest_execution_folder()
-    if not latest_folder:
-        return None
-
-    report_files = glob.glob(os.path.join(latest_folder, "*.xlsx"))
-    return report_files[0] if report_files else None
-
-
-def run_pipeline(start_date, end_date, custom_queries=None, author_ids=None):
-    """Runs the pipeline and updates the process state."""
-    global pipeline_running
-    pipeline_running = True
-    main(start_date, end_date, queries=custom_queries, authors_ids=author_ids)
-    pipeline_running = False
-
-
-@app.route("/")
-def index():
-    """Render the main UI."""
-    return render_template("index.html")
-
-
-@app.route("/start_pipeline", methods=["POST"])
-def start_pipeline():
-    """Starts the data pipeline in a separate thread if not already running."""
-    global pipeline_thread, pipeline_running
-
-    if pipeline_running:
-        return jsonify({"message": "Pipeline is already running!", "running": True})
-
-    start_date = request.form.get("start_date", "2025-01-01")
-    end_date = request.form.get("end_date", "2026-01-01")
-
-    # Retrieve custom queries
-    custom_wos_query = request.form.get("custom_wos_query", "").strip()
-    custom_scopus_query = request.form.get("custom_scopus_query", "").strip()
-
-    # Retrieve author IDs as a list
-    author_ids_raw = request.form.get("author_ids", "").strip()
-    author_ids = [
-        author_id.strip()
-        for author_id in author_ids_raw.split(",")
-        if author_id.strip()
-    ]
-
-    # Prepare custom queries dictionary
-    custom_queries = {}
-    if custom_wos_query:
-        custom_queries["wos"] = custom_wos_query
-    if custom_scopus_query:
-        custom_queries["scopus"] = custom_scopus_query
-
-    pipeline_thread = threading.Thread(
-        target=run_pipeline, args=(start_date, end_date, custom_queries, author_ids)
+    _new_env = st.selectbox(
+        "Environnement",
+        options=list(env_loader.ENVIRONMENTS),
+        index=list(env_loader.ENVIRONMENTS).index(ACTIVE_ENV),
+        key="env_selector",
+        help="Charge le fichier .env correspondant et isole la base de données.",
     )
-    pipeline_thread.start()
+    if _new_env != ACTIVE_ENV:
+        env_loader.set_active_env(_new_env)
+        env_loader.load_env(_new_env)
+        st.cache_resource.clear()
+        st.rerun()
+    if ACTIVE_ENV == "prod":
+        st.warning("Connecté à la **production** — les actions sont réelles.")
 
-    return jsonify({"message": "Pipeline started successfully!", "running": True})
+    st.markdown("---")
+    _allowed = get_allowed_pages(_role)
+    _qp      = st.query_params.get("page", _allowed[0] if _allowed else "")
+    page     = _qp if _qp in _allowed else (_allowed[0] if _allowed else "")
 
-
-@app.route("/stop_pipeline", methods=["POST"])
-def stop_pipeline():
-    """Stops the pipeline process."""
-    global pipeline_running, pipeline_thread
-
-    if not pipeline_running:
-        return jsonify({"message": "No pipeline is running.", "running": False})
-
-    pipeline_running = False  # Flag as stopped
-    os.kill(
-        os.getpid(), signal.SIGTERM
-    )  # Forcefully terminate Flask (or replace with a better cleanup strategy)
-
-    return jsonify({"message": "Pipeline stopped.", "running": False})
-
-
-@app.route("/check_status", methods=["GET"])
-def check_status():
-    """Returns whether the pipeline is running."""
-    return jsonify({"running": pipeline_running})
-
-
-@app.route("/stream_logs")
-def stream_logs():
-    """Stream log file content to the frontend."""
-
-    def generate():
-        latest_log = get_latest_log_file()
-        if not latest_log:
-            yield "data: No log file found.\n\n"
-            return
-
-        with open(latest_log, "r") as f:
-            f.seek(0, os.SEEK_END)
-            while pipeline_running:
-                line = f.readline()
-                if line:
-                    yield f"data: {line.strip()}\n\n"
-                time.sleep(0.5)
-
-    return Response(generate(), mimetype="text/event-stream")
-
-
-@app.route("/check_report", methods=["GET"])
-def check_report():
-    """Checks if a report exists and returns its name."""
-    latest_report = get_latest_report()
-    if latest_report:
-        return jsonify(
-            {"report_available": True, "report_name": os.path.basename(latest_report)}
+    _nav_html = '<nav class="sidebar-nav">'
+    for _p in _allowed:
+        _cls  = "nav-item active" if _p == page else "nav-item"
+        _href = f"?page={_p.replace(' ', '+')}"
+        _nav_html += (
+            f'<a class="{_cls}" href="{_href}" target="_self">'
+            f'<span class="ms ms-neutral">{_NAV_ICONS.get(_p, "circle")}</span>'
+            f'<span>{_p}</span></a>'
         )
-    return jsonify({"report_available": False})
+    _nav_html += "</nav>"
+    st.markdown(_nav_html, unsafe_allow_html=True)
 
+    st.markdown("---")
+    if st.button("Rafraîchir", help="Recharge les données depuis la base",
+                 icon=":material/refresh:"):
+        st.cache_resource.clear()
+        st.rerun()
 
-@app.route("/download_report", methods=["GET"])
-def download_report():
-    """Serves the latest report file for download."""
-    latest_report = get_latest_report()
-    if latest_report:
-        return send_file(latest_report, as_attachment=True)
-    return "No report available", 404
+    st.markdown("---")
+    _, _dname, _ = current_user()
+    _role_label = {"admin": "Admin", "curator": "Curator", "reporting": "Reporting"}.get(_role, _role)
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">'
+        f'<span class="ms ms-neutral" style="font-size:17px">person</span>'
+        f'<span style="color:#C8D0E0;font-size:0.88rem;font-weight:600">'
+        f'{_dname or _username}</span></div>'
+        f'<div style="color:#667085;font-size:0.76rem;padding-left:24px">'
+        f'{_role_label}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    if st.button("Déconnexion", icon=":material/logout:"):
+        logout()
+    st.markdown(
+        "<div style='color:#4a5568;font-size:0.72rem;margin-top:8px'>"
+        "Infoscience · EPFL Library</div>",
+        unsafe_allow_html=True,
+    )
 
+# ── Active run banner ─────────────────────────────────────────────────────────
+_active = read_active_run()
+if _active:
+    _run_env = _active.get("env", "?")
+    st.warning(
+        f"⏳ **Run en cours** [{_run_env.upper()}] — `{_active['run_id']}` "
+        f"(sources : {_active['sources']}, démarré : {_active['started_at'][:19].replace('T',' ')})  "
+        f"→ Allez sur **Lancer un run** pour suivre la progression.",
+        icon=None,
+    )
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5001)
+# ── Page router ───────────────────────────────────────────────────────────────
+db = get_db()
+
+if page == "Tableau de bord":
+    from ui.pages.dashboard import render
+    render(db)
+
+elif page == "Lancer un run":
+    from ui.pages.run_launcher import render
+    render(active_env=ACTIVE_ENV, root=ROOT, sources=SOURCES)
+
+elif page == "Programmation":
+    from ui.pages.scheduling import render
+    render(active_env=ACTIVE_ENV, root=ROOT, sources=SOURCES, username=_username)
+
+elif page == "Publications":
+    from ui.pages.publications import render
+    render(db, role=_role)
+
+elif page == "Statistiques":
+    from ui.pages.statistics import render
+    render(db)
+
+elif page == "Configuration":
+    from ui.pages.configuration import render
+    render(db, active_env=ACTIVE_ENV)
+
+elif page == "Aide":
+    from ui.pages.help import render
+    render(root=ROOT)

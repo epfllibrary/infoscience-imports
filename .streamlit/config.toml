@@ -1,0 +1,18 @@
+[theme]
+base                     = "light"
+primaryColor             = "#007480"   # canard — buttons, active widgets
+backgroundColor          = "#f8f9fa"   # near-white page background
+secondaryBackgroundColor = "#ffffff"   # expanders, inputs
+textColor                = "#212121"   # $black body text
+font                     = "sans serif"
+
+[server]
+# Keep WebSocket sessions alive during long pipeline runs (up to 4 h).
+# Without this, a run lasting > maxUploadSize minutes risks dropping the
+# WebSocket, resetting session_state, and sending the user back to login.
+maxUploadSize            = 200
+headless                 = true
+
+[browser]
+# Disable usage stats for internal deployment
+gatherUsageStats         = false
