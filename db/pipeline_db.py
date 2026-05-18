@@ -587,22 +587,50 @@ class PipelineDB:
         "postdoctoral researcher", "visiting professor",
     ])
 
+    @staticmethod
+    def _as_filter_list(v):
+        """Normalize a filter value to a non-empty list, or return [] (= no filter)."""
+        if not v:
+            return []
+        return list(v) if isinstance(v, (list, tuple)) else [v]
+
+    @staticmethod
+    def _in_clause(col: str, values: list) -> tuple:
+        """Return (sql_fragment, params) for a single- or multi-value equality filter."""
+        if len(values) == 1:
+            return f"{col} = ?", [values[0]]
+        ph = ",".join(["?"] * len(values))
+        return f"{col} IN ({ph})", values
+
     def _pub_filters(self, run_id, status, source, dc_type, sciper, unit_acronym,
                      search, has_pdf=None, oa_filter=None, licence=None,
                      epfl_strength=None):
-        """Shared filter-building logic for get_publications and count_publications."""
+        """Shared filter-building logic for get_publications and count_publications.
+
+        run_id, status, source, dc_type, unit_acronym, licence each accept either a
+        single value (str) or a list of values — an empty list means no filter.
+        """
         filters, params = [], []
         join_a = join_u = ""
         if sciper:
             join_a = "INNER JOIN pub_authors pa ON pa.run_id=p.run_id AND pa.row_id=p.row_id"
             filters.append("pa.sciper = ?"); params.append(sciper)
-        if unit_acronym:
+
+        unit_list = self._as_filter_list(unit_acronym)
+        if unit_list:
             join_u = "INNER JOIN pub_units pu ON pu.run_id=p.run_id AND pu.row_id=p.row_id"
-            filters.append("pu.acronym = ?"); params.append(unit_acronym)
-        if run_id:  filters.append("p.run_id = ?");  params.append(run_id)
-        if status:  filters.append("p.status = ?");  params.append(status)
-        if source:  filters.append("p.source = ?");  params.append(source)
-        if dc_type: filters.append("p.dc_type = ?"); params.append(dc_type)
+            cond, vals = self._in_clause("pu.acronym", unit_list)
+            filters.append(cond); params.extend(vals)
+
+        for col, val in [
+            ("p.run_id", run_id), ("p.status", status),
+            ("p.source", source),  ("p.dc_type", dc_type),
+        ]:
+            val_list = self._as_filter_list(val)
+            if val_list:
+                cond, vals = self._in_clause(col, val_list)
+                filters.append(cond); params.extend(vals)
+
         if search:
             filters.append("(LOWER(p.title) LIKE ? OR LOWER(p.doi) LIKE ?)")
             params += [f"%{search.lower()}%", f"%{search.lower()}%"]
@@ -625,9 +653,13 @@ class PipelineDB:
             )
         elif oa_filter == "Non défini":
             filters.append("p.upw_is_oa IS NULL")
-        if licence:
-            filters.append("LOWER(COALESCE(p.upw_license,'')) = ?")
-            params.append(licence.lower())
+
+        licence_list = self._as_filter_list(licence)
+        if licence_list:
+            lowers = [l.lower() for l in licence_list]
+            cond, vals = self._in_clause("LOWER(COALESCE(p.upw_license,''))", lowers)
+            filters.append(cond); params.extend(vals)
+
         if epfl_strength in ("weak", "strong"):
             # SQL fragment that identifies a "strong" EPFL author (not weak).
             _strong = (

@@ -1015,60 +1015,71 @@ elif page == "Publications":
     db_r = get_db()
 
     # ── Filtres ──────────────────────────────────────────────────────────
+    _PUB_FILTER_KEYS = {
+        "pf_run": [], "pf_type": [], "pf_status": [], "pf_source": [],
+        "pf_unit": [], "pf_sciper": "", "pf_search": "",
+        "pf_oa": "Tous", "pf_pdf": "Tous", "pf_licence": [], "pf_epfl": "Tous",
+    }
+
+    def _reset_pub_filters():
+        for k, v in _PUB_FILTER_KEYS.items():
+            st.session_state[k] = v
+        st.session_state["pub_page"] = 1
+
     with st.expander("🔍 Filtres", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1:
             runs_df = db_r.get_runs(limit=50)
-            run_opts = ["Tous"] + (
-                runs_df["run_id"].tolist() if not runs_df.empty else []
-            )
-            sel_run = st.selectbox("Run", run_opts)
+            run_opts = runs_df["run_id"].tolist() if not runs_df.empty else []
+            sel_run = st.multiselect("Run", run_opts, key="pf_run")
 
             all_types = db_r.get_distinct_dc_types()
-            sel_type = st.selectbox("Type de document", ["Tous"] + all_types)
+            sel_type = st.multiselect("Type de document", all_types, key="pf_type")
 
         with c2:
-            status_opts = [
-                "Tous",
-                "workflow",
-                "workspace",
-                "deduplicated",
-                "rejected",
-                "error",
-            ]
-            sel_status = st.selectbox("Statut", status_opts)
+            sel_status = st.multiselect(
+                "Statut",
+                ["workflow", "workspace", "deduplicated", "rejected", "error"],
+                key="pf_status",
+            )
 
             all_sources = db_r.get_distinct_sources()
-            sel_source = st.selectbox("Source", ["Toutes"] + all_sources)
+            sel_source = st.multiselect("Source", all_sources, key="pf_source")
 
         with c3:
             all_units = db_r.get_distinct_units()
-            sel_unit = st.selectbox("Unité", ["Toutes"] + all_units)
+            sel_unit = st.multiselect("Unité", all_units, key="pf_unit")
             sciper_q = st.text_input(
-                "SCIPER ou nom auteur EPFL", placeholder="123456 ou Dupont"
+                "SCIPER ou nom auteur EPFL", placeholder="123456 ou Dupont",
+                key="pf_sciper",
             )
 
-        search_q = st.text_input("Recherche titre / DOI", placeholder="deep learning…")
+        search_q = st.text_input(
+            "Recherche titre / DOI", placeholder="deep learning…", key="pf_search",
+        )
 
-        cf1, cf2, cf3, cf4 = st.columns(4)
+        cf1, cf2, cf3, cf4, cf5 = st.columns([2, 2, 2, 2, 1])
         with cf1:
             sel_oa = st.selectbox(
                 "Statut OA",
                 ["Tous", "OA", "Non-OA", "Non-libre", "Non défini"],
                 help="Filtre sur le statut Open Access (Unpaywall).",
+                key="pf_oa",
             )
         with cf2:
             sel_pdf = st.selectbox(
                 "PDF récupéré",
                 ["Tous", "Avec PDF", "Sans PDF"],
                 help="Filtre sur la présence d'un PDF en accès libre.",
+                key="pf_pdf",
             )
         with cf3:
             all_licences = db_r.get_distinct_licences()
-            sel_licence = st.selectbox(
+            sel_licence = st.multiselect(
                 "Licence",
-                ["Toutes"] + all_licences,
+                all_licences,
                 help="Filtre sur la licence Unpaywall (cc-by, elsevier-specific…).",
+                key="pf_licence",
             )
         with cf4:
             sel_epfl = st.selectbox(
@@ -1077,7 +1088,13 @@ elif page == "Publications":
                 help="Filtre sur le statut des auteurs EPFL reconciliés.\n"
                      "Faible : tous les auteurs sont hôtes, externes ou étudiants.\n"
                      "Fort : au moins un auteur permanent.",
+                key="pf_epfl",
             )
+        with cf5:
+            st.markdown("<div style='padding-top:24px'>", unsafe_allow_html=True)
+            st.button("↺ Reset", on_click=_reset_pub_filters,
+                      use_container_width=True, help="Réinitialiser tous les filtres")
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # Résoudre sciper_q : si c'est un nom, chercher les scipers correspondants
     resolved_sciper = None
@@ -1118,16 +1135,16 @@ elif page == "Publications":
         "strong" if sel_epfl == "✅ Statut fort"   else None
     )
     _filter_kwargs = dict(
-        run_id=None if sel_run == "Tous" else sel_run,
-        status=None if sel_status == "Tous" else sel_status,
-        source=None if sel_source == "Toutes" else sel_source,
-        dc_type=None if sel_type == "Tous" else sel_type,
+        run_id=sel_run or None,
+        status=sel_status or None,
+        source=sel_source or None,
+        dc_type=sel_type or None,
         sciper=resolved_sciper or None,
-        unit_acronym=None if sel_unit == "Toutes" else sel_unit,
+        unit_acronym=sel_unit or None,
         search=search_q.strip() or None,
         has_pdf=_has_pdf_val,
         oa_filter=None if sel_oa == "Tous" else sel_oa,
-        licence=None if sel_licence == "Toutes" else sel_licence,
+        licence=sel_licence or None,
         epfl_strength=_epfl_strength_val,
     )
 
@@ -1217,21 +1234,22 @@ elif page == "Publications":
     _has_enrichment = False
 
     if not pub_df.empty:
-        if sel_run != "Tous":
-            # Fetch entire run enrichment — efficient single query per table.
-            _a_df = db_r.get_pub_authors_for_run(sel_run)
+        if len(sel_run) == 1:
+            # Single run selected — fetch entire run enrichment (efficient single query per table).
+            _single_run = sel_run[0]
+            _a_df = db_r.get_pub_authors_for_run(_single_run)
             if not _a_df.empty:
-                _a_df.insert(0, "run_id", sel_run)
+                _a_df.insert(0, "run_id", _single_run)
             _run_authors, _run_weak = _build_authors_dict(_a_df)
 
-            _u_df = db_r.get_pub_units_for_run(sel_run)
+            _u_df = db_r.get_pub_units_for_run(_single_run)
             if not _u_df.empty:
-                _u_df.insert(0, "run_id", sel_run)
+                _u_df.insert(0, "run_id", _single_run)
             _run_units = _build_units_dict(_u_df)
 
-            _d_df = db_r.get_detected_authors_for_run(sel_run)
+            _d_df = db_r.get_detected_authors_for_run(_single_run)
             if not _d_df.empty:
-                _d_df.insert(0, "run_id", sel_run)
+                _d_df.insert(0, "run_id", _single_run)
             _run_detected = _build_detected_dict(_d_df)
         else:
             # "Tous les runs": fetch enrichment only for the current page's rows.
@@ -1360,27 +1378,28 @@ elif page == "Publications":
         with _dl_cols[0]:
             # CSV export uses all matching rows, not just current page
             _full_df = db_r.get_publications(**_filter_kwargs, limit=10_000, offset=0)
+            _run_label = "-".join(sel_run) if sel_run else "all"
             st.download_button(
                 "⬇ Publications CSV",
                 data=_full_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"publications_{sel_run}_{date.today()}.csv",
+                file_name=f"publications_{_run_label}_{date.today()}.csv",
                 mime="text/csv",
             )
 
         with _dl_cols[1]:
-            if sel_run != "Tous":
-                ax_df = db_r.get_pub_authors_for_run(sel_run)
+            if len(sel_run) == 1:
+                ax_df = db_r.get_pub_authors_for_run(sel_run[0])
                 if not ax_df.empty:
                     st.download_button(
                         "⬇ Publications × Auteurs CSV",
                         data=ax_df.to_csv(index=False).encode("utf-8"),
-                        file_name=f"pub_authors_{sel_run}_{date.today()}.csv",
+                        file_name=f"pub_authors_{sel_run[0]}_{date.today()}.csv",
                         mime="text/csv",
                     )
 
         with _dl_cols[2]:
-            if sel_run != "Tous":
-                run_dir = ROOT / "data" / sel_run
+            if len(sel_run) == 1:
+                run_dir = ROOT / "data" / sel_run[0]
                 _reports = list(run_dir.glob("*Report*.xlsx")) if run_dir.exists() else []
                 if _reports:
                     with open(_reports[0], "rb") as f:
