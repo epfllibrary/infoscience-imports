@@ -17,8 +17,7 @@ from clients.openalex_client import OpenAlexClient
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 import mappings
 
 # Base URL for Crossref API
@@ -50,8 +49,7 @@ class CrossrefEndpoint:
 
 
 class Client(APIClient):
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('crossref')
 
     @retry_request
     def search_query(self, **param_kwargs):
@@ -472,7 +470,7 @@ class Client(APIClient):
         try:
             openalex_id = f"https://doi.org/{doi}"
             openalex_record = OpenAlexClient.fetch_record_by_unique_id(openalex_id, format="openalex")
-            self.logger.debug(f"Get OpenAlex Record by DOI {openalex_record}")
+            # self.logger.debug(f"Get OpenAlex Record by DOI {openalex_record}")
             if openalex_record:
                 return OpenAlexClient.extract_abstract(openalex_record)
         except Exception as e:
@@ -865,7 +863,7 @@ class Client(APIClient):
             family = author.get("family", "")
             full_name = f"{family}, {given}".strip()
             affiliations = author.get("affiliation", [])
-            orgs = "|".join([aff.get("name", "") for aff in affiliations])
+            orgs = "|".join([self._aff_to_str(aff) for aff in affiliations])
             authors.append(
                 {
                     "author": full_name,
@@ -875,6 +873,20 @@ class Client(APIClient):
                 }
             )
         return authors
+
+    @staticmethod
+    def _aff_to_str(aff: dict) -> str:
+        """Build a searchable string from an affiliation dict.
+
+        Crossref affiliations may carry structured ROR IDs alongside the text name:
+        ``{"name": "EPFL", "id": [{"id": "https://ror.org/02s376052", "id-type": "ROR", ...}]}``.
+        Both the name and any ROR URLs are included so downstream regex/ROR checks work.
+        """
+        parts = [aff.get("name", "")]
+        for id_entry in aff.get("id", []):
+            if id_entry.get("id-type") == "ROR":
+                parts.append(id_entry.get("id", ""))
+        return " ".join(p for p in parts if p)
 
     def _normalize_issn(self, issn_field):
         """

@@ -22,6 +22,8 @@ sonar-project.properties
 **/*test_*/**
 template.py
 **/.DS_Store
+**/.claude/**
+**/.vscode/**
 
 
 # Ignore local windows batch files and internal documentation #
@@ -37,3 +39,4 @@ test.csv
 ###################
 **/.env**
 **/config.ini
+.streamlit/auth.yaml

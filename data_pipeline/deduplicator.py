@@ -4,17 +4,17 @@ import re
 import string
 import os
 import pandas as pd
-from fuzzywuzzy import fuzz
+from rapidfuzz import fuzz
 from config import logs_dir, source_order
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-from utils import manage_logger
+from utils import get_pipeline_logger
 
+logger = get_pipeline_logger("deduplicator")
 
 class DataFrameProcessor:
     def __init__(self, *dfs):
         self.dataframes = dfs
-        log_file_path = os.path.join(logs_dir, "logging.log")
-        self.logger = manage_logger(log_file_path)
+        self.logger = logger
 
     def clean_title(self, title):
         # Remove HTML tags
@@ -28,37 +28,28 @@ class DataFrameProcessor:
         title = title.translate(str.maketrans("", "", string.punctuation))
         return title
 
-    def _generate_unique_ids(self, row, existing_ids):
+    def _generate_unique_ids(self, row):
+        """Generate a (doi_id, title_pubyear_id) tuple for a single row.
+
+        The previous implementation accepted an `existing_ids` list intended
+        for cross-row fuzzy matching, but that list was never populated inside
+        the pandas apply() call (side-effect in apply is not supported).
+        The actual deduplication relies on groupby + merge_complementary_info
+        downstream, so this method now simply computes the two canonical keys.
+        """
         title = row["title"]
         pubyear = row["pubyear"]
 
-        # Remove HTML tags
+        # Normalise title
         title = re.sub(r"<[^>]+>", "", title)
-
-        # Replace non-alphanumeric characters (excluding whitespace) with spaces
         title = re.sub(r"[^\w\s]", " ", title)
-
-        # Reduce multiple spaces to a single space and strip leading/trailing spaces
-        title = re.sub(r"\s+", " ", title).strip()
-
-        # Normalize title by converting to lowercase and removing punctuation
-        title = title.lower()
+        title = re.sub(r"\s+", " ", title).strip().lower()
         title = title.translate(str.maketrans("", "", string.punctuation))
 
-        # Generate unique IDs based on DOI and title+pubyear
         doi_val = row.get("doi", pd.NA)
         doi_id = doi_val if (pd.notna(doi_val) and str(doi_val).strip()) else pd.NA
         title_pubyear_id = title + str(pubyear)
 
-        # Check for fuzzy matches against existing IDs for title+pubyear
-        for existing_id, existing_pubyear in existing_ids:
-            if (
-                fuzz.token_set_ratio(title, existing_id) > 85
-                and abs(pubyear - existing_pubyear) <= 1
-            ):
-                return doi_id if doi_id else title_pubyear_id
-
-        # Return a tuple of both IDs
         return doi_id, title_pubyear_id
 
     def deduplicate_dataframes(self):
@@ -68,23 +59,16 @@ class DataFrameProcessor:
         # Combine the input dataframes into one
         combined_df = pd.concat(self.dataframes, ignore_index=True)
 
-        # Create a unique identifier for rows
-        existing_ids = []
-        combined_df["dedup_keys"] = combined_df.apply(
-            lambda row: self._generate_unique_ids(row, existing_ids), axis=1
-        )
-
-        # Unpack the unique_id tuple
+        # Create canonical deduplication keys (doi_id, title_pubyear_id) for each row.
+        # NOTE: _generate_unique_ids no longer takes existing_ids — see its docstring.
         combined_df[["doi_id", "title_pubyear_id"]] = pd.DataFrame(
-            combined_df["dedup_keys"].tolist(), index=combined_df.index
+            combined_df.apply(self._generate_unique_ids, axis=1).tolist(),
+            index=combined_df.index,
         )
 
         combined_df["doi_id"] = combined_df["doi_id"].replace(
             {None: pd.NA, "": pd.NA, "None": pd.NA}
         )
-
-        # Drop the helper column 'dedup_keys'
-        combined_df.drop(columns=["dedup_keys"], inplace=True)
 
         # Sort the combined dataframe to prioritize 'scopus' and 'wos' sources in case of duplicates
         combined_df["source"] = pd.Categorical(
@@ -163,7 +147,7 @@ class DataFrameProcessor:
         """
         Deduplicate on existing Infoscience publications.
         """
-        self.logger.info(f"- Processus de dédoublonnage avec Infoscience")
+        self.logger.info("Running Infoscience deduplication")
         wrapper = DSpaceClientWrapper()
 
         # Apply the DSpaceClientWrapper.find_publication_duplicate function to each row
@@ -178,7 +162,7 @@ class DataFrameProcessor:
         return filtered_df, duplicates_df
 
     def deduplicate_infoscience_enhanced(self, df):
-        self.logger.info("Recherche avancée de doublons avec métadonnées...")
+        self.logger.debug("Falling back to metadata-based duplicate detection")
         wrapper = DSpaceClientWrapper()
 
         results = df.apply(

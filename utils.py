@@ -2,41 +2,44 @@ import logging
 import re
 import string
 import unicodedata
+from datetime import datetime
 
-def manage_logger(logfile_name):
-    # Configure logging for a specific logger (unique per instance)
-    logger = logging.getLogger(logfile_name)
-    logger.setLevel(logging.INFO)  # Set the logging level to DEBUG
 
-    # Check if the logger already has handlers to avoid adding multiple handlers
-    if not logger.handlers:  # This ensures we don't add handlers multiple times
-        # Create a file handler
-        file_handler = logging.FileHandler(logfile_name)
-        file_handler.setLevel(
-            logging.DEBUG
-        )  # Set the level for the file handler to DEBUG
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^\w\s-]", "", name.lower().strip())
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug[:30]
 
-        # Create a console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(
-            logging.DEBUG
-        )  # Set the level for the console handler to INFO
 
-        # Create a formatter and set it for both handlers
-        formatter = logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s"
-        )
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
+def make_run_id(name: str = "") -> str:
+    """Build a run ID: timestamp[_slug] where slug is derived from name."""
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    slug = _slugify(name) if name.strip() else ""
+    return f"{ts}_{slug}" if slug else ts
 
-        # Add the handlers to the logger
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
 
-    # Prevent log messages from propagating to the root logger
-    logger.propagate = False
+def get_pipeline_logger(module_name: str) -> logging.Logger:
+    """Return a child logger of the root 'pipeline' logger.
 
-    return logger
+    All configuration (handlers, level, formatters) is set once in main.py via
+    setup_logger(). Child loggers inherit that config automatically through
+    propagation.  Use as:
+        logger = get_pipeline_logger(__name__)   # → pipeline.data_pipeline.loader
+    or with a short name:
+        logger = get_pipeline_logger("loader")   # → pipeline.loader
+    """
+    return logging.getLogger(f"pipeline.{module_name}")
+
+
+def manage_logger(logfile_name: str) -> logging.Logger:
+    """Deprecated — use get_pipeline_logger() instead.
+
+    Kept for backward compatibility during the transition. Returns the root
+    pipeline logger regardless of the logfile_name argument (the file handler
+    is managed centrally in main.py).
+    """
+    return logging.getLogger("pipeline")
 
 def clean_value(formatted_name):
     formatted_name = formatted_name.lower()
