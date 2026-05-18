@@ -2,6 +2,7 @@
 """Main script to run the data pipeline (cron-friendly)."""
 
 import os
+import signal
 import sys
 import argparse
 import logging
@@ -781,6 +782,21 @@ def main():
             + ", ".join(SUPPORTED_SOURCES)
         )
 
+    # Determine run_id before run_pipeline so the SIGTERM handler can reference it.
+    effective_run_id = args.run_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    def _handle_sigterm(signum, frame):
+        logger.warning("SIGTERM received — marking run %s as killed.", effective_run_id)
+        try:
+            _db = PipelineDB()
+            _db.finish_run(effective_run_id, status="killed")
+            _db.close()
+        except Exception as _e:
+            logger.debug("Could not update DB on SIGTERM: %s", _e)
+        sys.exit(130)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     try:
         run_pipeline(
             logger=logger,
@@ -792,7 +808,7 @@ def main():
             dry_run=args.dry_run,
             no_email=args.no_email,
             sources=selected_sources,
-            run_id=args.run_id,
+            run_id=effective_run_id,
             env=active_env,
         )
         sys.exit(0)

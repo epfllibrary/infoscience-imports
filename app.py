@@ -83,6 +83,7 @@ STATUS_COLORS = {
     "running":   C_YELLOW,
     "completed": CANARD,
     "failed":    C_RED_DARK,
+    "killed":    C_RED_DARK,
 }
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -474,6 +475,14 @@ elif page == "Lancer un run":
         with col2:
             if st.button("⛔ Arrêter le run", type="secondary"):
                 if kill_active_run():
+                    # Mark the run as killed immediately — the subprocess may not
+                    # reach finish_run() if it is killed before the SIGTERM handler fires.
+                    try:
+                        _db_kill = PipelineDB()
+                        _db_kill.finish_run(run_id, status="killed")
+                        _db_kill.close()
+                    except Exception:
+                        pass
                     st.warning("Signal d'arrêt envoyé au processus.")
                     time.sleep(1)
                     st.cache_resource.clear()
@@ -764,7 +773,7 @@ elif page == "Programmation":
         "Personnalisé…":              "",
     }
     _STATUS_ICON = {
-        "completed": "✅", "running": "⏳", "failed": "❌", None: "—",
+        "completed": "✅", "running": "⏳", "failed": "❌", "killed": "🛑", None: "—",
     }
 
     _schedules = _load_sched()
