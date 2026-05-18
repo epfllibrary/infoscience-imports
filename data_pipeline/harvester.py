@@ -483,6 +483,29 @@ class CrossrefHarvester(Harvester):
             self.logger.debug("No valid records fetched. Returning an empty DataFrame.")
             return pd.DataFrame()
 
+        epfl_pattern = re.compile(
+            r"(?:EPFL|[Pp]olytechnique\s+[Ff].d.rale\s+de\s+Lausanne"
+            r"|[Ss]wiss\s+[Ff]ederal\s+[Ii]nstitute\s+of\s+[Tt]echnology\s+in\s+[Ll]ausanne)"
+        )
+
+        def _has_epfl_affiliation(authors):
+            if not isinstance(authors, list):
+                return False
+            return any(
+                epfl_pattern.search(str(a.get("organizations", "")))
+                for a in authors
+                if isinstance(a, dict)
+            )
+
+        before = len(df)
+        df = df[df["authors"].apply(_has_epfl_affiliation)].reset_index(drop=True)
+        filtered = before - len(df)
+        if filtered:
+            self.logger.info(
+                "Filtered out %d record(s) with no EPFL affiliation (%d remaining).",
+                filtered, len(df),
+            )
+
         return df
 
 
