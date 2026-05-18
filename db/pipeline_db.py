@@ -262,6 +262,20 @@ class PipelineDB:
 
         logger.info("DB: migrating publications schema from v1 to v2 …")
 
+        # Step 0 — ensure all additive columns exist on the v1 table before
+        # renaming it, so the INSERT … SELECT below can reference them safely
+        # regardless of how far the previous incremental migrations had run.
+        for col_sql in [
+            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS pub_year VARCHAR",
+            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_is_oa BOOLEAN",
+            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_valid_pdf BOOLEAN",
+            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_oa_status VARCHAR",
+            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS upw_license VARCHAR",
+            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS journal_title VARCHAR",
+            "ALTER TABLE publications ADD COLUMN IF NOT EXISTS internal_id VARCHAR",
+        ]:
+            con.execute(col_sql)
+
         # Step 1 — drop old indexes so the rename can proceed, then rename
         for old_idx in [
             "idx_pubs_run", "idx_pubs_status", "idx_pubs_source", "idx_pubs_type",
