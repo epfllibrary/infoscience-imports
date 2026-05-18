@@ -260,6 +260,10 @@ def run_pipeline(
     export_dir = output_dir / execution_timestamp
     export_dir.mkdir(parents=True, exist_ok=True)
 
+    db = PipelineDB()
+    db.start_run(run_id=execution_timestamp, window_start=start_date, window_end=end_date,
+                 sources=active_sources, dry_run=dry_run)
+
     # -------------------- Harvest
     def safe_harvest(name: str, fn) -> pd.DataFrame:
         try:
@@ -307,6 +311,8 @@ def run_pipeline(
     non_empty = [df for df in publications.values() if not df.empty]
     if not non_empty:
         logger.warning("No harvested data from selected sources; nothing to process.")
+        db.finish_run(execution_timestamp, status="completed")
+        db.close()
         return {
             "df_metadata": pd.DataFrame(),
             "df_authors": pd.DataFrame(),
@@ -390,10 +396,6 @@ def run_pipeline(
     # -------------------- Persist to DuckDB
     run_id = execution_timestamp
     try:
-        db = PipelineDB()
-        db.start_run(run_id=run_id, window_start=start_date, window_end=end_date,
-                     sources=active_sources, dry_run=dry_run)
-
         # Stats par source
         for src, df_src in publications.items():
             db.record_source_stats(run_id=run_id, source=src, harvested=len(df_src))
@@ -427,6 +429,11 @@ def run_pipeline(
     except Exception as e:
         logger.warning("DuckDB: échec de l'enregistrement (non bloquant) — %s: %s",
                        type(e).__name__, e, exc_info=True)
+        try:
+            db.finish_run(run_id, status="failed")
+            db.close()
+        except Exception:
+            pass
 
     # -------------------- Report & email
     recipient_email = os.getenv("RECIPIENT_EMAIL")
