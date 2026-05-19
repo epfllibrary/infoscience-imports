@@ -163,6 +163,13 @@ class GenerateReports:
         ]
         return df_failed.shape[0], df_failed
 
+    def flagged_publications(self):
+        """Publications flagged during Infoscience deduplication (preprint superseded, cross-type DOI)."""
+        if self.df is None or self.df.empty or "dedup_note" not in self.df.columns:
+            return 0, self._empty_result()
+        df_flagged = self.df[self.df["dedup_note"].notna()]
+        return len(df_flagged), df_flagged
+
     def excluded_publications_count(self):
         """Excluded publications (present in df but not in df_loaded)."""
         if not self._has_cols(self.df, ["row_id"]) or not self._has_cols(
@@ -270,4 +277,5 @@ class GenerateReports:
             "Matched EPFL Authors": self.epfl_reconciled_authors(),
             "EPFL Authors with Unit": self.epfl_reconciled_authors_with_unit(),
             "Failed Imports": self.failed_imports(),
+            "Flagged Publications": self.flagged_publications(),
         }

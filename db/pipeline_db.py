@@ -176,6 +176,8 @@ class PipelineDB:
                     workspace_id VARCHAR,
                     workflow_id VARCHAR,
                     error_msg VARCHAR,
+                    dedup_note VARCHAR,
+                    flagged_publication VARCHAR,
                     loaded_at TIMESTAMP DEFAULT NOW(),
                     PRIMARY KEY (run_id, pub_id))""",
                 """CREATE TABLE IF NOT EXISTS epfl_authors (
@@ -222,6 +224,12 @@ class PipelineDB:
 
             # Run idempotent migration from v1 (per-run publications) to v2
             # (canonical publications + run_publications).
+            # Additive column additions — safe on any existing DB.
+            for _migration in [
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS dedup_note VARCHAR",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS flagged_publication VARCHAR",
+            ]:
+                con.execute(_migration)
         finally:
             con.close()
 
@@ -501,6 +509,8 @@ class PipelineDB:
                 rp_rows.append((
                     run_id, pub_id, s(row.get("row_id")),
                     status, ws, wf, error,
+                    s(row.get("dedup_note")),
+                    s(row.get("flagged_publication")),
                 ))
 
         _process(df_imported, status_override=None)
@@ -532,8 +542,8 @@ class PipelineDB:
         # Insert per-run records — ignore duplicates (same pub seen twice in one run).
         self._executemany(
             "INSERT INTO run_publications"
-            " (run_id, pub_id, row_id, status, workspace_id, workflow_id, error_msg)"
-            " VALUES (?,?,?,?,?,?,?)"
+            " (run_id, pub_id, row_id, status, workspace_id, workflow_id, error_msg, dedup_note, flagged_publication)"
+            " VALUES (?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT (run_id, pub_id) DO NOTHING",
             rp_rows,
         )
@@ -885,7 +895,7 @@ class PipelineDB:
 
     def _pub_filters(self, run_id, status, source, dc_type, sciper, unit_acronym,
                      search, has_pdf=None, oa_filter=None, licence=None,
-                     epfl_strength=None):
+                     epfl_strength=None, dedup_note=None):
         """Shared filter-building logic for get_publications and count_publications.
 
         run_id, status, source, dc_type, unit_acronym, licence each accept either a
@@ -948,6 +958,13 @@ class PipelineDB:
             cond, vals = self._in_clause("LOWER(COALESCE(p.upw_license,''))", lowers)
             filters.append(cond); params.extend(vals)
 
+        if dedup_note == "__flagged__":
+            filters.append("rp.dedup_note IS NOT NULL")
+        elif dedup_note:
+            note_list = self._as_filter_list(dedup_note)
+            cond, vals = self._in_clause("rp.dedup_note", note_list)
+            filters.append(cond); params.extend(vals)
+
         if epfl_strength in ("weak", "strong"):
             # SQL fragment that identifies a "strong" EPFL author (not weak).
             _strong = (
@@ -978,11 +995,12 @@ class PipelineDB:
     def count_publications(self, run_id=None, status=None, source=None,
                            dc_type=None, sciper=None, unit_acronym=None,
                            search=None, has_pdf=None, oa_filter=None,
-                           licence=None, epfl_strength=None) -> int:
+                           licence=None, epfl_strength=None,
+                           dedup_note=None) -> int:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
-            epfl_strength=epfl_strength)
+            epfl_strength=epfl_strength, dedup_note=dedup_note)
         r = self._query_one(
             f"SELECT COUNT(*) FROM ("
             f"  SELECT DISTINCT rp.run_id, rp.pub_id, p.doi, p.title,"
@@ -1000,12 +1018,12 @@ class PipelineDB:
     def get_publications(self, run_id=None, status=None, source=None,
                          dc_type=None, sciper=None, unit_acronym=None,
                          search=None, has_pdf=None, oa_filter=None,
-                         licence=None, epfl_strength=None,
+                         licence=None, epfl_strength=None, dedup_note=None,
                          limit=100, offset=0) -> pd.DataFrame:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
-            epfl_strength=epfl_strength)
+            epfl_strength=epfl_strength, dedup_note=dedup_note)
         params += [limit, offset]
         return self._query(
             f"SELECT DISTINCT rp.run_id, rp.row_id, p.doi, p.title,"
@@ -1013,7 +1031,7 @@ class PipelineDB:
             f" rp.workflow_id, rp.error_msg, rp.loaded_at,"
             f" p.pub_year, p.upw_is_oa, p.upw_valid_pdf,"
             f" p.upw_oa_status, p.upw_license, p.internal_id,"
-            f" p.seen_count, p.infoscience_dedup_count"
+            f" p.seen_count, p.infoscience_dedup_count, rp.dedup_note, rp.flagged_publication"
             f" FROM run_publications rp"
             f" JOIN publications p ON p.pub_id = rp.pub_id"
             f" {join_a} {join_u} {where}"
