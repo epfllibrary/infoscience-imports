@@ -278,10 +278,15 @@ class DSpaceClientWrapper:
             doi_total = self._count_items(doi_q)
             if doi_total > 0:
                 if rec_type == "published":
-                    doi_preprint = self._count_items(doi_q, scope=PREPRINT_COLLECTION_UUID)
-                    if doi_preprint == doi_total:
-                        items = self._fetch_item_info(doi_q, scope=PREPRINT_COLLECTION_UUID)
-                        return False, "cross_type_doi", items or None
+                    # Fetch the actual items and inspect their type — counting with a
+                    # scoped query is unreliable because the DSpace scope parameter
+                    # may not strictly filter by collection.
+                    items = self._fetch_item_info(doi_q, max_items=5)
+                    only_preprints = items and all(
+                        i.get("dc_type") == "text::preprint" for i in items
+                    )
+                    if only_preprints:
+                        return False, "cross_type_doi", items
                 return True, None, None
             if self._count_workflow_items(doi_q) > 0:
                 return True, None, None
