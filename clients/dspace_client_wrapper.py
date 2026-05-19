@@ -163,7 +163,8 @@ class DSpaceClientWrapper:
 
     _ENTITY_FILTER  = "(entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
     _TYPE_PREPRINT  = "types:(*preprint*)"
-    _TYPE_DATASET   = "types:(*dataset*)"
+    _TYPE_DATASET   = "entityType:(Product) AND types:(*dataset*)"
+    _TYPE_SOFTWARE  = "entityType:(Product) AND types:(*software*)"
     _TYPE_PUBLISHED = "entityType:(Publication) AND -types:(*preprint*)"
     _WORKFLOW_FILTER = (
         "(search.resourcetype:(XmlWorkflowItem) OR "
@@ -305,7 +306,12 @@ class DSpaceClientWrapper:
 
         # ── Title+year check (type-scoped) ────────────────────────────
         if rec_type == "dataset":
-            if self._count_items(f"{ty_q} AND {self._TYPE_DATASET}", scope=DATASET_COLLECTION_UUID) > 0:
+            dc_type = str(x.get("dc.type") or "")
+            product_type_filter = (
+                self._TYPE_SOFTWARE if dc_type.startswith("software")
+                else self._TYPE_DATASET
+            )
+            if self._count_items(f"{ty_q} AND {product_type_filter}", scope=DATASET_COLLECTION_UUID) > 0:
                 return True, None, None
             # Title+year exists outside "Datasets and Code" — different entity, flag it
             ty_total = self._count_items(ty_q)
