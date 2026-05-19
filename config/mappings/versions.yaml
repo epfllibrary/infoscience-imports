@@ -1,0 +1,16 @@
+# NOTE: use get_version_mapping() for safe lookup — handles None, "", "None" → "NA".
+publishedVersion:
+  value: "http://purl.org/coar/version/c_970fb48d4fbd8a85"
+  display: "Published version"
+
+acceptedVersion:
+  value: "http://purl.org/coar/version/c_ab4af688f83e57aa"
+  display: "Accepted version"
+
+submittedVersion:
+  value: "http://purl.org/coar/version/c_71e4c1898caa6e32"
+  display: "Submitted version"
+
+NA:
+  value: "http://purl.org/coar/version/c_be7fb7dd8ff6fe43"
+  display: "Not Applicable (or Unknown)"

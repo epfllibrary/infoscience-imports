@@ -1055,7 +1055,7 @@ class Loader:
                 f"/sections/{form_section}details/dc.subject",
                 [
                     build_value(keyword)
-                    for keyword in str(row.get("keywords", "")).split("||")
+                    for keyword in str(row.get("keywords") or "").split("||")
                     if keyword.strip()
                 ],
                 True,
