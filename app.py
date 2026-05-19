@@ -1035,6 +1035,7 @@ elif page == "Publications":
         "pf_run": [], "pf_type": [], "pf_status": [], "pf_source": [],
         "pf_unit": [], "pf_sciper": "", "pf_search": "",
         "pf_oa": "Tous", "pf_pdf": "Tous", "pf_licence": [], "pf_epfl": "Tous",
+        "pf_dedup_note": "Tous",
     }
 
     def _reset_pub_filters():
@@ -1074,7 +1075,7 @@ elif page == "Publications":
             "Recherche titre / DOI", placeholder="deep learning…", key="pf_search",
         )
 
-        cf1, cf2, cf3, cf4, cf5 = st.columns([2, 2, 2, 2, 1])
+        cf1, cf2, cf3, cf4, cf5, cf6 = st.columns([2, 2, 2, 2, 2, 1])
         with cf1:
             sel_oa = st.selectbox(
                 "Statut OA",
@@ -1107,6 +1108,15 @@ elif page == "Publications":
                 key="pf_epfl",
             )
         with cf5:
+            sel_dedup_note = st.selectbox(
+                "Signalement dedup",
+                ["Tous", "🚩 Flaggés", "supersedes_preprint", "cross_type_doi"],
+                help="Filtre sur les publications signalées lors de la déduplication Infoscience.\n"
+                     "supersedes_preprint : version publiée importée, preprint déjà dans Infoscience.\n"
+                     "cross_type_doi : même DOI qu'un preprint existant.",
+                key="pf_dedup_note",
+            )
+        with cf6:
             st.markdown("<div style='padding-top:24px'>", unsafe_allow_html=True)
             st.button("↺ Reset", on_click=_reset_pub_filters,
                       use_container_width=True, help="Réinitialiser tous les filtres")
@@ -1150,6 +1160,11 @@ elif page == "Publications":
         "weak"   if sel_epfl == "⚠️ Statut faible" else
         "strong" if sel_epfl == "✅ Statut fort"   else None
     )
+    _dedup_note_val = (
+        None              if sel_dedup_note == "Tous" else
+        "__flagged__"     if sel_dedup_note == "🚩 Flaggés" else
+        sel_dedup_note
+    )
     _filter_kwargs = dict(
         run_id=sel_run or None,
         status=sel_status or None,
@@ -1162,6 +1177,7 @@ elif page == "Publications":
         oa_filter=None if sel_oa == "Tous" else sel_oa,
         licence=sel_licence or None,
         epfl_strength=_epfl_strength_val,
+        dedup_note=_dedup_note_val,
     )
 
     _filter_sig = str(sorted(_filter_kwargs.items()))
@@ -1398,7 +1414,8 @@ elif page == "Publications":
                "OA", "Licence", "PDF", "⚠️",
                "Auteurs EPFL", "Unités",
                "seen_count", "infoscience_dedup_count",
-               "src_url", "doi_url", "ws_url", "wf_url", "error_msg"]
+               "src_url", "doi_url", "ws_url", "wf_url", "error_msg",
+               "dedup_note", "flagged_publication"]
         )
         _cols = [c for c in _cols if c in d.columns]
 
@@ -1432,7 +1449,9 @@ elif page == "Publications":
                                    display_text=r".*/workspaceitems/(\d+)/edit"),
                 "wf_url":      st.column_config.LinkColumn("Workflow",  width="small",
                                    display_text=r".*/workflowitems/(\d+)/edit"),
-                "error_msg":   st.column_config.TextColumn("Erreur",  width="medium"),
+                "error_msg":           st.column_config.TextColumn("Erreur",       width="medium"),
+                "dedup_note":          st.column_config.TextColumn("Note dédup",    width="medium"),
+                "flagged_publication":  st.column_config.TextColumn("🚩 Doublon Infoscience", width="large"),
             },
         )
 

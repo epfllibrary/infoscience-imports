@@ -897,6 +897,37 @@ MAPPING_UNITS_CODES = {
 
 
 # ---------------------------------------------------------------------------
+# Deduplication type classification
+# ---------------------------------------------------------------------------
+
+PREPRINT_COLLECTION = "Preprints and Working Papers"
+DATASET_COLLECTION  = "Datasets and Code"
+
+# Resolved from collections_mapping at import time — avoids duplication.
+PREPRINT_COLLECTION_UUID = collections_mapping[PREPRINT_COLLECTION]["id"]
+DATASET_COLLECTION_UUID  = collections_mapping[DATASET_COLLECTION]["id"]
+
+
+def classify_record_type(row) -> str:
+    """Return 'preprint', 'dataset', or 'published' for a harvested/dedup row.
+
+    Checks ``ifs3_collection`` first (always populated after harvest mapping),
+    then falls back to the ``dc.type`` / ``dc_type`` column.
+    """
+    collection = str(row.get("ifs3_collection") or "")
+    if collection == PREPRINT_COLLECTION:
+        return "preprint"
+    if collection == DATASET_COLLECTION:
+        return "dataset"
+    dc = str(row.get("dc.type") or row.get("dc_type") or "")
+    if dc == "text::preprint":
+        return "preprint"
+    if dc.startswith("dataset") or dc.startswith("software"):
+        return "dataset"
+    return "published"
+
+
+# ---------------------------------------------------------------------------
 # Lookup helpers
 # ---------------------------------------------------------------------------
 

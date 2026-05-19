@@ -159,6 +159,180 @@ class DSpaceClientWrapper:
         )
         return False  # No duplicates found
 
+    # ── Type-aware duplicate check ────────────────────────────────────────
+
+    _ENTITY_FILTER = "(entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
+    _WORKFLOW_FILTER = (
+        "(search.resourcetype:(XmlWorkflowItem) OR "
+        "((search.resourcetype:(WorkspaceItem) AND submitter_authority:(4e8d183f-1309-470c-955e-c45a99c6f1b8)) OR "
+        "(search.resourcetype:(WorkspaceItem) AND epfl.workflow.rejected:(true))))"
+    )
+
+    def _count_items(self, base_query: str, scope: str = None) -> int:
+        """Count archived/submitted items matching base_query, optionally scoped to a collection."""
+        full_q = f"({base_query}) AND {self._ENTITY_FILTER}"
+        dsos = self._search_objects(
+            query=full_q, page=0, size=1, dso_type="item",
+            configuration="administrativeView", scope=scope, max_pages=1,
+        )
+        return len(dsos)
+
+    def _fetch_item_info(self, base_query: str, scope: str = None, max_items: int = 5) -> list:
+        """Return a list of {uuid, doi, dc_type} dicts for items matching base_query.
+
+        Up to ``max_items`` results are returned so that all known duplicates are
+        captured rather than silently dropping matches beyond the first one.
+        Returns an empty list when nothing is found.
+        """
+        full_q = f"({base_query}) AND {self._ENTITY_FILTER}"
+        dsos = self._search_objects(
+            query=full_q, page=0, size=max_items, dso_type="item",
+            configuration="administrativeView", scope=scope, max_pages=1,
+        )
+        results = []
+        for item in dsos:
+            meta = getattr(item, "metadata", {}) or {}
+            doi_list  = meta.get("dc.identifier.doi", [])
+            type_list = meta.get("dc.type", [])
+            results.append({
+                "uuid":    getattr(item, "uuid", None),
+                "doi":     doi_list[0]["value"]  if doi_list  else None,
+                "dc_type": type_list[0]["value"] if type_list else None,
+            })
+        return results
+
+    def _count_workflow_items(self, base_query: str) -> int:
+        """Count workflow/workspace items matching base_query."""
+        full_q = f"({base_query}) AND {self._WORKFLOW_FILTER}"
+        dsos = self._search_objects(
+            query=full_q, page=0, size=1, configuration="supervision", max_pages=1,
+        )
+        return len(dsos)
+
+    def find_publication_duplicate_typed(self, x: dict) -> tuple:
+        """Type-aware duplicate check against Infoscience.
+
+        Returns ``(is_duplicate: bool, dedup_note: str | None, flagged_info: dict | None)``.
+
+        dedup_note values:
+        - ``"supersedes_preprint"``: published record passed; preprint with same
+          title+year already in Infoscience. ``flagged_info`` holds the preprint.
+        - ``"cross_type_doi"``: published record passed; same DOI exists only as
+          a preprint in Infoscience. ``flagged_info`` holds that item.
+        - ``"dataset_in_other_collection"``: dataset passed; title+year match found
+          outside "Datasets and Code". ``flagged_info`` holds that item.
+        """
+        from mappings import (
+            classify_record_type,
+            PREPRINT_COLLECTION_UUID,
+            DATASET_COLLECTION_UUID,
+        )
+
+        rec_type = classify_record_type(x)
+
+        identifier_type = x["source"]
+        cleaned_title = clean_title(x["title"])
+        pubyear = x.get("pubyear")
+        if pd.notna(pubyear):
+            try:
+                pubyear = int(float(pubyear))
+            except (ValueError, TypeError):
+                pubyear = None
+        else:
+            pubyear = None
+
+        prev_year = pubyear - 1 if pubyear else None
+        next_year = pubyear + 1 if pubyear else None
+
+        handlers = {
+            "wos":               lambda r: str(r["internal_id"]).replace("WOS:", "").strip(),
+            "scopus":            lambda r: str(r["internal_id"]).replace("SCOPUS_ID:", "").strip(),
+            "crossref":          lambda r: str(r["internal_id"]).strip(),
+            "openalex+crossref": lambda r: str(r["internal_id"]).strip(),
+            "openalex":          lambda r: str(r["doi"]).strip(),
+            "zenodo":            lambda r: r["internal_id"].strip(),
+            "datacite":          lambda r: str(r["internal_id"]).strip(),
+            "epo":               lambda r: str(r["family_id"]).strip(),
+            "orcidWorks":        lambda r: None,
+        }
+        item_id = handlers.get(identifier_type, lambda r: None)(x)
+        doi = str(x.get("doi") or "").strip()
+
+        # Title+year query
+        if pubyear is not None:
+            ty_q = (
+                f"(title:({cleaned_title}) AND "
+                f"(dateIssued.year:{pubyear} OR dateIssued.year:{prev_year} OR dateIssued.year:{next_year}))"
+            )
+        else:
+            ty_q = f"(title:({cleaned_title}))"
+
+        self.logger.info(
+            "Type-aware dedup [%s] — rec_type=%s doi=%s",
+            cleaned_title[:60], rec_type, doi or "(none)",
+        )
+
+        # ── DOI check ─────────────────────────────────────────────────
+        if doi:
+            doi_q = f'(itemidentifier_keyword:"{doi}")'
+            doi_total = self._count_items(doi_q)
+            if doi_total > 0:
+                if rec_type == "published":
+                    doi_preprint = self._count_items(doi_q, scope=PREPRINT_COLLECTION_UUID)
+                    if doi_preprint == doi_total:
+                        items = self._fetch_item_info(doi_q, scope=PREPRINT_COLLECTION_UUID)
+                        return False, "cross_type_doi", items or None
+                return True, None, None
+            if self._count_workflow_items(doi_q) > 0:
+                return True, None, None
+
+        # ── Item identifier check ──────────────────────────────────────
+        if item_id:
+            id_q = f'(itemidentifier_keyword:"{item_id}")'
+            if self._count_items(id_q) > 0 or self._count_workflow_items(id_q) > 0:
+                return True, None, None
+
+        # ── Title+year check (type-scoped) ────────────────────────────
+        if rec_type == "dataset":
+            if self._count_items(ty_q, scope=DATASET_COLLECTION_UUID) > 0:
+                return True, None, None
+            # Check if title+year exists in another collection (different entity, but flag it)
+            ty_total = self._count_items(ty_q)
+            if ty_total > 0:
+                items = self._fetch_item_info(ty_q)
+                return False, "dataset_in_other_collection", items or None
+            return False, None, None
+
+        elif rec_type == "preprint":
+            if self._count_items(ty_q, scope=PREPRINT_COLLECTION_UUID) > 0:
+                return True, None, None
+            if self._count_workflow_items(ty_q) > 0:
+                return True, None, None
+            # Check if a published version exists (broad count > preprint-scoped count)
+            ty_total = self._count_items(ty_q)
+            ty_preprint = self._count_items(ty_q, scope=PREPRINT_COLLECTION_UUID)
+            if ty_total > ty_preprint:
+                # Discard incoming preprint but flag it with the published version's info
+                all_items = self._fetch_item_info(ty_q, max_items=5)
+                published_items = [i for i in all_items if i.get("dc_type") != "text::preprint"]
+                return False, "published_version_exists", published_items or all_items or None
+            return False, None, None
+
+        else:  # published
+            ty_total = self._count_items(ty_q)
+            if ty_total > 0:
+                ty_preprint = self._count_items(ty_q, scope=PREPRINT_COLLECTION_UUID)
+                ty_dataset  = self._count_items(ty_q, scope=DATASET_COLLECTION_UUID)
+                ty_published = ty_total - ty_preprint - ty_dataset
+                if ty_published > 0:
+                    return True, None, None
+                if ty_preprint > 0:
+                    items = self._fetch_item_info(ty_q, scope=PREPRINT_COLLECTION_UUID)
+                    return False, "supersedes_preprint", items or None
+            if self._count_workflow_items(ty_q) > 0:
+                return True, None, None
+            return False, None, None
+
     def find_duplicate_enhanced(self, x):
         identifier_type = x.get("source")
         cleaned_title = clean_title(x.get("title", ""))

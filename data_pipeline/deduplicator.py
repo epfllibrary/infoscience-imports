@@ -1,5 +1,6 @@
 """Deduplicator processors for harvested publications"""
 
+import json
 import re
 import string
 import os
@@ -7,6 +8,7 @@ import pandas as pd
 from rapidfuzz import fuzz
 from config import logs_dir, source_order
 from clients.dspace_client_wrapper import DSpaceClientWrapper
+from mappings import classify_record_type
 from utils import get_pipeline_logger
 
 logger = get_pipeline_logger("deduplicator")
@@ -52,25 +54,92 @@ class DataFrameProcessor:
 
         return doi_id, title_pubyear_id
 
+    @staticmethod
+    def _merge_complementary_info(group: pd.DataFrame) -> pd.Series:
+        """Merge a group of duplicate rows into one, keeping the first row's authors."""
+        base_row = group.iloc[0].copy()
+        base_authors = base_row.get("authors", None)
+        for _, row in group.iloc[1:].iterrows():
+            for col in group.columns:
+                if col == "authors":
+                    continue
+                if pd.isna(base_row[col]) or base_row[col] in [None, ""]:
+                    if not pd.isna(row[col]) and row[col] not in [None, ""]:
+                        base_row[col] = row[col]
+        if "authors" in group.columns:
+            base_row["authors"] = base_authors
+        return base_row
+
+    @staticmethod
+    def _groupby_non_empty(df: pd.DataFrame, key: str):
+        """Split df into rows with/without a valid value for key."""
+        s = df[key]
+        mask = s.notna() & s.astype(str).str.strip().ne("")
+        return df[mask], df[~mask]
+
+    def _dedup_by_title_year(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Type-aware title+year deduplication.
+
+        Rules (applied in priority order):
+        - dataset × non-dataset with same title+year → keep both (different entities)
+        - preprint × published with same title+year  → keep published only
+        - two datasets or two preprints              → normal dedup (keep best source)
+        """
+        df_with_key, df_no_key = self._groupby_non_empty(df, "title_pubyear_id")
+        if df_with_key.empty:
+            return df
+
+        result_rows = []
+        for _, group in df_with_key.groupby("title_pubyear_id", sort=False):
+            if len(group) == 1:
+                result_rows.append(group.iloc[0])
+                continue
+
+            types = group.apply(classify_record_type, axis=1)
+            has_dataset   = (types == "dataset").any()
+            has_non_ds    = (types != "dataset").any()
+            has_preprint  = (types == "preprint").any()
+            has_published = (types == "published").any()
+
+            if has_dataset and has_non_ds:
+                # Different entities — dedup within each sub-type separately
+                for mask in [types == "dataset", types != "dataset"]:
+                    sub = group[mask]
+                    if not sub.empty:
+                        result_rows.append(self._merge_complementary_info(sub))
+            elif has_preprint and has_published:
+                # Preprint superseded by published version — keep published
+                self.logger.debug(
+                    "Cross-source dedup: dropping preprint superseded by published (%s)",
+                    group["title_pubyear_id"].iloc[0],
+                )
+                result_rows.append(
+                    self._merge_complementary_info(group[types != "preprint"])
+                )
+            else:
+                result_rows.append(self._merge_complementary_info(group))
+
+        if not result_rows:
+            return df_no_key.reset_index(drop=True)
+
+        return pd.concat(
+            [pd.DataFrame(result_rows), df_no_key], ignore_index=True
+        )
+
     def deduplicate_dataframes(self):
         """
         Deduplicate the source dataframes, retaining the 'authors' column from the line to keep.
         """
-        # Combine the input dataframes into one
         combined_df = pd.concat(self.dataframes, ignore_index=True)
 
-        # Create canonical deduplication keys (doi_id, title_pubyear_id) for each row.
-        # NOTE: _generate_unique_ids no longer takes existing_ids — see its docstring.
         combined_df[["doi_id", "title_pubyear_id"]] = pd.DataFrame(
             combined_df.apply(self._generate_unique_ids, axis=1).tolist(),
             index=combined_df.index,
         )
-
         combined_df["doi_id"] = combined_df["doi_id"].replace(
             {None: pd.NA, "": pd.NA, "None": pd.NA}
         )
 
-        # Sort the combined dataframe to prioritize 'scopus' and 'wos' sources in case of duplicates
         combined_df["source"] = pd.Categorical(
             combined_df["source"], categories=source_order, ordered=True
         )
@@ -80,85 +149,54 @@ class DataFrameProcessor:
             inplace=True,
         )
 
-        # Define a function to merge complementary information
-        def merge_complementary_info(group):
-            # Start with the first row as the base (prioritized by sorting)
-            base_row = group.iloc[0].copy()
-
-            # Keep the 'authors' column from the first row
-            base_authors = base_row.get("authors", None)
-
-            # Iterate through other rows and fill missing information in the base row
-            for _, row in group.iloc[1:].iterrows():
-                for col in group.columns:
-                    if col == "authors":  # Skip 'authors' column for merging
-                        continue
-                    # Check if the current cell in the base row is empty
-                    if pd.isna(base_row[col]) or base_row[col] in [None, ""]:
-                        # Only update if the current row has a non-empty value
-                        if not pd.isna(row[col]) and row[col] not in [None, ""]:
-                            base_row[col] = row[col]
-
-            # Restore the original 'authors' from the prioritized row
-            if "authors" in group.columns:
-                base_row["authors"] = base_authors
-
-            return base_row
-
-        def groupby_non_empty(df: pd.DataFrame, key: str):
-            """
-            Groupby only on non-empty keys.
-            Rows with empty/NaN key are kept as-is (not grouped).
-            """
-            s = df[key]
-            mask = s.notna() & s.astype(str).str.strip().ne("")
-            return df[mask], df[~mask]
-
-        # Process duplicates based on 'doi_id'
-        df_with_key, df_no_key = groupby_non_empty(combined_df, "doi_id")
-
+        # DOI-based dedup (type-agnostic — same DOI = same work)
+        df_with_key, df_no_key = self._groupby_non_empty(combined_df, "doi_id")
         if not df_with_key.empty:
-            dedup_with_key = (
+            dedup_doi = (
                 df_with_key.groupby("doi_id", as_index=False)
-                .apply(merge_complementary_info)
+                .apply(self._merge_complementary_info)
                 .reset_index(drop=True)
             )
-            deduplicated_df = pd.concat([dedup_with_key, df_no_key], ignore_index=True)
+            deduplicated_df = pd.concat([dedup_doi, df_no_key], ignore_index=True)
         else:
             deduplicated_df = combined_df.copy()
 
-        # Process duplicates based on 'title_pubyear_id'
-        df_with_key, df_no_key = groupby_non_empty(deduplicated_df, "title_pubyear_id")
+        # Title+year dedup (type-aware)
+        deduplicated_df = self._dedup_by_title_year(deduplicated_df)
 
-        if not df_with_key.empty:
-            dedup_with_key = (
-                df_with_key.groupby("title_pubyear_id", as_index=False)
-                .apply(merge_complementary_info)
-                .reset_index(drop=True)
-            )
-            deduplicated_df = pd.concat([dedup_with_key, df_no_key], ignore_index=True)
-
-        # Drop the helper columns
         deduplicated_df.drop(columns=["doi_id", "title_pubyear_id"], inplace=True)
-
         return deduplicated_df
 
     def deduplicate_infoscience(self, df):
+        """Deduplicate against existing Infoscience publications (type-aware).
+
+        Returns ``(filtered_df, duplicates_df)``.
+        ``filtered_df`` carries a ``dedup_note`` column (None for most records,
+        ``"supersedes_preprint"`` or ``"cross_type_doi"`` for flagged ones).
         """
-        Deduplicate on existing Infoscience publications.
-        """
-        self.logger.info("Running Infoscience deduplication")
+        self.logger.info("Running Infoscience deduplication (type-aware)")
         wrapper = DSpaceClientWrapper()
 
-        # Apply the DSpaceClientWrapper.find_publication_duplicate function to each row
-        df["is_duplicate"] = df.apply(
-            lambda row: wrapper.find_publication_duplicate(row), axis=1
-        )
-        # df.to_csv("test.csv", index=False,encoding="utf-8")
-        # Filter the dataframe to keep only rows where 'is_duplicate' is False
-        filtered_df = df[df["is_duplicate"] == False].drop(columns=["is_duplicate"])
-        # keep the unloaded duplicates for memory
-        duplicates_df = df[df["is_duplicate"] == True].drop(columns=["is_duplicate"])
+        def _check(row):
+            is_dup, note, flagged_info = wrapper.find_publication_duplicate_typed(row)
+            flagged_pub = json.dumps(flagged_info) if flagged_info else None
+            return pd.Series({
+                "is_duplicate":      is_dup,
+                "dedup_note":        note,
+                "flagged_publication": flagged_pub,
+            })
+
+        result = df.apply(_check, axis=1)
+        result.index = df.index
+        df = df.copy()
+        df["is_duplicate"]       = result["is_duplicate"]
+        df["dedup_note"]         = result["dedup_note"]
+        df["flagged_publication"] = result["flagged_publication"]
+
+        filtered_df   = df[df["is_duplicate"] == False].drop(columns=["is_duplicate"]).copy()
+        # Keep dedup_note and flagged_publication in duplicates so that discarded
+        # preprints (published_version_exists) carry the reference to the existing item.
+        duplicates_df = df[df["is_duplicate"] == True].drop(columns=["is_duplicate"]).copy()
         return filtered_df, duplicates_df
 
     def deduplicate_infoscience_enhanced(self, df):

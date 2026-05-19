@@ -36,7 +36,7 @@ The pipeline runs a linear sequence of stages on every execution:
 | Stage | Description |
 |---|---|
 | **Harvest** | Queries each enabled source API within the configured time window |
-| **Deduplicate** | Cross-source dedup (title + year or DOI), then dedup against existing Infoscience items |
+| **Deduplicate** | Cross-source dedup (DOI, then title + year with type-aware rules for preprints and datasets), then type-scoped dedup against existing Infoscience items; ambiguous cases are flagged and forwarded to the DSpace workspace |
 | **Enrich** | EPFL author reconciliation (People API, ORCID); OA/full-text metadata ([Unpaywall](https://unpaywall.org/), OpenAlex) |
 | **Load** | Builds DSpace-CRIS item payloads and ingests them (skipped in `--dry-run`) |
 | **Report** | Generates a timestamped Excel report and optionally sends it by email |
@@ -125,6 +125,10 @@ The Publications page supports detailed curation:
 - **Auteurs EPFL** — reconciled EPFL authors with status/position; for rejected publications, shows pre-detected unreconciled authors
 - **Unités** — EPFL units with type in parentheses
 - **⚠️ column** — flags publications where *all* matched EPFL authors have a "weak" status (Hôte, Hors EPFL, Étudiant, or Personnel with non-permanent position)
+- **Note dédup** (`dedup_note`) — set when a record was let through despite a potential conflict in Infoscience; possible values: `supersedes_preprint`, `published_version_exists`, `cross_type_doi`, `dataset_in_other_collection`
+- **🚩 Doublon Infoscience** (`flagged_publication`) — JSON list of existing Infoscience items that triggered the flag, each with `uuid`, `doi`, and `dc_type`; use the UUID to locate the item directly in Infoscience
+
+Use the **Signalement dédup** filter (options: *Tous* / *🚩 Flaggés* / specific note value) to isolate flagged records for curation. Flagged records also appear in the dedicated **Flagged Publications** sheet of the Excel report.
 
 The environment selector in the sidebar switches between `dev`, `test`, and `prod` — the choice is persisted and automatically passed to any run launched from the UI.
 
@@ -194,7 +198,7 @@ Because jobs run as separate OS processes, **stopping or restarting the UI does 
 
 ### Managing schedules
 
-Each schedule card shows the next scheduled execution and the last run result (✅ / ⏳ / ❌).
+Each schedule card shows the next scheduled execution and the last run result (✅ completed / ⏳ running / ❌ failed / 🛑 killed).
 
 - **Toggle "Actif"** — enable or disable without deleting the schedule. Takes effect within 15 seconds.
 - **▶ Now** — fire the run immediately, using the schedule's configuration.
@@ -233,11 +237,32 @@ Override the default institution-wide query for one or more sources:
 ```bash
 python3 data_pipeline/main.py \
   --query-wos    "EPFL OR Lausanne" \
-  --query-scopus "AFFIL(EPFL)" \
-  --query-crossref "Ecole Polytechnique Federale de Lausanne"
+  --query-scopus "AFFIL(EPFL)"
 ```
 
 Query overrides are also available in the UI via the **Requêtes (optionnel)** expander on the run page.
+
+#### Crossref — flexible query format
+
+The Crossref query field accepts three formats:
+
+**Plain string** — uses the generic `query` parameter:
+```bash
+--query-crossref "EPFL machine learning"
+```
+
+**JSON object** — spread directly as API parameters (supports any [Crossref query index](https://api.crossref.org/swagger-ui/index.html) or [filter](https://www.crossref.org/documentation/retrieve-metadata/rest-api/rest-api-filters/)):
+```bash
+--query-crossref '{"query.affiliation": "EPFL SV", "filter": "type:journal-article"}'
+--query-crossref '{"filter": "orcid:0000-0002-1825-0097"}'
+```
+
+**JSON array** — each element runs as a separate API call; results are merged and deduplicated by DOI:
+```bash
+--query-crossref '[{"query.affiliation": "EPFL"}, {"filter": "ror-id:02s376052"}]'
+```
+
+> **Reserved filters:** `from-created-date` and `until-created-date` are always injected by the harvester (from the configured time window) and cannot be overridden. Any other [Crossref filter](https://www.crossref.org/documentation/retrieve-metadata/rest-api/rest-api-filters/) can be used freely.
 
 ### Author ID-based harvesting
 
@@ -446,7 +471,7 @@ data/
     ├── Raw_ZenodoItems.csv
     ├── Raw_EpoItems.csv
     ├── DeduplicatedItems.csv
-    ├── UnloadedItems.csv          # duplicates found in Infoscience
+    ├── UnloadedItems.csv          # clear duplicates found in Infoscience (discarded)
     ├── Items.csv
     ├── AuthorsAndAffiliations.csv
     ├── EpflAuthors.csv
@@ -465,7 +490,10 @@ Run history, per-source statistics, publications, EPFL authors, and unit links a
 The pipeline is intentionally stateless. Re-running it is always safe because:
 
 1. **Sliding window** — only publications within the configured date range are harvested.
-2. **DSpace-aware dedup** — the deduplicator queries Infoscience for existing items before loading, so already-imported records are never duplicated.
+2. **DSpace-aware dedup** — the deduplicator queries Infoscience for existing items before loading, so already-imported records are never duplicated. Deduplication is **type-aware**:
+   - A dataset is only deduplicated against other datasets (scoped to the *Datasets and Code* collection); a title match in another collection is flagged but not discarded.
+   - A preprint whose published version already exists in Infoscience is forwarded to the DSpace workspace rather than silently dropped, so it can be reviewed and linked.
+   - Clear duplicates (same DOI, same type, same title + year within the same collection) are discarded without flagging.
 3. **Stable `row_id`** — each record gets a deterministic hash of its key fields, ensuring consistent matching across runs.
 
 Running daily with a 15-day window (the default) catches late-indexed publications while the overlap with previous windows is handled entirely by deduplication.
@@ -486,7 +514,7 @@ If you use this software in your research or institutional work, please cite it 
 
 ```bibtex
 @software{infoscience_import_pipeline,
-  author    = {Sicot, Julien},
+  author    = {Sicot, Julien and Borel, Alain and Geoffroy, Géraldine},
   title     = {Infoscience Import Pipeline},
   year      = {2026},
   publisher = {EPFL Library},

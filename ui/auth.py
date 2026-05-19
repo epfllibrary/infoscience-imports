@@ -42,8 +42,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import streamlit as st
-import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 from yaml.dumper import SafeDumper
@@ -86,7 +84,8 @@ def _save_config(config: dict) -> None:
                   default_flow_style=False)
 
 
-def _make_authenticator(config: dict) -> stauth.Authenticate:
+def _make_authenticator(config: dict):
+    import streamlit_authenticator as stauth
     cookie = config.get("cookie", {})
     return stauth.Authenticate(
         config.get("credentials", {"usernames": {}}),
@@ -98,13 +97,14 @@ def _make_authenticator(config: dict) -> stauth.Authenticate:
 
 # ── Streamlit runtime API ─────────────────────────────────────────────────────
 
-def login_wall() -> tuple[str, str]:
+def login_wall() -> "tuple[str, str]":
     """Block rendering until the user is authenticated.
 
     Uses streamlit-authenticator for cookie-based persistent sessions.
     The session JWT is stored in a browser cookie — never in the URL.
     Returns (username, role) once authenticated; calls st.stop() otherwise.
     """
+    import streamlit as st
     if not AUTH_FILE.exists():
         st.error(
             f"Fichier de credentials manquant : `{AUTH_FILE.relative_to(ROOT)}`  \n"
@@ -161,7 +161,8 @@ def login_wall() -> tuple[str, str]:
 
 def logout() -> None:
     """Invalidate the session cookie and return to the login screen."""
-    auth: Optional[stauth.Authenticate] = st.session_state.get("_authenticator")
+    import streamlit as st
+    auth = st.session_state.get("_authenticator")
     if auth is None:
         # Fallback: recreate from config (covers edge cases)
         auth = _make_authenticator(_load_config())
@@ -175,8 +176,9 @@ def get_allowed_pages(role: str) -> list[str]:
     return ROLE_PAGES.get(role, ROLE_PAGES["reporting"])
 
 
-def current_user() -> tuple[str, str, str]:
+def current_user() -> "tuple[str, str, str]":
     """Return (username, display_name, role) for the active session."""
+    import streamlit as st
     return (
         st.session_state.get("username", ""),
         st.session_state.get("_auth_name") or st.session_state.get("name", ""),
