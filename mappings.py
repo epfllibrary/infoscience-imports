@@ -1,825 +1,35 @@
-"""Mappings of source plateform doctypes to Infoscience collections"""
+"""Mappings of source platform doctypes to Infoscience collections.
 
-doctypes_mapping_dict = {
-    "source_wos": {
-        "Article": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
-        "Proceedings Paper": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings::conference paper",
-        },
-        "Meeting Abstract": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings::conference paper",
-        },
-        "Review": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::review article",
-        },
-        "Editorial Material": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::editorial",
-        },
-        "Book Chapter": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "Book": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        # "Book Review": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text",
-        # },
-        "Early Access": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article",
-        },
-        # "Letter": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
-        # "Correction": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text::journal::journal article",
-        # },
-        # "Note": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
-        # "News Item": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
-        "Data Paper": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::data paper",
-        },
-    },
-    "source_scopus": {
-        "Article": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
-        "Article in Press": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
-        "Book": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        "Book Chapter": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "Conference Paper": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings::conference paper",
-        },
-        "Conference Review": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings::conference paper",
-        },
-        "Data Paper": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::data paper",
-        },
-        "Editorial": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::editorial",
-        },
-        "Letter": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article",
-        },
-        "Review": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::review article",
-        },
-        # "Erratum": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text::journal::journal article",
-        # },
-        "Business Article": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article",
-        },
-        # "Note": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "Short Survey": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "Press Release": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "Other": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-    },
-    "source_openalex": {
-        "article": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
-        "book": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        "book-chapter": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        # "dataset": {
-        #     "collection": "Datasets and Code",
-        #     "dc.type": "dataset",
-        # },
-        # "dissertation": {
-        #     "collection": "EPFL thesis",
-        #     "dc.type": "text::thesis::doctoral thesis",
-        # },
-        "editorial": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::editorial",
-        },
-        "letter": {
-            "collection": "Journal articles",
-            "dc.type": "text",
-        },
-        "review": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::review article",
-        },
-        # "report": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::report",
-        # },
-        # "standard": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::technical documentation or standard",
-        # },
-        "preprint": {
-            "collection": "Preprints and Working Papers",
-            "dc.type": "text::preprint",
-        },
-        # "erratum": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text",
-        # },
-        # "grant": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "other": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "paratext": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "peer-review": {
-        #     "collection": "",
-        #     "dc.type": "",
-        # },
-        # "reference-entry": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-    },
-    "source_crossref": {
-        "book": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        "book-chapter": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "book-part": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "book-section": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "book-series": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        # "book-set": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph",
-        # },
-        # "book-track": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph",
-        # },
-        # "component": {
-        #     "collection": "Other",
-        #     "dc.type": "text",
-        # },
-        "dataset": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
-        # "dissertation": {
-        #     "collection": "EPFL thesis",
-        #     "dc.type": "text::thesis::doctoral thesis",
-        # },
-        "edited-book": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        # "journal": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text::journal::journal article",
-        # },
-        "journal-article": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
-        # "journal-issue": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "",
-        # },
-        # "journal-volume": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text::journal::journal article",
-        # },
-        "monograph": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        # "peer-review": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text::journal::journal article::research article",
-        # },
-        "posted-content": {
-            "collection": "Preprints and Working Papers",
-            "dc.type": "text::preprint",
-        },
-        "proceedings": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings",
-        },
-        "proceedings-article": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings::conference paper",
-        },
-        # "reference-book": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph",
-        # },
-        # "reference-entry": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        # "report": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::report",
-        # },
-        # "report-series": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::report",
-        # },
-        # "standard": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::technical documentation or standard",
-        # },
-        # "standard-series": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::technical documentation or standard",
-        # },
-        # "other": {
-        #     "collection": "Other",
-        #     "dc.type": "text",
-        # },
-    },
-    # Mapping of DataCite resource types to IFS3 collections and Dublin Core types
-    "source_datacite": {
-        "book": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph",
-        },
-        "bookchapter": {
-            "collection": "Books and Book parts",
-            "dc.type": "text::book/monograph::book part or chapter",
-        },
-        "conferencepaper": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings::conference paper",
-        },
-        "conferenceproceeding": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings",
-        },
-        "datapaper": {
-            "collection": "Datasets and Code",
-            "dc.type": "text::dataset",
-        },
-        "dataset": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
-        "collection": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
-        "model": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
-        "journalarticle": {
-            "collection": "Journal articles",
-            "dc.type": "text::journal::journal article::research article",
-        },
-        "preprint": {
-            "collection": "Preprints and Working Papers",
-            "dc.type": "text::preprint",
-        },
-        "standard": {
-            "collection": "Reports, Documentation, and Standards",
-            "dc.type": "text::technical documentation or standard",
-        },
-        "report": {
-            "collection": "Reports, Documentation, and Standards",
-            "dc.type": "text::report",
-        },
-        "text": {
-            "collection": "Other",
-            "dc.type": "other",
-        },
-        "software": {
-            "collection": "Datasets and Code",
-            "dc.type": "software",
-        },
-        "computationalnotebook": {
-            "collection": "Datasets and Code",
-            "dc.type": "software",
-        },
-        "outputmanagementplan": {
-            "collection": "Reports, Documentation, and Standards",
-            "dc.type": "text::report::data management plan",
-        },
-    },
-    "source_zenodo": {
-        "dataset": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
-        # "lesson": {
-        #     "collection": "Teaching Materials",
-        #     "dc.type": "text",
-        # },
-        # "physicalobject": {
-        #     "collection": "",
-        #     "dc.type": "text",
-        # },
-        "presentation": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference presentation",
-        },
-        "poster": {
-            "collection": "Conferences, Workshops, Symposiums, and Seminars",
-            "dc.type": "text::conference output::conference proceedings",
-        },
-        # "publication/article": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text::journal::journal article",
-        # },
-        # "publication/book": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph",
-        # },
-        # "publication/conferencepaper": {
-        #     "collection": "Conferences, Workshops, Symposiums, and Seminars",
-        #     "dc.type": "text::conference output::conference proceedings::conference paper",
-        # },
-        # "publication/deliverable": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::report",
-        # },
-        # "publication/journal": {
-        #     "collection": "Journal articles",
-        #     "dc.type": "text::journal::journal article",
-        # },
-        # "publication/report": {
-        #     "collection": "Reports, Documentation, and Standards",
-        #     "dc.type": "text::report",
-        # },
-        # "publication/section": {
-        #     "collection": "Books and Book parts",
-        #     "dc.type": "text::book/monograph::book part or chapter",
-        # },
-        # "publication/thesis": {
-        #     "collection": "Student works",
-        #     "dc.type": "text::thesis::doctoral thesis",
-        # },
-        "image/diagram": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset::recorded data",
-        },
-        "image/drawing": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset::recorded data",
-        },
-        "image/figure": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset::recorded data",
-        },
-        "image/photo": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset::recorded data",
-        },
-        "image/plot": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset::recorded data",
-        },
-        "image/other": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset::recorded data",
-        },
-        "software": {
-            "collection": "Datasets and Code",
-            "dc.type": "software",
-        },
-        "video": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset::recorded data",
-        },
-        "model": {
-            "collection": "Datasets and Code",
-            "dc.type": "dataset",
-        },
-        # "other": {
-        #     "collection": "Datasets and Code",
-        #     "dc.type": "dataset",
-        # },
-    },
-    "source_epo": {
-        "patent": {
-            "collection": "Patents",
-            "dc.type": "patent",
-        },
-        "A": {
-            "collection": "Patents",
-            "dc.type": "patent::utility model",
-        },
-        "A1": {
-            "collection": "Patents",
-            "dc.type": "patent::utility model",
-        },
-        "A2": {
-            "collection": "Patents",
-            "dc.type": "patent::utility model",
-        },
-        "B1": {
-            "collection": "Patents",
-            "dc.type": "patent::utility model",
-        },
-        "B2": {
-            "collection": "Patents",
-            "dc.type": "patent::utility model",
-        },
-        "P": {
-            "collection": "Patents",
-            "dc.type": "patent::plant patent",
-        },
-        "P1": {
-            "collection": "Patents",
-            "dc.type": "patent::plant patent",
-        },
-        "P2": {
-            "collection": "Patents",
-            "dc.type": "patent::plant patent",
-        },
-        "P3": {
-            "collection": "Patents",
-            "dc.type": "patent::plant patent",
-        },
-        "P4": {
-            "collection": "Patents",
-            "dc.type": "patent::plant patent",
-        },
-        "P9": {
-            "collection": "Patents",
-            "dc.type": "patent::plant patent",
-        },
-        "S": {
-            "collection": "Patents",
-            "dc.type": "patent::design patent",
-        },
-        "S1": {
-            "collection": "Patents",
-            "dc.type": "patent::design patent",
-        },
-    },
-}
+Data-driven dicts are loaded from config/mappings/*.yaml so they can be updated
+without touching Python. Pure-Python names (MAPPING_UNITS_*, classify_record_type,
+get_version_mapping) remain here.
+"""
 
-types_authority_mapping = {
-    "text::journal::journal article::data paper": "article-coar-types:c_beb9",
-    "text::journal::editorial": "article-coar-types:c_b239",
-    "text::journal": "article-coar-types:c_0640",
-    "text::journal::journal article": "article-coar-types:c_6501",
-    "text::journal::journal article::research article": "article-coar-types:c_2df8fbb1",
-    "text::journal::journal article::review article": "article-coar-types:c_dcae04bc",
-    "text::journal::journal article::software paper": "article-coar-types:c_7bab",
-    "text::book/monograph::book part or chapter": "book-coar-types:c_3248",
-    "text::book/monograph": "book-coar-types:c_2f33",
-    "text::conference output": "conference-coar-types:c_c94f",
-    "text::conference output::conference proceedings::conference paper": "conference-coar-types:c_5794",
-    "text::conference output::conference paper not in proceedings": "conference-coar-types:c_18cp",
-    "text::conference output::conference proceedings::conference poster": "conference-coar-types:c_6670",
-    "text::conference output::conference poster not in proceedings": "conference-coar-types:c_18co",
-    "text::conference output::conference presentation": "conference-coar-types:R60J-J5BD",
-    "text::conference output::conference proceedings": "conference-coar-types:c_f744",
-    "dataset::aggregated data": "dataset-coar-types:ACF7-8YT9",
-    "dataset::clinical trial data": "dataset-coar-types:c_cb28",
-    "dataset::compiled data": "dataset-coar-types:FXF3-D3G7",
-    "dataset": "dataset-coar-types:c_ddb1",
-    "dataset::encoded data": "dataset-coar-types:AM6W-6QAW",
-    "dataset::experimental data": "dataset-coar-types:63NG-B465",
-    "dataset::genomic data": "dataset-coar-types:A8F1-NPV9",
-    "dataset::geospatial data": "dataset-coar-types:2H0M-X761",
-    "dataset::laboratory notebook": "dataset-coar-types:H41Y-FW7B",
-    "dataset::measurement and test data": "dataset-coar-types:DD58-GFSX",
-    "dataset::observational data": "dataset-coar-types:FF4C-28RK",
-    "dataset::recorded data": "dataset-coar-types:CQMR-7K63",
-    "software::research software": "dataset-coar-types:c_c950",
-    "dataset::simulation data": "dataset-coar-types:W2XT-7017",
-    "software": "dataset-coar-types:c_5ce6",
-    "software::source code": "dataset-coar-types:QH80-2R4E",
-    "dataset::survey data": "dataset-coar-types:NHD0-W6SY",
-    "design": "design-coar-types:542X-3S04",
-    "image": "design-coar-types:c_c513",
-    "design::industrial design": "design-coar-types:JBNF-DYAD",
-    "interactive resource": "design-coar-types:c_e9a0",
-    "design::layout design": "design-coar-types:BW7T-YM2G",
-    "image::moving image": "design-coar-types:c_8a7e",
-    "image::still image": "design-coar-types:c_ecc8",
-    "image::moving image::video": "design-coar-types:c_12ce",
-    "interactive resource::website": "design-coar-types:c_7ad9",
-    "text::blog post": "media-coar-types:c_6947",
-    "text::magazine": "media-coar-types:c_2cd9",
-    "text::newspaper article": "media-coar-types:c_998f",
-    "patent::PCT application": "patent-coar-types:SB3Y-W4EH",
-    "patent::design patent": "patent-coar-types:C53B-JCY5",
-    "patent": "patent-coar-types:c_15cd",
-    "patent::plant patent": "patent-coar-types:Z907-YMBB",
-    "patent::plant variety protection": "patent-coar-types:GPQ7-G5VE",
-    "patent::software patent": "patent-coar-types:MW8G-3CR8",
-    "patent::utility model": "patent-coar-types:9DKX-KSAF",
-    "text::preprint": "preprint-coar-types:c_816b",
-    "text::working paper": "preprint-coar-types:c_8042",
-    "text::report::clinical study": "report-coar-types:c_7877",
-    "text::report::data management plan": "report-coar-types:c_ab20",
-    "text::report::policy report": "report-coar-types:c_186u",
-    "text::report": "report-coar-types:c_93fc",
-    "text::report::research protocol": "report-coar-types:YZ1N-ZFT9",
-    "text::report::research report": "report-coar-types:c_18ws",
-    "text::technical documentation or standard": "report-coar-types:c_71bd",
-    "text::report::technical report": "report-coar-types:c_18gh",
-    "teaching material": "teaching-coar-types:c_e059",
-    "thesis": "thesis-coar-types:c_46ec",
-    "thesis::doctoral thesis": "thesis-coar-types:c_db06",
-    "student work::bachelor thesis": "student-coar-types:c_7a1f",
-    "student work::master thesis": "student-coar-types:c_bdcc",
-    "student work::semester or other student projects": "student-coar-types:c_18op",
-    "student work": "student-coar-types:c_46ec",
-    "other": "publication-coar-types:c_1843",
-}
+from pathlib import Path
+import yaml
+
+_MAPPINGS_DIR = Path(__file__).resolve().parent / "config" / "mappings"
 
 
-## SANDBOX MAPPINGS
-
-# collections_mapping = {
-#     "Patents": {
-#         "id": "29a84f70-9fb7-49d3-bd73-65e8e680ac3c",
-#         "section": "patent",
-#     },
-#     "Teaching Materials": {
-#         "id": "20c6f943-35c6-4a18-96fc-3447b0f0df2b",
-#         "section": "teaching_",
-#     },
-#     "Images, Videos, Interactive resources, and Design": {
-#         "id": "3b9fb2fb-edc3-4c44-833a-1815a4d503b8",
-#         "section": "design_",
-#     },
-#     "Newspaper, Magazine, or Blog post": {
-#         "id": "792410d0-424c-4957-9faf-719852e88083",
-#         "section": "media_",
-#     },
-#     "Datasets and Code": {
-#         "id": "a8857a33-b849-4c17-9a14-d00e2caa3e20",
-#         "section": "dataset_",
-#     },
-#     "Student works": {
-#         "id": "2d77dd3f-64eb-42ba-9352-c5946a17cce5",
-#         "section": "thesis_",
-#     },
-#     "Units": {
-#         "id": "ddc8a019-0764-4f26-b29f-76c1b86c3747",
-#         "section": "orgunit",
-#     },
-#     "EPFL thesis": {
-#         "id": "cc9a689b-b5aa-4d9c-ae13-a313590a456f",
-#         "section": "thesis_",
-#     },
-#     "Reports, Documentation, and Standards": {
-#         "id": "d2af63ef-93e5-4822-9eba-a1a80bd9832b",
-#         "section": "report_",
-#     },
-#     "Preprints and Working Papers": {
-#         "id": "60b85c13-5884-4213-b1b9-58e9a024ae32",
-#         "section": "preprint_",
-#     },
-#     "Books and Book parts": {
-#         "id": "ca9a2328-2f85-4ce9-80b5-69212dcd6a91",
-#         "section": "book_",
-#     },
-#     "Persons": {
-#         "id": "c6d34926-0b98-4852-8398-9172fb83ab62",
-#         "section": "person",
-#     },
-#     "Events": {
-#         "id": "36b742e3-72e3-454a-91f8-2d782908647a",
-#         "section": "events_section",
-#     },
-#     "Conferences, Workshops, Symposiums, and Seminars": {
-#         "id": "d8d0d545-f4e1-4d5a-bcf8-66a487216910",
-#         "section": "conference_",
-#     },
-#     "Journals": {
-#         "id": "90fe759b4-9567-4457-bc6c-c9eac8c5d531",
-#         "section": "journal",
-#     },
-#     "Journal articles": {
-#         "id": "c977fcc1-dc4b-465e-9ac0-56d87b802ca3",
-#         "section": "article_",
-#     },
-# }
+def _load(filename: str) -> dict:
+    with open(_MAPPINGS_DIR / filename, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
 
-collections_mapping = {
-    "Patents": {
-        "id": "ce5a1b89-cfb3-40eb-bdd2-dcb021e755b7",
-        "section": "patent",
-    },
-    "Projects": {
-        "id": "49ec7e96-4645-4bc0-a015-ba4b81669bbc",
-        "section": "project",
-    },
-    "Teaching Materials": {
-        "id": "c7e018d4-2349-46dd-a8a4-c32cf5f5f9a1",
-        "section": "teaching_",
-    },
-    "Images, Videos, Interactive resources, and Design": {
-        "id": "329f8cd3-dc1a-4228-9557-b27366d71d41",
-        "section": "design_",
-    },
-    "Newspaper, Magazine, or Blog post": {
-        "id": "971cc7fa-b177-46e3-86a9-cfac93042e9d",
-        "section": "media_",
-    },
-    "Funding": {
-        "id": "8b185e36-0f99-4669-9a46-26a19d4f3eab",
-        "section": "funding",
-    },
-    "Other": {
-        "id": "0066acb2-d5c0-49a0-b273-581df34961cc",
-        "section": "other_",
-    },
-    "Datasets and Code": {
-        "id": "33a1cd32-7980-495b-a2bb-f34c478869d8",
-        "section": "dataset_",
-    },
-    "Student works": {
-        "id": "305e3dad-f918-48f6-9309-edbeb7cced14",
-        "section": "thesis_",
-    },
-    "Units": {
-        "id": "bc85ee71-84b0-4f78-96a1-bab2c50b7ac9",
-        "section": "orgunit",
-    },
-    "Contents": {
-        "id": "e8dea11e-a080-461b-82ee-6d9ab48404f3",
-        "section": "content",
-    },
-    "Virtual collections": {
-        "id": "78f331d1-ee55-48ef-bddf-508488493c90",
-        "section": "virtual-collection",
-    },
-    "EPFL thesis": {
-        "id": "4af344ef-0fb2-4593-a234-78d57f3df621",
-        "section": "thesis_",
-    },
-    "Reports, Documentation, and Standards": {
-        "id": "d5ec2987-2ee5-4754-971b-aca7ab4f9ab7",
-        "section": "report_",
-    },
-    "Preprints and Working Papers": {
-        "id": "d8dada3a-c4bd-4c6f-a6d7-13f1b4564fa4",
-        "section": "preprint_",
-    },
-    "Books and Book parts": {
-        "id": "1a71fba2-2fc5-4c02-9447-f292e25ce6c1",
-        "section": "book_",
-    },
-    "Persons": {
-        "id": "6acf237a-90d7-43e2-82cf-c3591e50c719",
-        "section": "person",
-    },
-    "Events": {
-        "id": "6e2af01f-8b92-461e-9d08-5e1961b9a97b",
-        "section": "events_section",
-    },
-    "Conferences, Workshops, Symposiums, and Seminars": {
-        "id": "e91ecd9f-56a2-4b2f-b7cc-f03e03d2643d",
-        "section": "conference_",
-    },
-    "Journals": {
-        "id": "9ada82da-bb91-4414-a480-fae1a5c02d1c",
-        "section": "journal",
-    },
-    "Journal articles": {
-        "id": "8a8d3310-6535-4d3a-90b6-2a4428097b5b",
-        "section": "article_",
-    },
-}
+# ---------------------------------------------------------------------------
+# Data-driven dicts — loaded from YAML
+# ---------------------------------------------------------------------------
 
-# Mappings pour les licenses
-licenses_mapping = {
-    "cc-by": {
-        "value": "CC BY",
-        "display": "Creative Commons Attribution",
-    },
-    "cc-by-sa": {
-        "value": "CC BY-SA",
-        "display": "Creative Commons Attribution-ShareAlike",
-    },
-    "cc-by-nd": {
-        "value": "CC BY-ND",
-        "display": "Creative Commons Attribution-NoDerivatives",
-    },
-    "cc-by-nc": {
-        "value": "CC BY-NC",
-        "display": "Creative Commons Attribution-NoDerivs",
-    },
-    "cc-by-nc-sa": {
-        "value": "CC BY-NC-SA",
-        "display": "Creative Commons Attribution-NonCommercial-ShareAlike",
-    },
-    "cc-by-nc-nd": {
-        "value": "CC BY-NC-ND",
-        "display": "Creative Commons Attribution-NonCommercial-NoDerivs",
-    },
-    "public-domain": {
-        "value": "PDM",
-        "display": "Creative Commons Attribution-NonCommercial-NoDerivs",
-    },
-    "NA": {
-        "value": "N/A",
-        "display": "N/A (Copyrighted)",
-    },
-    "mit-license": {
-        "value": "MIT",
-        "display": "MIT",
-    },
-}
+doctypes_mapping_dict:   dict = _load("doctypes.yaml")
+collections_mapping:     dict = _load("collections.yaml")
+licenses_mapping:        dict = _load("licenses.yaml")
+versions_mapping:        dict = _load("versions.yaml")
+types_authority_mapping: dict = _load("types_authority.yaml")
 
-# Mappings pour les versions
-versions_mapping = {
-    "publishedVersion": {
-        "value": "http://purl.org/coar/version/c_970fb48d4fbd8a85",
-        "display": "Published version",
-    },
-    "acceptedVersion": {
-        "value": "http://purl.org/coar/version/c_ab4af688f83e57aa",
-        "display": "Accepted version",
-    },
-    "submittedVersion": {
-        "value": "http://purl.org/coar/version/c_71e4c1898caa6e32",
-        "display": "Submitted version",
-    },
-    "NA": {
-        "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
-        "display": "Not Applicable (or Unknown)",
-    },
-    "None": {
-        "value": "http://purl.org/coar/version/c_be7fb7dd8ff6fe43",
-        "display": "Not Applicable (or Unknown)",
-    },
-}
+
+# ---------------------------------------------------------------------------
+# Unit label mappings (kept in Python — small, stable, logic-adjacent)
+# ---------------------------------------------------------------------------
 
 MAPPING_UNITS_EN = {
     "ANTENNE": "Antenna",
@@ -844,6 +54,7 @@ MAPPING_UNITS_EN = {
     "SPC": "Center",
     "PLATEFORME": "Facility",
 }
+
 MAPPING_UNITS_FR = {
     "ANTENNE": "Antenne",
     "CENTRE": "Centre",
@@ -894,3 +105,51 @@ MAPPING_UNITS_CODES = {
     "visibilité organigramme": "NONE",
     "plateforme": "PLATEFORME",
 }
+
+
+# ---------------------------------------------------------------------------
+# Deduplication type classification
+# ---------------------------------------------------------------------------
+
+PREPRINT_COLLECTION = "Preprints and Working Papers"
+DATASET_COLLECTION  = "Datasets and Code"
+
+PREPRINT_COLLECTION_UUID = collections_mapping[PREPRINT_COLLECTION]["id"]
+DATASET_COLLECTION_UUID  = collections_mapping[DATASET_COLLECTION]["id"]
+
+
+def classify_record_type(row) -> str:
+    """Return 'preprint', 'dataset', or 'published' for a harvested/dedup row.
+
+    Checks ``ifs3_collection`` first (always populated after harvest mapping),
+    then falls back to the ``dc.type`` / ``dc_type`` column.
+    """
+    collection = str(row.get("ifs3_collection") or "")
+    if collection == PREPRINT_COLLECTION:
+        return "preprint"
+    if collection == DATASET_COLLECTION:
+        return "dataset"
+    dc = str(row.get("dc.type") or row.get("dc_type") or "")
+    if dc == "text::preprint":
+        return "preprint"
+    if dc.startswith("dataset") or dc.startswith("software"):
+        return "dataset"
+    return "published"
+
+
+# ---------------------------------------------------------------------------
+# Lookup helpers
+# ---------------------------------------------------------------------------
+
+def get_version_mapping(version_value) -> dict:
+    """Safe lookup in versions_mapping.
+
+    Normalises Python None, empty string and the legacy "None" string to the
+    "NA" fallback key so callers don't need to handle these cases individually.
+    """
+    _FALLBACK = "NA"
+    if version_value is None or str(version_value).strip() in ("", "None", "nan"):
+        key = _FALLBACK
+    else:
+        key = str(version_value).strip()
+    return versions_mapping.get(key, versions_mapping[_FALLBACK])

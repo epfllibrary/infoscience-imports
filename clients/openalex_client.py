@@ -13,8 +13,7 @@ from apiclient import (
 )
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 import mappings
 
 # Base URL for OpenAlex API
@@ -62,8 +61,7 @@ class OpenAlexEndpoint:
     work_id = "works/{openalexId}"
     doi = "works/doi:{doi}"
 class Client(APIClient):
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('openalex')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -16,15 +16,13 @@ from apiclient import (
 )
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
-from config import logs_dir
 from config import LICENSE_CONDITIONS
-from utils import manage_logger
+from utils import get_pipeline_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 email = os.environ.get("CONTACT_API_EMAIL")
 
-log_file_path = os.path.join(logs_dir, "logging.log")
-logger = manage_logger(log_file_path)
+logger = get_pipeline_logger('unpaywall_client')
 
 unpaywall_base_url = "https://api.unpaywall.org/v2"
 

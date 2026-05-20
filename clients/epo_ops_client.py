@@ -17,8 +17,7 @@ from epo_ops.models import Epodoc, Docdb
 
 from lxml import etree
 
-from config import logs_dir
-from utils import manage_logger
+from utils import get_pipeline_logger
 import mappings
 
 
@@ -134,8 +133,7 @@ def smart_lower_capitalize(text: str, acronyms: Optional[Set[str]] = None) -> st
 
 class EPOClient:
     """Client for EPO OPS API."""
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('epo')
 
     # IMPORTANT: default namespace is the EPO exchange namespace
     NS = {

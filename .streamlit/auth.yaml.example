@@ -1,0 +1,25 @@
+# Infoscience Imports - credentials file
+# Copy to .streamlit/auth.yaml (gitignored) and fill in values.
+#
+# Setup:
+#   1. python -m ui.auth genkey          # writes cookie.key to auth.yaml
+#   2. python -m ui.auth add <u> admin   # creates first admin user
+#   3. ./run_ui.sh                       # start the UI
+
+credentials:
+  usernames:
+    alice:
+      name: Alice Martin
+      email: alice.martin@epfl.ch
+      password: $2b$12$placeholder      # set via: python -m ui.auth add alice admin
+      role: admin                       # admin | reporting
+    bob:
+      name: Bob Dupont
+      email: bob.dupont@epfl.ch
+      password: $2b$12$placeholder
+      role: reporting
+
+cookie:
+  name: is_session
+  key: replace-with-64-char-hex         # set via: python -m ui.auth genkey
+  expiry_days: 0.33                     # 8 hours

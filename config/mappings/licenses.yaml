@@ -1,0 +1,35 @@
+cc-by:
+  value: "CC BY"
+  display: "Creative Commons Attribution"
+
+cc-by-sa:
+  value: "CC BY-SA"
+  display: "Creative Commons Attribution-ShareAlike"
+
+cc-by-nd:
+  value: "CC BY-ND"
+  display: "Creative Commons Attribution-NoDerivatives"
+
+cc-by-nc:
+  value: "CC BY-NC"
+  display: "Creative Commons Attribution-NoDerivs"
+
+cc-by-nc-sa:
+  value: "CC BY-NC-SA"
+  display: "Creative Commons Attribution-NonCommercial-ShareAlike"
+
+cc-by-nc-nd:
+  value: "CC BY-NC-ND"
+  display: "Creative Commons Attribution-NonCommercial-NoDerivs"
+
+public-domain:
+  value: "PDM"
+  display: "Public Domain Mark"
+
+NA:
+  value: "N/A"
+  display: "N/A (Copyrighted)"
+
+mit-license:
+  value: "MIT"
+  display: "MIT"
