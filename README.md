@@ -435,8 +435,16 @@ data_pipeline/
 └── reporting.py     Excel report generation + SMTP delivery
 
 clients/             One module per external API
-config.py            Default harvest queries, source priority order, unit filters
-mappings.py          Source doc-types → Infoscience collections + dc.type values
+config/
+├── __init__.py      YAML loader — exposes source_order, default_queries, unit_types, …
+├── pipeline.yaml    Default harvest queries, source priority order, unit filters, Scopus AF-IDs
+└── mappings/
+    ├── collections.yaml      Infoscience collection names → UUIDs + DSpace section names
+    ├── doctypes.yaml         Source doc-types → collection + dc.type (active + commented-out)
+    ├── licenses.yaml         OA licence identifiers → DSpace display values
+    ├── versions.yaml         OA version identifiers → COAR URIs
+    └── types_authority.yaml  dc.type values → COAR authority identifiers
+mappings.py          Loads the above YAML files; exposes classify_record_type, get_version_mapping, …
 env_loader.py        Environment selection and .env.* loading
 db/pipeline_db.py    DuckDB persistence layer (run history, publications, authors)
 ui/
@@ -452,7 +460,8 @@ app.py               Streamlit supervision UI
 - `PipelineDB` opens a new [DuckDB](https://duckdb.org/) connection for every operation and closes it immediately — no persistent connections, which avoids write-lock conflicts. All DDL uses `CREATE/ALTER … IF NOT EXISTS` so schema migrations are idempotent.
 - The run-lock file (`data/run_active_{env}.json`) is created atomically with `open(..., 'x')` so two simultaneous UI submissions cannot both start a run.
 - The UI is authenticated via bcrypt-hashed credentials in `.streamlit/auth.yaml`. The CLI is authentication-free.
-- Source priority for deduplication merging is defined in `config.py → source_order`.
+- All data-driven configuration (queries, mappings, collection UUIDs) lives in `config/pipeline.yaml` and `config/mappings/*.yaml`. To add a new document type, update `doctypes.yaml`; to update a collection UUID after a DSpace migration, update `collections.yaml` — no Python changes required.
+- Source priority for deduplication merging is defined in `config/pipeline.yaml → source_order`.
 - The stylesheet lives in `ui/styles.css` (pure CSS); `app.py` only injects colour tokens as CSS custom properties (`var(--canard)`, etc.) via a small inline `<style>` block.
 
 ---
