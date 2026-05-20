@@ -15,9 +15,8 @@ from apiclient import (
 )
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
-from config import logs_dir
 import mappings
-from utils import manage_logger, normalize_title
+from utils import get_pipeline_logger, normalize_title
 from clients.scopus_client import ScopusClient
 
 wos_api_base_url = "https://api.clarivate.com/api/wos"
@@ -51,8 +50,7 @@ class Endpoint:
 
 class Client(APIClient):
 
-    log_file_path = os.path.join(logs_dir, "logging.log")
-    logger = manage_logger(log_file_path)
+    logger = get_pipeline_logger('wos')
 
     @retry_request
     def search_query(self, **param_kwargs):

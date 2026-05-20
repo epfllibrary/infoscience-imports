@@ -1,0 +1,395 @@
+source_wos:
+  Article:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+  Proceedings Paper:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  Meeting Abstract:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  Review:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::review article"
+  Editorial Material:
+    collection: "Journal articles"
+    dc.type: "text::journal::editorial"
+  Book Chapter:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  Book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  Early Access:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+  Data Paper:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::data paper"
+  # "Book Review":
+  #   collection: "Books and Book parts"
+  #   dc.type: "text"
+  # "Letter":
+  #   collection: "Journal articles"
+  #   dc.type: "text"
+  # "Correction":
+  #   collection: "Journal articles"
+  #   dc.type: "text::journal::journal article"
+  # "Note":
+  #   collection: "Journal articles"
+  #   dc.type: "text"
+  # "News Item":
+  #   collection: "Journal articles"
+  #   dc.type: "text"
+
+source_scopus:
+  Article:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+  Article in Press:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+  Book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  Book Chapter:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  Conference Paper:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  Conference Review:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  Data Paper:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::data paper"
+  Editorial:
+    collection: "Journal articles"
+    dc.type: "text::journal::editorial"
+  Letter:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+  Review:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::review article"
+  Business Article:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+  # "Erratum":
+  #   collection: "Journal articles"
+  #   dc.type: "text::journal::journal article"
+  # "Note":
+  #   collection: ""
+  #   dc.type: "text"
+  # "Short Survey":
+  #   collection: ""
+  #   dc.type: "text"
+  # "Press Release":
+  #   collection: ""
+  #   dc.type: "text"
+  # "Other":
+  #   collection: ""
+  #   dc.type: "text"
+
+source_openalex:
+  article:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+  book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  book-chapter:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  editorial:
+    collection: "Journal articles"
+    dc.type: "text::journal::editorial"
+  letter:
+    collection: "Journal articles"
+    dc.type: "text"
+  review:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::review article"
+  preprint:
+    collection: "Preprints and Working Papers"
+    dc.type: "text::preprint"
+  # "dataset":
+  #   collection: "Datasets and Code"
+  #   dc.type: "dataset"
+  # "dissertation":
+  #   collection: "EPFL thesis"
+  #   dc.type: "text::thesis::doctoral thesis"
+  # "report":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::report"
+  # "standard":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::technical documentation or standard"
+  # "erratum":
+  #   collection: "Journal articles"
+  #   dc.type: "text"
+  # "grant":
+  #   collection: ""
+  #   dc.type: "text"
+  # "other":
+  #   collection: ""
+  #   dc.type: "text"
+  # "paratext":
+  #   collection: ""
+  #   dc.type: "text"
+  # "peer-review":
+  #   collection: ""
+  #   dc.type: ""
+  # "reference-entry":
+  #   collection: ""
+  #   dc.type: "text"
+
+source_crossref:
+  book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  book-chapter:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  book-part:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  book-section:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  book-series:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  edited-book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  journal-article:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+  monograph:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  posted-content:
+    collection: "Preprints and Working Papers"
+    dc.type: "text::preprint"
+  proceedings:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings"
+  proceedings-article:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  # "book-set":
+  #   collection: "Books and Book parts"
+  #   dc.type: "text::book/monograph"
+  # "book-track":
+  #   collection: "Books and Book parts"
+  #   dc.type: "text::book/monograph"
+  # "component":
+  #   collection: "Other"
+  #   dc.type: "text"
+  # "dataset":
+  #   collection: "Datasets and Code"
+  #   dc.type: "dataset"
+  # "dissertation":
+  #   collection: "EPFL thesis"
+  #   dc.type: "text::thesis::doctoral thesis"
+  # "journal":
+  #   collection: "Journal articles"
+  #   dc.type: "text::journal::journal article"
+  # "journal-issue":
+  #   collection: "Journal articles"
+  #   dc.type: ""
+  # "journal-volume":
+  #   collection: "Journal articles"
+  #   dc.type: "text::journal::journal article"
+  # "peer-review":
+  #   collection: "Journal articles"
+  #   dc.type: "text::journal::journal article::research article"
+  # "reference-book":
+  #   collection: "Books and Book parts"
+  #   dc.type: "text::book/monograph"
+  # "reference-entry":
+  #   collection: ""
+  #   dc.type: "text"
+  # "report":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::report"
+  # "report-series":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::report"
+  # "standard":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::technical documentation or standard"
+  # "standard-series":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::technical documentation or standard"
+  # "other":
+  #   collection: "Other"
+  #   dc.type: "text"
+
+# Mapping of DataCite resource types to IFS3 collections and Dublin Core types
+source_datacite:
+  book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  bookchapter:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  conferencepaper:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  conferenceproceeding:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings"
+  datapaper:
+    collection: "Datasets and Code"
+    dc.type: "text::dataset"
+  dataset:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+  collection:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+  model:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+  journalarticle:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+  preprint:
+    collection: "Preprints and Working Papers"
+    dc.type: "text::preprint"
+  standard:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::technical documentation or standard"
+  report:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report"
+  text:
+    collection: "Other"
+    dc.type: "other"
+  software:
+    collection: "Datasets and Code"
+    dc.type: "software"
+  computationalnotebook:
+    collection: "Datasets and Code"
+    dc.type: "software"
+  outputmanagementplan:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report::data management plan"
+
+source_zenodo:
+  dataset:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+  presentation:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference presentation"
+  poster:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings"
+  image/diagram:
+    collection: "Datasets and Code"
+    dc.type: "dataset::recorded data"
+  image/drawing:
+    collection: "Datasets and Code"
+    dc.type: "dataset::recorded data"
+  image/figure:
+    collection: "Datasets and Code"
+    dc.type: "dataset::recorded data"
+  image/photo:
+    collection: "Datasets and Code"
+    dc.type: "dataset::recorded data"
+  image/plot:
+    collection: "Datasets and Code"
+    dc.type: "dataset::recorded data"
+  image/other:
+    collection: "Datasets and Code"
+    dc.type: "dataset::recorded data"
+  software:
+    collection: "Datasets and Code"
+    dc.type: "software"
+  video:
+    collection: "Datasets and Code"
+    dc.type: "dataset::recorded data"
+  model:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+  # "lesson":
+  #   collection: "Teaching Materials"
+  #   dc.type: "text"
+  # "physicalobject":
+  #   collection: ""
+  #   dc.type: "text"
+  # "publication/article":
+  #   collection: "Journal articles"
+  #   dc.type: "text::journal::journal article"
+  # "publication/book":
+  #   collection: "Books and Book parts"
+  #   dc.type: "text::book/monograph"
+  # "publication/conferencepaper":
+  #   collection: "Conferences, Workshops, Symposiums, and Seminars"
+  #   dc.type: "text::conference output::conference proceedings::conference paper"
+  # "publication/deliverable":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::report"
+  # "publication/journal":
+  #   collection: "Journal articles"
+  #   dc.type: "text::journal::journal article"
+  # "publication/report":
+  #   collection: "Reports, Documentation, and Standards"
+  #   dc.type: "text::report"
+  # "publication/section":
+  #   collection: "Books and Book parts"
+  #   dc.type: "text::book/monograph::book part or chapter"
+  # "publication/thesis":
+  #   collection: "Student works"
+  #   dc.type: "text::thesis::doctoral thesis"
+  # "other":
+  #   collection: "Datasets and Code"
+  #   dc.type: "dataset"
+
+source_epo:
+  patent:
+    collection: "Patents"
+    dc.type: "patent"
+  A:
+    collection: "Patents"
+    dc.type: "patent::utility model"
+  A1:
+    collection: "Patents"
+    dc.type: "patent::utility model"
+  A2:
+    collection: "Patents"
+    dc.type: "patent::utility model"
+  B1:
+    collection: "Patents"
+    dc.type: "patent::utility model"
+  B2:
+    collection: "Patents"
+    dc.type: "patent::utility model"
+  P:
+    collection: "Patents"
+    dc.type: "patent::plant patent"
+  P1:
+    collection: "Patents"
+    dc.type: "patent::plant patent"
+  P2:
+    collection: "Patents"
+    dc.type: "patent::plant patent"
+  P3:
+    collection: "Patents"
+    dc.type: "patent::plant patent"
+  P4:
+    collection: "Patents"
+    dc.type: "patent::plant patent"
+  P9:
+    collection: "Patents"
+    dc.type: "patent::plant patent"
+  S:
+    collection: "Patents"
+    dc.type: "patent::design patent"
+  S1:
+    collection: "Patents"
+    dc.type: "patent::design patent"

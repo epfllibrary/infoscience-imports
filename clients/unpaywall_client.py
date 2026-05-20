@@ -16,15 +16,13 @@ from apiclient import (
 )
 from apiclient.retrying import retry_if_api_request_error
 from dotenv import load_dotenv
-from config import logs_dir
 from config import LICENSE_CONDITIONS
-from utils import manage_logger
+from utils import get_pipeline_logger
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 email = os.environ.get("CONTACT_API_EMAIL")
 
-log_file_path = os.path.join(logs_dir, "logging.log")
-logger = manage_logger(log_file_path)
+logger = get_pipeline_logger('unpaywall_client')
 
 unpaywall_base_url = "https://api.unpaywall.org/v2"
 
@@ -68,7 +66,7 @@ class Endpoint:
 
 class Client(APIClient):
     @retry_request
-    def fetch_by_doi(self, doi, format="best-oa-location", **param_kwargs):
+    def fetch_by_doi(self, doi, format="best-oa-location", skip_pdf=False, **param_kwargs):
         logger.info("Starting Unpaywall DOI retrieval process.")
 
         param_kwargs.setdefault("email", email)
@@ -84,7 +82,7 @@ class Client(APIClient):
                 return None  # Or handle as needed
 
             if result:
-                return self._process_fetch_record(result, format)
+                return self._process_fetch_record(result, format, skip_pdf=skip_pdf)
 
         except Exception as e:
             logger.error(
@@ -94,11 +92,11 @@ class Client(APIClient):
 
         return None
 
-    def _process_fetch_record(self, x, format):
+    def _process_fetch_record(self, x, format, skip_pdf=False):
         if format == "oa":
             return self._extract_advanced_oa_info(x)
         elif format == "best-oa-location":
-            return self._extract_best_oa_location_infos(x)
+            return self._extract_best_oa_location_infos(x, skip_pdf=skip_pdf)
         elif format == "upw":
             return x
 
@@ -130,12 +128,13 @@ class Client(APIClient):
 
         return rec
 
-    def _extract_best_oa_location_infos(self, record):
+    def _extract_best_oa_location_infos(self, record, skip_pdf=False):
         """
         Extracts open access information from the best OA location section of the Unpaywall record.
 
         Parameters:
             record (dict): A single Unpaywall metadata response for a publication.
+            skip_pdf (bool): When True, skip PDF download (e.g. already retrieved from OpenAlex).
 
         Returns:
             dict: A dictionary containing open access metadata (oa status, license, version, URLs, etc.).
@@ -162,6 +161,13 @@ class Client(APIClient):
         ]
         urls = [url for url in urls if url]  # Filter out None
         rec["pdf_urls"] = "|".join(urls) if urls else None
+
+        if skip_pdf:
+            logger.info(
+                "PDF download skipped for DOI %s (already retrieved from OpenAlex).",
+                record.get("doi"),
+            )
+            return rec
 
         # Only try to download if url_for_pdf is explicitly provided and license is valid
         license_type = rec["license"]
