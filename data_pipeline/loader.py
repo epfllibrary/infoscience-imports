@@ -530,6 +530,28 @@ class Loader:
 
             logger.debug("Metadata patched for workspace %s", workspace_id)
 
+            # 4) FINAL dc.subject patch — always last so GROBID cannot overwrite our values.
+            # Sets our keywords if present, or explicitly clears the field if there are none.
+            if not is_epo:
+                keywords_raw = str(row.get("keywords", "") or "").strip()
+                keyword_list = [k.strip() for k in keywords_raw.split("||") if k.strip()]
+                subject_values = [v for v in (_build_metadata_value(kw) for kw in keyword_list) if v]
+                try:
+                    self.dspace_wrapper.update_workspace(workspace_id, [{
+                        "op": "add",
+                        "path": f"{base}/dc.subject",
+                        "value": subject_values,
+                    }])
+                    logger.debug(
+                        "Final dc.subject patch: %d keyword(s) for workspace %s",
+                        len(subject_values), workspace_id,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to apply final dc.subject patch for workspace %s: %s",
+                        workspace_id, e,
+                    )
+
         except Exception as e:
             logger.error(f"An error occurred while patching additional metadata: {e}")
 
@@ -1033,7 +1055,7 @@ class Loader:
                 f"/sections/{form_section}details/dc.subject",
                 [
                     build_value(keyword)
-                    for keyword in str(row.get("keywords", "")).split("||")
+                    for keyword in str(row.get("keywords") or "").split("||")
                     if keyword.strip()
                 ],
                 True,

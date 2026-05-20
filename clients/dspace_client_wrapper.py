@@ -161,7 +161,11 @@ class DSpaceClientWrapper:
 
     # ── Type-aware duplicate check ────────────────────────────────────────
 
-    _ENTITY_FILTER = "(entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
+    _ENTITY_FILTER  = "(entityType:(Publication) OR entityType:(Product) OR entityType:(Patent))"
+    _TYPE_PREPRINT  = "types:(*preprint*)"
+    _TYPE_DATASET   = "entityType:(Product) AND types:(*dataset*)"
+    _TYPE_SOFTWARE  = "entityType:(Product) AND types:(*software*)"
+    _TYPE_PUBLISHED = "entityType:(Publication) AND -types:(*preprint*)"
     _WORKFLOW_FILTER = (
         "(search.resourcetype:(XmlWorkflowItem) OR "
         "((search.resourcetype:(WorkspaceItem) AND submitter_authority:(4e8d183f-1309-470c-955e-c45a99c6f1b8)) OR "
@@ -169,13 +173,20 @@ class DSpaceClientWrapper:
     )
 
     def _count_items(self, base_query: str, scope: str = None) -> int:
-        """Count archived/submitted items matching base_query, optionally scoped to a collection."""
+        """Return the true count of archived items matching base_query.
+
+        Uses count_results (reads totalElements) rather than len(search_objects)
+        so that scoped comparisons like doi_preprint == doi_total are accurate
+        when multiple items share the same DOI (e.g. a preprint and a published
+        version both present in Infoscience).
+        """
         full_q = f"({base_query}) AND {self._ENTITY_FILTER}"
-        dsos = self._search_objects(
-            query=full_q, page=0, size=1, dso_type="item",
-            configuration="administrativeView", scope=scope, max_pages=1,
-        )
-        return len(dsos)
+        return self.client.count_results(
+            query=full_q,
+            dso_type="item",
+            configuration="administrativeView",
+            scope=scope,
+        ) or 0
 
     def _fetch_item_info(self, base_query: str, scope: str = None, max_items: int = 5) -> list:
         """Return a list of {uuid, doi, dc_type} dicts for items matching base_query.
@@ -278,9 +289,10 @@ class DSpaceClientWrapper:
             doi_total = self._count_items(doi_q)
             if doi_total > 0:
                 if rec_type == "published":
-                    doi_preprint = self._count_items(doi_q, scope=PREPRINT_COLLECTION_UUID)
+                    doi_preprint_q = f"{doi_q} AND {self._TYPE_PREPRINT}"
+                    doi_preprint = self._count_items(doi_preprint_q, scope=PREPRINT_COLLECTION_UUID)
                     if doi_preprint == doi_total:
-                        items = self._fetch_item_info(doi_q, scope=PREPRINT_COLLECTION_UUID)
+                        items = self._fetch_item_info(doi_preprint_q, scope=PREPRINT_COLLECTION_UUID)
                         return False, "cross_type_doi", items or None
                 return True, None, None
             if self._count_workflow_items(doi_q) > 0:
@@ -294,9 +306,14 @@ class DSpaceClientWrapper:
 
         # ── Title+year check (type-scoped) ────────────────────────────
         if rec_type == "dataset":
-            if self._count_items(ty_q, scope=DATASET_COLLECTION_UUID) > 0:
+            dc_type = str(x.get("dc.type") or "")
+            product_type_filter = (
+                self._TYPE_SOFTWARE if dc_type.startswith("software")
+                else self._TYPE_DATASET
+            )
+            if self._count_items(f"{ty_q} AND {product_type_filter}", scope=DATASET_COLLECTION_UUID) > 0:
                 return True, None, None
-            # Check if title+year exists in another collection (different entity, but flag it)
+            # Title+year exists outside "Datasets and Code" — different entity, flag it
             ty_total = self._count_items(ty_q)
             if ty_total > 0:
                 items = self._fetch_item_info(ty_q)
@@ -304,15 +321,15 @@ class DSpaceClientWrapper:
             return False, None, None
 
         elif rec_type == "preprint":
-            if self._count_items(ty_q, scope=PREPRINT_COLLECTION_UUID) > 0:
+            ty_preprint_q = f"{ty_q} AND {self._TYPE_PREPRINT}"
+            if self._count_items(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID) > 0:
                 return True, None, None
             if self._count_workflow_items(ty_q) > 0:
                 return True, None, None
-            # Check if a published version exists (broad count > preprint-scoped count)
-            ty_total = self._count_items(ty_q)
-            ty_preprint = self._count_items(ty_q, scope=PREPRINT_COLLECTION_UUID)
+            # Check if a published version exists
+            ty_total   = self._count_items(ty_q)
+            ty_preprint = self._count_items(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID)
             if ty_total > ty_preprint:
-                # Discard incoming preprint but flag it with the published version's info
                 all_items = self._fetch_item_info(ty_q, max_items=5)
                 published_items = [i for i in all_items if i.get("dc_type") != "text::preprint"]
                 return False, "published_version_exists", published_items or all_items or None
@@ -321,13 +338,13 @@ class DSpaceClientWrapper:
         else:  # published
             ty_total = self._count_items(ty_q)
             if ty_total > 0:
-                ty_preprint = self._count_items(ty_q, scope=PREPRINT_COLLECTION_UUID)
-                ty_dataset  = self._count_items(ty_q, scope=DATASET_COLLECTION_UUID)
-                ty_published = ty_total - ty_preprint - ty_dataset
+                ty_preprint_q = f"{ty_q} AND {self._TYPE_PREPRINT}"
+                ty_preprint   = self._count_items(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID)
+                ty_published  = self._count_items(f"{ty_q} AND {self._TYPE_PUBLISHED}")
                 if ty_published > 0:
                     return True, None, None
                 if ty_preprint > 0:
-                    items = self._fetch_item_info(ty_q, scope=PREPRINT_COLLECTION_UUID)
+                    items = self._fetch_item_info(ty_preprint_q, scope=PREPRINT_COLLECTION_UUID)
                     return False, "supersedes_preprint", items or None
             if self._count_workflow_items(ty_q) > 0:
                 return True, None, None
