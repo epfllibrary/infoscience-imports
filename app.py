@@ -588,9 +588,9 @@ def _render_pub_component(
   {pdf_tag}
 </td>
 <td class="c-auth">
-  <div class="auth-n">{_t(row.get("Auteurs EPFL"), 60)}{warn_ic}</div>
-  <span class="auth-u">{_e(row.get("Unités"))}</span>
+  <div class="auth-n">{_t(row.get("Auteurs EPFL"), 65)}{warn_ic}</div>
 </td>
+<td class="c-unit">{_t(row.get("Unités"), 30)}</td>
 <td class="c-lk">{lks}</td>
 <td class="c-btn"><button data-modal="pm{idx}" class="mbtn">📋</button></td>
 <td class="c-btn">{'<button data-modal="pa'+str(idx)+'" class="mbtn">👤</button>' if auths else '<button class="mbtn" disabled>👤</button>'}</td>
@@ -615,7 +615,7 @@ tr:last-child td{border-bottom:none}
 tr:hover td{background:#F8F9FC}
 .c-act{width:82px}.c-run{width:90px;font-size:11px;color:#667085}
 .c-yr{width:46px;font-weight:600;font-size:13px;white-space:nowrap}
-.c-ttl{min-width:210px}.c-oa{width:118px}.c-auth{width:168px}
+.c-ttl{min-width:200px}.c-oa{width:112px}.c-auth{width:140px}.c-unit{width:110px;font-size:11.5px;color:#374151}
 .c-lk{width:140px}.c-btn{width:30px;text-align:center;padding:6px 3px}
 .doi-row{display:flex;align-items:center;gap:4px;margin-bottom:3px}
 .doi-lk{font-family:'SF Mono','Roboto Mono',monospace;font-size:10.5px;color:#632CA6;word-break:break-all;flex:1;min-width:0}
@@ -725,6 +725,7 @@ document.querySelectorAll('[data-modal]').forEach(b=>{
   b.addEventListener('click',e=>{
     e.stopPropagation();
     document.getElementById(b.dataset.modal)?.showModal();
+    window.scrollTo({top:0,behavior:'smooth'});
   });
 });
 document.querySelectorAll('[data-close]').forEach(b=>{
@@ -746,7 +747,7 @@ document.querySelectorAll('dialog').forEach(d=>{
 <div class="wrap"><table>
 <thead><tr>
 <th>Actions</th>{run_th}<th>Année</th><th style="min-width:220px">Titre</th>
-<th>OA / Licence</th><th>Auteurs EPFL</th><th>DOI</th>
+<th>OA / Licence</th><th>Auteurs EPFL</th><th>Unités</th><th>DOI</th>
 <th title="Métadonnées">📋</th><th title="Auteurs EPFL">👤</th><th title="Doublon">🚩</th>
 </tr></thead>
 <tbody>{"".join(trows)}</tbody>
@@ -1892,9 +1893,11 @@ elif page == "Publications":
     }
     _m = {s: db_r.count_publications(**{**_filter_kwargs, "status": s})
           for s in STATUS_LABELS}
-    m_cols = st.columns(5)
+    _m_flagged = db_r.count_publications(**{**_filter_kwargs, "dedup_note": "__flagged__"})
+    m_cols = st.columns(6)
     for col, (stat, label) in zip(m_cols, STATUS_LABELS.items()):
         col.metric(label, _m[stat])
+    m_cols[5].metric("🚩 Signalées", _m_flagged)
 
     # ── Build display DataFrame ───────────────────────────────────────────
     if not pub_df.empty:
