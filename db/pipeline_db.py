@@ -15,7 +15,6 @@ import json
 import logging
 import math
 import time
-from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -489,6 +488,25 @@ class PipelineDB:
     def finish_run(self, run_id, status="completed"):
         self._exec("UPDATE runs SET ended_at=NOW(), status=? WHERE run_id=?",
                    [status, run_id])
+
+    def mark_deleted_by_workspace(self, workspace_id: str) -> None:
+        """Mark all run_publications rows with this workspace_id as deleted.
+
+        Uses TRY_CAST to match both "123" and "123.0" representations since
+        the loader stores workspace_id via str(float), e.g. "123.0".
+        Clears workspace_id and workflow_id while preserving dspace_item_uuid
+        as an audit reference.
+        """
+        con = self._connect()
+        try:
+            con.execute(
+                "UPDATE run_publications "
+                "SET status = 'deleted', workspace_id = NULL, workflow_id = NULL "
+                "WHERE TRY_CAST(workspace_id AS DOUBLE) = TRY_CAST(? AS DOUBLE)",
+                [str(workspace_id)],
+            )
+        finally:
+            con.close()
 
     # ── source stats ─────────────────────────────────────────────────────
 
