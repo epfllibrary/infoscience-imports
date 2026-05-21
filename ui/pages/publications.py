@@ -43,7 +43,7 @@ def _render_filters(db: PipelineDB) -> None:
             st.session_state[k] = v
         st.session_state["pub_page"] = 1
 
-    with st.expander("🔍 Filtres", expanded=True):
+    with st.expander("Filtres", icon=":material/search:", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1:
             runs_df = db.get_runs(limit=50)
@@ -101,8 +101,8 @@ def _render_filters(db: PipelineDB) -> None:
             )
         with cf6:
             st.markdown("<div style='padding-top:24px'>", unsafe_allow_html=True)
-            st.button("↺ Reset", on_click=_reset, use_container_width=True,
-                      help="Réinitialiser tous les filtres")
+            st.button("Reset", icon=":material/refresh:", on_click=_reset,
+                      use_container_width=True, help="Réinitialiser tous les filtres")
             st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -196,7 +196,7 @@ def _render_table(db: PipelineDB) -> None:
     m_cols = st.columns(6)
     for col, (stat, label) in zip(m_cols, _STATUS_LABELS.items()):
         col.metric(label, _m[stat])
-    m_cols[5].metric("🚩 Signalées", _m_flagged)
+    m_cols[5].metric("Signalées", _m_flagged, icon=":material/flag:")
 
     if pub_df.empty:
         st.info("Aucune publication correspondant aux filtres.")
@@ -243,11 +243,13 @@ def _enrich_dataframe(pub_df: pd.DataFrame, db: PipelineDB, sel_run: list, ds_ba
             else None
         ), axis=1,
     )
-    d["wf_url"] = d["workflow_id"].apply(
-        lambda w: (
-            f"{ds_base}/admin/workflow?spc.page=1&query=search.uniqueid:XmlWorkflowItem-{int(float(w))}"
-            if pd.notna(w) and w != "" else None
-        )
+    d["wf_url"] = d.apply(
+        lambda r: (
+            f"{ds_base}/mydspace?configuration=workflow&spc.page=1&query={r['dspace_item_uuid']}"
+            if pd.notna(r.get("workflow_id")) and r.get("workflow_id") != ""
+            and pd.notna(r.get("dspace_item_uuid")) and r.get("dspace_item_uuid") != ""
+            else None
+        ), axis=1,
     )
     d["item_url"] = (
         d["dspace_item_uuid"].apply(
@@ -326,7 +328,8 @@ def _render_downloads(db: PipelineDB, filter_kwargs: dict, sel_run: list) -> Non
     with dl_cols[0]:
         full_df = db.get_publications(**filter_kwargs, limit=10_000, offset=0)
         st.download_button(
-            "⬇ Publications CSV",
+            "Publications CSV",
+            icon=":material/download:",
             data=full_df.to_csv(index=False).encode("utf-8"),
             file_name=f"publications_{run_label}_{date.today()}.csv",
             mime="text/csv",
@@ -337,7 +340,8 @@ def _render_downloads(db: PipelineDB, filter_kwargs: dict, sel_run: list) -> Non
             ax_df = db.get_pub_authors_for_run(sel_run[0])
             if not ax_df.empty:
                 st.download_button(
-                    "⬇ Publications × Auteurs CSV",
+                    "Publications × Auteurs CSV",
+                    icon=":material/download:",
                     data=ax_df.to_csv(index=False).encode("utf-8"),
                     file_name=f"pub_authors_{sel_run[0]}_{date.today()}.csv",
                     mime="text/csv",
@@ -352,7 +356,8 @@ def _render_downloads(db: PipelineDB, filter_kwargs: dict, sel_run: list) -> Non
             if reports:
                 with open(reports[0], "rb") as f:
                     st.download_button(
-                        "⬇ Rapport Excel du run",
+                        "Rapport Excel du run",
+                        icon=":material/download:",
                         data=f.read(),
                         file_name=reports[0].name,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
