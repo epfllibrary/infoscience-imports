@@ -439,7 +439,7 @@ config/
 ├── __init__.py      YAML loader — exposes source_order, default_queries, unit_types, …
 ├── pipeline.yaml    Default harvest queries, source priority order, unit filters, Scopus AF-IDs
 └── mappings/
-    ├── collections.yaml      Infoscience collection names → UUIDs + DSpace section names
+    ├── collections.yaml      Infoscience collection names → UUIDs + DSpace Submission Forms section names
     ├── doctypes.yaml         Source doc-types → collection + dc.type (active + commented-out)
     ├── licenses.yaml         OA licence identifiers → DSpace display values
     ├── versions.yaml         OA version identifiers → COAR URIs
