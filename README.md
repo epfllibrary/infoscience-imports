@@ -100,9 +100,9 @@ streamlit run app.py
 | 🏠 Tableau de bord | all | KPIs, 30-day trend chart, recent runs, per-source breakdown, charts by type / OA status / year / unit / journal / PDF proportion |
 | 🚀 Lancer un run | admin | Form to configure and launch the pipeline; live log streaming with stop button |
 | ⏰ Programmation | admin | Create and manage scheduled runs; cron-based triggers; enable/disable toggle; run-now button; scheduler status indicator |
-| 📋 Publications | all | Paginated, sortable, filterable datatable; OA / licence / PDF badges; EPFL author + unit aggregation; weak-status flag; Excel report download |
+| 📋 Publications | all | Paginated, filterable datatable with inline modals; OA / licence / PDF badges; EPFL author + unit aggregation; weak-status flag; direct links to DSpace workspace, workflow (`mydspace`), and published item; CSV and Excel report download |
 | 📊 Statistiques | all | Per-run funnel by source, publication type breakdown, EPFL author and unit tabs |
-| ⚙️ Configuration | admin | Environment variable status, DuckDB info, `.env` template |
+| ⚙️ Configuration | admin | Environment variable status read directly from `.env.{env}` ; DuckDB file path and size; `.env` template |
 
 ### Dashboard charts
 
@@ -448,10 +448,20 @@ mappings.py          Loads the above YAML files; exposes classify_record_type, g
 env_loader.py        Environment selection and .env.* loading
 db/pipeline_db.py    DuckDB persistence layer (run history, publications, authors)
 ui/
+├── constants.py     Design tokens (PRIMARY, SECONDARY, C_GREEN …), SOURCES list, lookup tables
+├── helpers.py       Shared helpers — icons, badges, metric cards, fmt_dur/fmt_dt, get_db
+├── pub_helpers.py   Publication business logic — is_weak, oa_text, lic_text, source_api_url
 ├── run_state.py     File-based mutex (one pipeline run at a time, per environment)
 ├── auth.py          Streamlit authentication + role-based ACL
-└── styles.css       External stylesheet (colour tokens injected from app.py)
-app.py               Streamlit supervision UI
+├── styles.css       External stylesheet (CSS custom properties injected from app.py)
+└── pages/
+    ├── dashboard.py      KPI tiles, trend charts, recent runs
+    ├── run_launcher.py   Pipeline launch form + live log streaming
+    ├── scheduling.py     Scheduled run CRUD
+    ├── publications.py   Filterable paginated publications table
+    ├── statistics.py     Per-run and global analytical charts
+    └── configuration.py  Environment variables status, DuckDB info
+app.py               Streamlit entry point — setup, sidebar, page router (~200 lines)
 ```
 
 **Key design points:**
@@ -462,7 +472,9 @@ app.py               Streamlit supervision UI
 - The UI is authenticated via bcrypt-hashed credentials in `.streamlit/auth.yaml`. The CLI is authentication-free.
 - All data-driven configuration (queries, mappings, collection UUIDs) lives in `config/pipeline.yaml` and `config/mappings/*.yaml`. To add a new document type, update `doctypes.yaml`; to update a collection UUID after a DSpace migration, update `collections.yaml` — no Python changes required.
 - Source priority for deduplication merging is defined in `config/pipeline.yaml → source_order`.
-- The stylesheet lives in `ui/styles.css` (pure CSS); `app.py` only injects colour tokens as CSS custom properties (`var(--canard)`, etc.) via a small inline `<style>` block.
+- The stylesheet lives in `ui/styles.css` (pure CSS); `app.py` injects colour tokens as CSS custom properties (`var(--primary)`, `var(--secondary)`, etc.) from `ui/constants.py` via a small inline `<style>` block — no Python templating in the stylesheet itself.
+- Each UI page is a standalone module under `ui/pages/` exposing a single `render(db, ...)` function. `app.py` is a thin router that calls the relevant `render()` after sidebar and authentication setup.
+- The run launcher and scheduling pages check for `DS_API_ENDPOINT` and `DS_API_TOKEN` in the active `.env.{env}` file before allowing any run to start — a misconfigured environment blocks launch at the UI level, not at pipeline runtime.
 
 ---
 
