@@ -11,6 +11,7 @@ Connection strategy:
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import time
@@ -20,6 +21,35 @@ from typing import Optional
 
 import duckdb
 import pandas as pd
+
+# Columns excluded from raw_metadata JSON (stored separately or purely internal)
+_RAW_META_EXCLUDE: frozenset = frozenset({
+    "row_id", "workspace_id", "workflow_id", "dspace_item_uuid",
+    "ifs3_collection_id", "reject_reason", "is_duplicate",
+    "dedup_note", "flagged_publication",
+})
+
+
+def _serialize_raw_metadata(row) -> str | None:
+    """Serialize a DataFrame row to a compact JSON string for raw_metadata storage."""
+    result = {}
+    for k, v in row.items():
+        if k in _RAW_META_EXCLUDE:
+            continue
+        if v is None:
+            continue
+        if isinstance(v, float):
+            if math.isnan(v) or math.isinf(v):
+                continue
+            result[k] = v
+        elif hasattr(v, "item"):
+            result[k] = v.item()
+        else:
+            result[k] = v
+    try:
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except Exception:
+        return None
 
 logger = logging.getLogger("pipeline.db")
 
@@ -179,6 +209,7 @@ class PipelineDB:
                     error_msg VARCHAR,
                     dedup_note VARCHAR,
                     flagged_publication VARCHAR,
+                    raw_metadata TEXT,
                     loaded_at TIMESTAMP DEFAULT NOW(),
                     PRIMARY KEY (run_id, pub_id))""",
                 """CREATE TABLE IF NOT EXISTS epfl_authors (
@@ -230,6 +261,7 @@ class PipelineDB:
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS dedup_note VARCHAR",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS flagged_publication VARCHAR",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS dspace_item_uuid VARCHAR",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS raw_metadata TEXT",
             ]:
                 con.execute(_migration)
         finally:
@@ -513,6 +545,7 @@ class PipelineDB:
                     status, ws, wf, s(row.get("dspace_item_uuid")), error,
                     s(row.get("dedup_note")),
                     s(row.get("flagged_publication")),
+                    _serialize_raw_metadata(row),
                 ))
 
         _process(df_imported, status_override=None)
@@ -544,8 +577,9 @@ class PipelineDB:
         # Insert per-run records — ignore duplicates (same pub seen twice in one run).
         self._executemany(
             "INSERT INTO run_publications"
-            " (run_id, pub_id, row_id, status, workspace_id, workflow_id, dspace_item_uuid, error_msg, dedup_note, flagged_publication)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)"
+            " (run_id, pub_id, row_id, status, workspace_id, workflow_id, dspace_item_uuid,"
+            "  error_msg, dedup_note, flagged_publication, raw_metadata)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT (run_id, pub_id) DO NOTHING",
             rp_rows,
         )
@@ -1033,7 +1067,8 @@ class PipelineDB:
             f" rp.workflow_id, rp.dspace_item_uuid, rp.error_msg, rp.loaded_at,"
             f" p.pub_year, p.upw_is_oa, p.upw_valid_pdf,"
             f" p.upw_oa_status, p.upw_license, p.internal_id,"
-            f" p.seen_count, p.infoscience_dedup_count, rp.dedup_note, rp.flagged_publication"
+            f" p.seen_count, p.infoscience_dedup_count, rp.dedup_note, rp.flagged_publication,"
+            f" rp.raw_metadata"
             f" FROM run_publications rp"
             f" JOIN publications p ON p.pub_id = rp.pub_id"
             f" {join_a} {join_u} {where}"

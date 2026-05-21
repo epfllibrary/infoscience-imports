@@ -170,6 +170,594 @@ def badge(status: str) -> str:
     return f'<span class="badge badge-{status}">{status}</span>'
 
 
+_SOURCE_TAGS: dict = {
+    "scopus":            ("pub-src--scopus",    "Scopus"),
+    "wos":               ("pub-src--wos",       "WoS"),
+    "crossref":          ("pub-src--crossref",  "Crossref"),
+    "openalex+crossref": ("pub-src--openalex",  "OpenAlex"),
+    "openalex":          ("pub-src--openalex",  "OpenAlex"),
+    "zenodo":            ("pub-src--zenodo",    "Zenodo"),
+    "epo":               ("pub-src--epo",       "EPO"),
+    "datacite":          ("pub-src--datacite",  "DataCite"),
+}
+_WEAK_STATUSES_TABLE: frozenset = frozenset({
+    "", "student", "phd student", "master student",
+    "administrative staff", "technical staff",
+    "extern", "alumni", "unknown",
+})
+_RAW_META_SECTIONS: list = [
+    ("Identifiants",        ["doi", "pmid", "bookDOI", "internal_id"]),
+    ("Titre & type",        ["title", "doctype", "dc.type", "pubyear", "issueDate"]),
+    ("Revue / Article",     ["journalTitle", "journalISSN", "journalVolume", "issue",
+                              "startingPage", "endingPage", "artno", "publisher", "publisherPlace"]),
+    ("Livre / Série",       ["bookTitle", "seriesTitle", "bookISBN", "seriesISSN",
+                              "bookDOI", "bookPart", "editors", "corporateAuthor", "seriesVolume"]),
+    ("Mots-clés",           ["keywords"]),
+    ("Résumé",              ["abstract"]),
+    ("Open Access",         ["upw_is_oa", "upw_oa_status", "upw_license", "upw_version",
+                              "upw_host", "upw_pdf_urls", "journal_is_oa", "journal_is_in_doaj"]),
+    ("Conférence",          ["conference_info"]),
+    ("Financement",         ["fundings_info"]),
+    ("Collection DSpace",   ["ifs3_collection", "dc.type_authority"]),
+]
+_DB_META_SECTIONS: list = [
+    ("Identifiants",   ["doi", "internal_id", "dspace_item_uuid"]),
+    ("Bibliographique",["title", "dc_type", "pub_year", "source", "status"]),
+    ("Open Access",    ["upw_is_oa", "upw_oa_status", "upw_license", "upw_valid_pdf"]),
+    ("Pipeline",       ["run_id", "workspace_id", "workflow_id", "loaded_at"]),
+    ("Compteurs",      ["seen_count", "infoscience_dedup_count"]),
+]
+_DEDUP_LABELS: dict = {
+    "supersedes_preprint":         "Preprint existant",
+    "cross_type_doi":              "DOI cross-type",
+    "dataset_in_other_collection": "Dataset avec publication liée",
+    "published_version_exists":    "Version publiée existante",
+}
+
+
+def _render_pub_html_table(
+    d: "pd.DataFrame",
+    cols: list,
+) -> str:
+    """Render publications as an HTML table. Modals handled separately via st.dialog."""
+    import pandas as _pd
+
+    def _e(v) -> str:
+        if v is None or (isinstance(v, float) and _pd.isna(v)):
+            return ""
+        return _html.escape(str(v).strip())
+
+    def _trunc(v, n=90) -> str:
+        s = _e(v)
+        full = _html.escape(str(v).strip()) if v else ""
+        return f'<span title="{full}">{s[:n]}…</span>' if len(s) > n else s
+
+    def _notnull(v) -> bool:
+        return v is not None and not (isinstance(v, float) and _pd.isna(v)) and str(v).strip() != ""
+
+    def _actions(row) -> str:
+        parts = []
+        for col, label, css in [
+            ("item_url", "View",  "pub-action--view"),
+            ("ws_url",   "Edit",  "pub-action--edit"),
+            ("wf_url",   "Claim", "pub-action--claim"),
+        ]:
+            u = row.get(col)
+            if _notnull(u):
+                parts.append(f'<a href="{_e(u)}" target="_blank" class="pub-action {css}">{label}</a>')
+        return '<div class="pub-actions">' + "".join(parts) + "</div>" if parts else '<span class="pub-dash">—</span>'
+
+    def _src_tag(source) -> str:
+        s = str(source or "").lower().strip()
+        css, label = _SOURCE_TAGS.get(s, ("pub-src--default", source or "?"))
+        return f'<span class="pub-src-tag {css}">{_html.escape(label)}</span>'
+
+    def _type_tag(dc_type) -> str:
+        if not _notnull(dc_type):
+            return ""
+        parts = str(dc_type).split("::")
+        label = parts[-1].strip() if len(parts) > 1 else parts[0].strip()
+        return f'<span class="pub-type-tag" title="{_e(dc_type)}">{_html.escape(label[:30])}</span>'
+
+    rows_html = []
+    for _, row in d.iterrows():
+        run_td = f'<td class="pub-td pub-td--sm">{_e(row.get("run_id"))}</td>' if "run_id" in cols else ""
+        st_raw = str(row.get("status", "") or "").lower()
+        pdf_tag = '<span class="pub-pdf-tag">PDF</span>' if row.get("PDF") else ""
+        is_weak = bool(row.get("⚠️"))
+        warn_ic = ' <span class="pub-warn-ic" title="Statut EPFL faible">⚠️</span>' if is_weak else ""
+        doi_u, src_u = row.get("doi_url"), row.get("src_url")
+        lk = ""
+        if _notnull(doi_u): lk += f'<a href="{_e(doi_u)}" target="_blank" class="pub-link">DOI</a> '
+        if _notnull(src_u): lk += f'<a href="{_e(src_u)}" target="_blank" class="pub-link">src</a>'
+        flag_note = _DEDUP_LABELS.get(str(row.get("dedup_note") or ""), "")
+        flag_td = f'<td class="pub-td pub-td--flag"><span class="pub-flag-lbl">{_html.escape(flag_note)}</span></td>' if flag_note else '<td class="pub-td pub-td--flag"></td>'
+
+        rows_html.append(f"""<tr>
+<td class="pub-td pub-td--actions">{_actions(row)}</td>
+{run_td}
+<td class="pub-td pub-td--year">{_e(row.get("pub_year"))}</td>
+<td class="pub-td pub-td--title">
+  <div class="pub-title-tags">{_src_tag(row.get("source"))}{badge(st_raw) if st_raw else ""}{_type_tag(row.get("dc_type"))}</div>
+  <span class="pub-title">{_trunc(row.get("title"), 110)}</span>
+</td>
+<td class="pub-td pub-td--oa">
+  <span class="pub-oa-val">{_e(row.get("OA"))}</span>
+  <span class="pub-lic-val">{_trunc(row.get("Licence"), 22)}</span>
+  {pdf_tag}
+</td>
+<td class="pub-td pub-td--authors">
+  <div class="pub-auth-top">{_trunc(row.get("Auteurs EPFL"), 65)}{warn_ic}</div>
+  <span class="pub-units-val">{_e(row.get("Unités"))}</span>
+</td>
+<td class="pub-td pub-td--links">{lk}</td>
+{flag_td}
+</tr>""")
+
+    run_th = '<th class="pub-th">Run</th>' if "run_id" in cols else ""
+    return f"""<div class="pub-table-wrapper"><table class="pub-table">
+<thead><tr>
+  <th class="pub-th">Actions</th>{run_th}
+  <th class="pub-th">Année</th>
+  <th class="pub-th pub-th--wide">Titre</th>
+  <th class="pub-th">OA</th>
+  <th class="pub-th">Auteurs EPFL</th>
+  <th class="pub-th">Liens</th>
+  <th class="pub-th">🚩</th>
+</tr></thead>
+<tbody>{"".join(rows_html)}</tbody>
+</table></div>"""
+
+
+# ── Native Streamlit dialogs for per-publication details ──────────────────────
+
+@st.dialog("📋 Métadonnées collectées", width="large")
+def _pub_meta_dialog(row_data: dict, raw_meta: dict):
+    import json as _j
+    st.markdown(f"**{row_data.get('title', '')}**")
+    st.caption(f"{row_data.get('source', '')} · {row_data.get('pub_year', '')}")
+    st.divider()
+    sections = _RAW_META_SECTIONS if raw_meta else _DB_META_SECTIONS
+    source = raw_meta if raw_meta else row_data
+    if not raw_meta:
+        st.info("Métadonnées complètes disponibles à partir des prochains runs.")
+    for sec_name, keys in sections:
+        items = [(k, str(source[k])) for k in keys if k in source and source.get(k) and str(source[k]).strip() not in ("", "nan", "None")]
+        if not items:
+            continue
+        st.markdown(f'<div class="pmm-section">{sec_name}</div>', unsafe_allow_html=True)
+        for k, v in items:
+            if len(v) > 200:
+                st.text_area(k, v, height=110, key=f"_mta_{k}", disabled=True, label_visibility="visible")
+            else:
+                col1, col2 = st.columns([1, 3])
+                col1.markdown(f"`{k}`")
+                col2.markdown(v)
+
+
+@st.dialog("👤 Auteurs EPFL", width="large")
+def _pub_authors_dialog(title: str, authors: list):
+    st.markdown(f"**{title}**")
+    st.divider()
+    if not authors:
+        st.info("Aucun auteur EPFL réconcilié pour cette publication.")
+        return
+    for i, a in enumerate(authors):
+        sciper = a.get("sciper", "")
+        name   = a.get("name") or sciper or "?"
+        weak   = a.get("weak", False)
+        with st.container(border=True):
+            hd_col, btn_col = st.columns([4, 1])
+            with hd_col:
+                if weak:
+                    st.warning(f"⚠️ **{name}** — Statut faible")
+                else:
+                    st.markdown(f"**{name}**")
+            with btn_col:
+                if sciper:
+                    st.link_button("EPFL People", f"https://people.epfl.ch/{sciper}", use_container_width=True)
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"**Statut** {a.get('epfl_status') or '—'}")
+            c2.markdown(f"**Position** {a.get('epfl_position') or '—'}")
+            c3.markdown(f"**Unité** {a.get('main_unit') or '—'}")
+            orcid = a.get("orcid", "")
+            if orcid:
+                st.markdown(f"**ORCID** [{orcid}](https://orcid.org/{orcid})")
+
+
+@st.dialog("🚩 Doublon Infoscience", width="large")
+def _pub_flagged_dialog(title: str, flagged_raw: str, dedup_note: str, ds_base: str):
+    import json as _j
+    st.markdown(f"**{title}**")
+    label = _DEDUP_LABELS.get(dedup_note, dedup_note or "Signalé")
+    st.error(f"**{label}**")
+    st.divider()
+    try:
+        items = _j.loads(flagged_raw)
+    except Exception:
+        items = []
+    if not isinstance(items, list):
+        items = [items]
+    for item in items:
+        uuid = item.get("uuid", "")
+        doi  = item.get("doi", "")
+        dct  = item.get("dc_type", "")
+        with st.container(border=True):
+            if uuid:
+                st.markdown(f"**UUID** [{uuid}]({ds_base}/items/{uuid})")
+            if doi:
+                st.markdown(f"**DOI** [{doi}](https://doi.org/{doi})")
+            if dct:
+                st.markdown(f"**Type** `{dct}`")
+
+
+def _render_pub_component(
+    d: "pd.DataFrame",
+    cols: list,
+    authors_by_row: dict,
+    ds_base: str,
+) -> None:
+    """Render publications as a self-contained HTML component with working modals.
+
+    Uses st.components.v1.html() which renders in a real iframe — scripts execute,
+    <dialog> modals work natively, CSS is fully isolated.
+    """
+    import json as _jj
+    import pandas as _pd
+    import base64 as _b64
+
+    def _e(v) -> str:
+        if v is None or (isinstance(v, float) and _pd.isna(v)): return ""
+        return _html.escape(str(v).strip())
+
+    def _t(v, n=90) -> str:
+        s = _e(v)
+        full = _html.escape(str(v or ""))
+        return f'<span title="{full}">{s[:n]}…</span>' if len(s) > n else s
+
+    def _nn(v) -> bool:
+        return v is not None and not (isinstance(v, float) and _pd.isna(v)) and str(v).strip() not in ("", "nan", "None")
+
+    # ── Source tag ────────────────────────────────────────────────────────
+    _SRC_CSS = {
+        "scopus": "s-scopus", "wos": "s-wos", "crossref": "s-crossref",
+        "openalex+crossref": "s-openalex", "openalex": "s-openalex",
+        "zenodo": "s-zenodo", "epo": "s-epo", "datacite": "s-datacite",
+    }
+    _SRC_LBL = {
+        "scopus":"Scopus","wos":"WoS","crossref":"Crossref",
+        "openalex+crossref":"OpenAlex","openalex":"OpenAlex",
+        "zenodo":"Zenodo","epo":"EPO","datacite":"DataCite",
+    }
+
+    def _src_tag(src, url=None):
+        s = str(src or "").lower().strip()
+        label = _html.escape(_SRC_LBL.get(s, src or "?"))
+        css = _SRC_CSS.get(s, "s-def")
+        if url:
+            return f'<a href="{_html.escape(str(url))}" target="_blank" class="src {css}" style="text-decoration:none">{label}</a>'
+        return f'<span class="src {css}">{label}</span>'
+
+    def _status_badge(st_raw):
+        s = str(st_raw or "").lower().strip()
+        if not s: return ""
+        return f'<span class="badge st-{s}">{_html.escape(s)}</span>'
+
+    def _type_tag(dc):
+        if not _nn(dc): return ""
+        parts = str(dc).split("::")
+        lbl = parts[-1].strip() if len(parts) > 1 else parts[0].strip()
+        return f'<span class="ttype" title="{_e(dc)}">{_html.escape(lbl[:28])}</span>'
+
+    def _yr(v) -> str:
+        """Display year as integer — strips the .0 from float-like values."""
+        if not _nn(v): return ""
+        try: return str(int(float(str(v).strip())))
+        except (ValueError, OverflowError): return _e(v)
+
+    def _action_btns(row):
+        parts = []
+        for col, lbl, cls in [("item_url","View","av"),("ws_url","Edit","ae"),("wf_url","Claim","ac")]:
+            u = row.get(col)
+            if _nn(u): parts.append(f'<a href="{_e(u)}" target="_blank" class="ab {cls}">{lbl}</a>')
+        return '<div class="abl">' + "".join(parts) + "</div>" if parts else '<span class="dash">—</span>'
+
+    # ── Modal content builders ────────────────────────────────────────────
+    def _meta_content(row):
+        rm = row.get("raw_metadata")
+        meta, sections = {}, _DB_META_SECTIONS
+        if _nn(rm):
+            try: meta = _jj.loads(str(rm)); sections = _RAW_META_SECTIONS
+            except Exception: pass
+        src = meta if meta else row
+        html_parts = [f'<p class="m-ttl">{_t(row.get("title"), 100)}</p>']
+        if not meta:
+            html_parts.append('<p class="m-info">Métadonnées complètes disponibles à partir des prochains runs.</p>')
+        for sec, keys in sections:
+            items = [(k, str(src[k])) for k in keys if k in src and _nn(src.get(k))]
+            if not items: continue
+            html_parts.append(f'<div class="m-sec">{_html.escape(sec)}</div>')
+            for k, v in items:
+                if len(v) > 200:
+                    html_parts.append(f'<div class="m-row m-row-w"><span class="m-key">{_html.escape(k)}</span><pre class="m-pre">{_html.escape(v)}</pre></div>')
+                else:
+                    html_parts.append(f'<div class="m-row"><span class="m-key">{_html.escape(k)}</span><span class="m-val">{_e(v)}</span></div>')
+        return "".join(html_parts)
+
+    def _authors_content(row, authors):
+        def _v(x): return _e(x) if x else ""  # clean display value, empty if falsy
+
+        parts = [f'<p class="m-ttl">{_t(row.get("title"), 100)}</p>']
+        if not authors:
+            parts.append('<p class="m-info">Aucun auteur EPFL réconcilié.</p>')
+            return "".join(parts)
+        for a in authors:
+            sciper = _v(a.get("sciper"))
+            orcid  = _v(a.get("orcid"))
+            name   = _v(a.get("name")) or sciper or "?"
+            status = _v(a.get("epfl_status"))
+            pos    = _v(a.get("epfl_position"))
+            unit   = _v(a.get("main_unit"))
+            weak   = a.get("weak", False)
+            sc_lk  = f'<a href="https://people.epfl.ch/{sciper}" target="_blank">{sciper}</a>' if sciper else "—"
+            or_lk  = f'<a href="https://orcid.org/{orcid}" target="_blank">{orcid}</a>' if orcid else "—"
+            weak_badge = '<span class="pma-wb">⚠️ Statut faible</span>' if weak else ""
+            # Status displayed with warning colour if weak
+            status_html = (
+                f'<span class="pma-st-weak">{status or "—"}</span>' if weak
+                else (status or "—")
+            )
+            parts.append(
+                f'<div class="pma-card{"  pma-weak" if weak else ""}">'
+                f'<div class="pma-name">{name} {weak_badge}</div>'
+                f'<div class="pma-meta">'
+                f'<span><b>SCIPER</b> {sc_lk}</span>'
+                f'<span><b>Statut</b> {status_html}</span>'
+                f'<span><b>Position</b> {pos or "—"}</span>'
+                f'<span><b>Unité</b> {unit or "—"}</span>'
+                f'<span><b>ORCID</b> {or_lk}</span>'
+                f'</div></div>'
+            )
+        return '<div class="pma-list">' + "".join(parts) + "</div>"
+
+    def _flagged_content(row):
+        raw = row.get("flagged_publication"); note = str(row.get("dedup_note") or "")
+        label = _DEDUP_LABELS.get(note, note or "Signalé")
+        parts = [f'<p class="m-ttl">{_t(row.get("title"), 100)}</p><p class="m-note">{_e(label)}</p>']
+        try: items = _jj.loads(str(raw))
+        except Exception: items = []
+        if not isinstance(items, list): items = [items]
+        for it in items:
+            uuid = _e(it.get("uuid")); doi = _e(it.get("doi")); dct = _e(it.get("dc_type"))
+            ul = f'<a href="{_e(ds_base)}/items/{uuid}" target="_blank">{uuid}</a>' if uuid else "—"
+            dl = f'<a href="https://doi.org/{doi}" target="_blank">{doi}</a>' if doi else "—"
+            parts.append(f'<div class="pmf-card"><div><b>UUID</b> {ul}</div><div><b>DOI</b> {dl}</div><div><b>Type</b> <code>{dct}</code></div></div>')
+        return '<div class="pmf-list">' + "".join(parts) + "</div>"
+
+    # ── Build dialogs + rows ──────────────────────────────────────────────
+    has_run = "run_id" in cols
+    dialogs, trows = [], []
+
+    for idx, row in enumerate(d.to_dict("records")):
+        auths = authors_by_row.get(str(row.get("row_id") or ""), [])
+        has_flag = _nn(row.get("flagged_publication"))
+
+        # Dialogs for this row
+        for mid, title, content, disabled in [
+            (f"pm{idx}", "📋 Métadonnées collectées", _meta_content(row), False),
+            (f"pa{idx}", "👤 Auteurs EPFL",           _authors_content(row, auths), not auths),
+            (f"pf{idx}", "🚩 Doublon Infoscience",    _flagged_content(row) if has_flag else "", not has_flag),
+        ]:
+            if not disabled:
+                dialogs.append(
+                    f'<dialog id="{mid}">'
+                    f'<div class="mbox">'
+                    f'<div class="mhd"><span>{title}</span><button data-close="{mid}" class="mx">✕</button></div>'
+                    f'<div class="mbd">{content}</div>'
+                    f'</div></dialog>'
+                )
+
+        # Table row
+        run_td = f'<td class="c-run">{_e(row.get("run_id"))}</td>' if has_run else ""
+        pdf_tag = '<span class="pdf-tag">PDF</span>' if row.get("PDF") else ""
+        warn_ic = ' <span title="Statut faible">⚠️</span>' if row.get("⚠️") else ""
+        doi_u = row.get("doi_url"); src_u = row.get("src_url")
+        doi_val = str(row.get("doi") or "").strip()
+        lks = ""
+        if _nn(doi_u) and doi_val:
+            doi_display = doi_val[:32] + "…" if len(doi_val) > 32 else doi_val
+            lks = (
+                f'<div class="doi-row">'
+                f'<a href="{_e(doi_u)}" target="_blank" class="doi-lk" title="{_html.escape(doi_val)}">{_html.escape(doi_display)}</a>'
+                f'<button class="copy-btn" data-copy="{_html.escape(doi_val)}" title="Copier le DOI">⎘</button>'
+                f'</div>'
+            )
+        flag_note = _DEDUP_LABELS.get(str(row.get("dedup_note") or ""), "")
+
+        trows.append(f"""<tr>
+<td class="c-act">{_action_btns(row)}</td>
+{run_td}
+<td class="c-yr">{_yr(row.get("pub_year"))}</td>
+<td class="c-ttl">
+  <div class="ttags">{_src_tag(row.get("source"), src_u if _nn(src_u) else None)}{_status_badge(row.get("status"))}{_type_tag(row.get("dc_type"))}</div>
+  <span class="ttl">{_t(row.get("title"), 105)}</span>
+</td>
+<td class="c-oa">
+  <span class="oa-v">{_e(row.get("OA"))}</span>
+  <span class="lic-v">{_t(row.get("Licence"), 20)}</span>
+  {pdf_tag}
+</td>
+<td class="c-auth">
+  <div class="auth-n">{_t(row.get("Auteurs EPFL"), 60)}{warn_ic}</div>
+  <span class="auth-u">{_e(row.get("Unités"))}</span>
+</td>
+<td class="c-lk">{lks}</td>
+<td class="c-btn"><button data-modal="pm{idx}" class="mbtn">📋</button></td>
+<td class="c-btn">{'<button data-modal="pa'+str(idx)+'" class="mbtn">👤</button>' if auths else '<button class="mbtn" disabled>👤</button>'}</td>
+<td class="c-btn">{'<button data-modal="pf'+str(idx)+f'" class="mbtn flag-btn">🚩</button>' if has_flag else '<button class="mbtn" disabled>🚩</button>'}</td>
+</tr>""")
+
+    run_th = "<th>Run</th>" if has_run else ""
+
+    # ── CSS ───────────────────────────────────────────────────────────────
+    CSS = """
+*,*::before,*::after{box-sizing:border-box}
+*{margin:0;padding:0}
+html,body{font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:13px;background:#fff;color:#1D2939;-webkit-font-smoothing:antialiased}
+a{color:#632CA6;text-decoration:none}a:hover{text-decoration:underline}
+
+/* Table */
+.wrap{border-radius:12px;border:1px solid #E4E7EC;box-shadow:0 2px 8px rgba(16,24,40,.05);overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th{background:#F9FAFB;color:#667085;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;padding:9px 10px;text-align:left;border-bottom:2px solid #E4E7EC;white-space:nowrap}
+td{padding:8px 10px;vertical-align:middle;border-bottom:1px solid #F2F4F7;line-height:1.4}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#F8F9FC}
+.c-act{width:82px}.c-run{width:90px;font-size:11px;color:#667085}
+.c-yr{width:46px;font-weight:600;font-size:13px;white-space:nowrap}
+.c-ttl{min-width:210px}.c-oa{width:118px}.c-auth{width:168px}
+.c-lk{width:140px}.c-btn{width:30px;text-align:center;padding:6px 3px}
+.doi-row{display:flex;align-items:center;gap:4px;margin-bottom:3px}
+.doi-lk{font-family:'SF Mono','Roboto Mono',monospace;font-size:10.5px;color:#632CA6;word-break:break-all;flex:1;min-width:0}
+.src-lk{font-weight:500;font-size:11px;color:#632CA6}
+.copy-btn{flex-shrink:0;background:none;border:1px solid #E4E7EC;border-radius:4px;padding:1px 5px;font-size:12px;cursor:pointer;color:#667085;transition:background .1s,border-color .1s,color .1s;line-height:1.4}
+.copy-btn:hover{background:#F0F4FF;border-color:#C4B5FD;color:#632CA6}
+.copy-btn.copied{background:#DCFCE7;border-color:#86EFAC;color:#15803D}
+
+/* Source tags */
+.src{display:inline-block;padding:1px 6px;border-radius:4px;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;vertical-align:middle}
+.s-scopus{background:#DBEAFE;color:#1E40AF}.s-wos{background:#EDE9FE;color:#5B21B6}
+.s-crossref{background:#CCFBF1;color:#0F766E}.s-openalex{background:#DCFCE7;color:#15803D}
+.s-zenodo{background:#FED7AA;color:#9A3412}.s-epo{background:#F3F4F6;color:#374151}
+.s-datacite{background:#F3E8FF;color:#7E22CE}.s-def{background:#F1F5F9;color:#64748B}
+
+/* Status badges */
+.badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;vertical-align:middle}
+.st-workflow{background:#EDE9FE;color:#6D28D9}.st-workspace{background:#FEF9C3;color:#854D0E}
+.st-deduplicated{background:#DBEAFE;color:#1D4ED8}.st-rejected{background:#FEE2E2;color:#B91C1C}
+.st-error{background:#FEE2E2;color:#B91C1C}
+
+/* Type tag */
+.ttype{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;background:#F1F5F9;color:#475569;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+
+/* Title */
+.ttags{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:4px;align-items:center}
+.ttl{font-weight:500;color:#101828;font-size:12.5px;line-height:1.4}
+
+/* Action buttons */
+.abl{display:flex;flex-direction:column;gap:3px}
+.dash{color:#D0D5DD}
+.ab{display:block;padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:600;text-decoration:none!important;text-align:center;border:1px solid;transition:filter .1s,transform .1s;line-height:1.4}
+.ab:hover{filter:brightness(.88);transform:translateY(-1px);text-decoration:none!important}
+.av{background:#DCFCE7;color:#15803D!important;border-color:#86EFAC}
+.ae{background:#FEF9C3;color:#854D0E!important;border-color:#FDE68A}
+.ac{background:#EDE9FE;color:#6D28D9!important;border-color:#C4B5FD}
+
+/* OA */
+.oa-v{display:block;font-weight:600;color:#16A34A;font-size:11px}
+.lic-v{display:block;color:#667085;font-size:11px}
+.pdf-tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#DCFCE7;color:#15803D;margin-top:2px}
+
+/* Authors */
+.auth-n{font-size:11.5px;line-height:1.4;margin-bottom:1px}
+.auth-u{font-size:10.5px;color:#98A2B3}
+
+/* Links */
+td.c-lk a{color:#632CA6;font-weight:500;font-size:11px;margin-right:4px}
+
+/* Modal trigger buttons */
+.mbtn{background:#F9FAFB;border:1px solid #E4E7EC;border-radius:5px;padding:3px 6px;font-size:13px;cursor:pointer;color:#374151;line-height:1;transition:background .1s,border-color .1s;display:block;width:100%}
+.mbtn:hover{background:#F0F4FF;border-color:#C4B5FD}
+.mbtn:disabled{opacity:.3;cursor:not-allowed}
+.flag-btn:hover{background:#FFF5F5;border-color:#FECACA}
+
+/* Modals */
+dialog{border:none;border-radius:16px;padding:0;max-width:640px;width:90vw;max-height:80vh;box-shadow:0 24px 64px rgba(16,24,40,.22);overflow:hidden;position:fixed;top:24px;left:50%;transform:translateX(-50%);margin:0}
+dialog::backdrop{background:rgba(16,24,40,.5);backdrop-filter:blur(3px);position:fixed;inset:0}
+.mbox{display:flex;flex-direction:column;max-height:80vh}
+.mhd{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #E4E7EC;font-weight:700;font-size:13.5px;color:#101828;background:#FAFAFA;flex-shrink:0}
+.mx{background:none;border:none;font-size:15px;color:#667085;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1}
+.mx:hover{background:#F3F4F6}
+.mbd{overflow-y:auto;padding:18px;flex:1}
+.m-ttl{font-weight:600;color:#101828;margin:0 0 12px;font-size:13px;line-height:1.4}
+.m-note{color:#B91C1C;font-weight:500;font-size:12px;margin:0 0 12px}
+.m-info{color:#667085;font-size:12px;font-style:italic;padding:6px 0}
+.m-sec{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#667085;margin:14px 0 5px;padding-bottom:4px;border-bottom:1px solid #F2F4F7}
+.m-sec:first-of-type{margin-top:0}
+.m-row{display:flex;gap:10px;padding:4px 0;border-bottom:1px solid #FAFAFA;font-size:11.5px}
+.m-row-w{flex-direction:column;gap:3px}
+.m-key{color:#667085;min-width:120px;flex-shrink:0;font-size:11px}
+.m-val{color:#1D2939;word-break:break-all}
+.m-pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#F8FAFC;border:1px solid #E4E7EC;border-radius:5px;padding:7px 9px;font-size:11px;font-family:inherit;max-height:150px;overflow-y:auto;line-height:1.5;color:#1D2939}
+.pma-list{display:flex;flex-direction:column;gap:8px}
+.pma-card{border:1px solid #E4E7EC;border-radius:8px;padding:10px 12px;background:#FAFAFA}
+.pma-weak{border-color:#FDE68A;background:#FFFBEB}
+.pma-name{font-weight:600;font-size:13px;color:#101828;margin-bottom:6px}
+.pma-meta{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px;font-size:11px}
+.pma-meta span{color:#475569}.pma-meta b{color:#101828;margin-right:3px}
+.pma-wb{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:#FEF3C7;color:#92400E;margin-left:5px;vertical-align:middle}
+.pma-st-weak{color:#92400E;font-weight:600}
+.pmf-list{display:flex;flex-direction:column;gap:8px}
+.pmf-card{border:1px solid #FECACA;border-radius:8px;padding:10px 12px;background:#FFF5F5;font-size:12px;display:flex;flex-direction:column;gap:5px}
+.pmf-card b{color:#101828;margin-right:3px}
+code{background:#F1F5F9;padding:1px 5px;border-radius:3px;font-size:10.5px;color:#475569;font-family:inherit}
+"""
+
+    # ── JS (runs in real iframe — works!) ─────────────────────────────────
+    JS = """
+document.querySelectorAll('[data-copy]').forEach(b=>{
+  b.addEventListener('click',e=>{
+    e.stopPropagation();
+    const txt=b.dataset.copy;
+    (navigator.clipboard?.writeText(txt)||Promise.reject()).then(()=>{
+      b.classList.add('copied');b.textContent='✓';
+      setTimeout(()=>{b.classList.remove('copied');b.textContent='⎘';},1600);
+    }).catch(()=>{
+      const ta=document.createElement('textarea');ta.value=txt;
+      document.body.appendChild(ta);ta.select();document.execCommand('copy');
+      document.body.removeChild(ta);
+      b.classList.add('copied');b.textContent='✓';
+      setTimeout(()=>{b.classList.remove('copied');b.textContent='⎘';},1600);
+    });
+  });
+});
+document.querySelectorAll('[data-modal]').forEach(b=>{
+  b.addEventListener('click',e=>{
+    e.stopPropagation();
+    document.getElementById(b.dataset.modal)?.showModal();
+  });
+});
+document.querySelectorAll('[data-close]').forEach(b=>{
+  b.addEventListener('click',()=>document.getElementById(b.dataset.close)?.close());
+});
+document.querySelectorAll('dialog').forEach(d=>{
+  d.addEventListener('click',e=>{if(e.target===d)d.close();});
+});
+"""
+
+    html_doc = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>{CSS}</style>
+</head><body>
+{"".join(dialogs)}
+<div class="wrap"><table>
+<thead><tr>
+<th>Actions</th>{run_th}<th>Année</th><th style="min-width:220px">Titre</th>
+<th>OA / Licence</th><th>Auteurs EPFL</th><th>DOI</th>
+<th title="Métadonnées">📋</th><th title="Auteurs EPFL">👤</th><th title="Doublon">🚩</th>
+</tr></thead>
+<tbody>{"".join(trows)}</tbody>
+</table></div>
+<script>{JS}</script>
+</body></html>"""
+
+    _b64_src = "data:text/html;base64," + _b64.b64encode(html_doc.encode("utf-8")).decode("ascii")
+    st.iframe(_b64_src, height=max(320, len(d) * 66 + 100))
+
+
 # ── Sidebar navigation ────────────────────────────────────────────────────────
 _ENV_STYLE = {
     "dev":  ("background:#dff0c8;color:#3a5a10", "DEV"),
@@ -1265,6 +1853,7 @@ elif page == "Publications":
     _run_detected: dict = {}
     _has_enrichment = False
 
+    _enrichment_authors_df = pd.DataFrame()
     if not pub_df.empty:
         if len(sel_run) == 1:
             # Single run selected — fetch entire run enrichment (efficient single query per table).
@@ -1272,6 +1861,7 @@ elif page == "Publications":
             _a_df = db_r.get_pub_authors_for_run(_single_run)
             if not _a_df.empty:
                 _a_df.insert(0, "run_id", _single_run)
+            _enrichment_authors_df = _a_df
             _run_authors, _run_weak = _build_authors_dict(_a_df)
 
             _u_df = db_r.get_pub_units_for_run(_single_run)
@@ -1286,8 +1876,9 @@ elif page == "Publications":
         else:
             # "Tous les runs": fetch enrichment only for the current page's rows.
             _pairs = list(zip(pub_df["run_id"], pub_df["row_id"]))
-            _run_authors, _run_weak = _build_authors_dict(
-                db_r.get_pub_authors_for_rows(_pairs))
+            _auth_df = db_r.get_pub_authors_for_rows(_pairs)
+            _enrichment_authors_df = _auth_df
+            _run_authors, _run_weak = _build_authors_dict(_auth_df)
             _run_units = _build_units_dict(
                 db_r.get_pub_units_for_rows(_pairs))
             _run_detected = _build_detected_dict(
@@ -1385,7 +1976,7 @@ elif page == "Publications":
             axis=1,
         )
         d["wf_url"] = d["workflow_id"].apply(
-            lambda w: f"{ds_base}/workflowitems/{int(float(w))}/edit"
+            lambda w: f"{ds_base}/admin/workflow?spc.page=1&query=search.uniqueid:XmlWorkflowItem-{int(float(w))}"
                       if pd.notna(w) and w != "" else None
         )
         d["item_url"] = d["dspace_item_uuid"].apply(
@@ -1427,43 +2018,41 @@ elif page == "Publications":
         )
         _cols = [c for c in _cols if c in d.columns]
 
-        st.dataframe(
-            d[_cols],
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "run_id":      st.column_config.TextColumn("Run",     width="small"),
-                "pub_year":    st.column_config.TextColumn("Année",   width="small"),
-                "title":       st.column_config.TextColumn("Titre",   width="large"),
-                "source":      st.column_config.TextColumn("Source",  width="small"),
-                "dc_type":     st.column_config.TextColumn("Type",    width="medium"),
-                "status":      st.column_config.TextColumn("Statut",  width="small"),
-                "OA":          st.column_config.TextColumn("OA",      width="small"),
-                "Licence":     st.column_config.TextColumn("Licence", width="medium"),
-                "PDF":         st.column_config.CheckboxColumn("PDF ✓", width="small"),
-                "⚠️":          st.column_config.CheckboxColumn("⚠️ Statut faible", width="small"),
-                "Auteurs EPFL": st.column_config.TextColumn("Auteurs EPFL", width="large"),
-                "Unités":      st.column_config.TextColumn("Unités",  width="medium"),
-                "seen_count":  st.column_config.NumberColumn("Vu", width="small",
-                                   help="Nombre de fois collectée tous runs confondus"),
-                "infoscience_dedup_count": st.column_config.NumberColumn(
-                                   "Déjà dans IS", width="small",
-                                   help="Nombre de fois déjà présente dans Infoscience lors de la collecte"),
-                "src_url":     st.column_config.LinkColumn("Voir source", width="small",
-                                   display_text="raw_data"),
-                "doi_url":     st.column_config.LinkColumn("DOI",       width="medium",
-                                   display_text=r"https://doi\.org/(.+)"),
-                "item_url":    st.column_config.LinkColumn("Infoscience", width="small",
-                                   display_text=r".*/items/(.+)"),
-                "ws_url":      st.column_config.LinkColumn("Workspace", width="small",
-                                   display_text=r".*/workspaceitems/(\d+)/edit"),
-                "wf_url":      st.column_config.LinkColumn("Workflow",  width="small",
-                                   display_text=r".*/workflowitems/(\d+)/edit"),
-                "error_msg":           st.column_config.TextColumn("Erreur",       width="medium"),
-                "dedup_note":          st.column_config.TextColumn("Note dédup",    width="medium"),
-                "flagged_publication":  st.column_config.TextColumn("🚩 Doublon Infoscience", width="large"),
-            },
-        )
+        # Build per-row author dicts for the authors modal
+        def _clean_str(v) -> str:
+            """Return empty string for None, NaN, 'nan', 'None', 'null'."""
+            if v is None:
+                return ""
+            if isinstance(v, float) and pd.isna(v):
+                return ""
+            try:
+                if pd.isna(v):
+                    return ""
+            except (TypeError, ValueError):
+                pass
+            s = str(v).strip()
+            return "" if s.lower() in ("nan", "none", "null", "na", "<na>", "nat") else s
+
+        _authors_by_row: dict = {}
+        if not _enrichment_authors_df.empty:
+            for _, _ar in _enrichment_authors_df.iterrows():
+                _rk = str(_ar.get("row_id", ""))
+                if not _rk:
+                    continue
+                _st  = _clean_str(_ar.get("epfl_status"))
+                _pos = _clean_str(_ar.get("epfl_position"))
+                _weak = _is_weak(_st, _pos)
+                _authors_by_row.setdefault(_rk, []).append({
+                    "name":          _clean_str(_ar.get("full_name")) or _clean_str(_ar.get("sciper")) or "?",
+                    "sciper":        _clean_str(_ar.get("sciper")),
+                    "orcid":         _clean_str(_ar.get("orcid")),
+                    "epfl_status":   _clean_str(_ar.get("epfl_status")),
+                    "epfl_position": _clean_str(_ar.get("epfl_position")),
+                    "main_unit":     _clean_str(_ar.get("main_unit")),
+                    "weak":          _weak,
+                })
+
+        _render_pub_component(d, _cols, _authors_by_row, ds_base)
 
         # ── Downloads ─────────────────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
