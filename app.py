@@ -187,7 +187,7 @@ elif page == "Programmation":
 
 elif page == "Publications":
     from ui.pages.publications import render
-    render(db)
+    render(db, role=_role)
 
 elif page == "Statistiques":
     from ui.pages.statistics import render

@@ -546,6 +546,109 @@ class DSpaceClientWrapper:
     def delete_workflow(self, workflow_id):
         return self.client.delete_workflow_item(workflow_id)
 
+    def find_workspaceitem_by_item_uuid(self, item_uuid: str) -> int | None:
+        """Return the workspace item ID for the given DSpace item UUID, or None if not found.
+
+        Uses the supervision search configuration with the query:
+            namedresourcetype_authority:workspace "Item-{item_uuid}"
+
+        This is the same search strategy used for Infoscience deduplication and is the
+        only reliable way to find a workspace item after a workflow rejection, since
+        DSpace assigns a new workspace_id that differs from the original stored value.
+        """
+        query = f'namedresourcetype_authority:workspace "Item-{item_uuid}"'
+        try:
+            results = self._search_objects(
+                query=query,
+                page=0,
+                size=1,
+                configuration="supervision",
+                max_pages=1,
+            )
+            if results:
+                ws_id = getattr(results[0], "id", None)
+                if ws_id is not None:
+                    self.logger.info(
+                        "Found workspace item %s for item %s via supervision search.",
+                        ws_id, item_uuid,
+                    )
+                    return int(ws_id)
+        except Exception as exc:
+            self.logger.warning("find_workspaceitem_by_item_uuid failed: %s", exc)
+        return None
+
+    def delete_item(
+        self,
+        workspace_id: str | None,
+        workflow_id: str | None,
+        item_uuid: str | None = None,
+    ) -> tuple[bool, str]:
+        """Delete an imported item from DSpace, handling the two-step sequence for workflow items.
+
+        For workflow items: calls DELETE with ?expunge=true — DSpace rejects the item
+        back to workspace as a new draft with a NEW workspace_id returned in the response
+        body. That new workspace_id is used to permanently delete the workspace item.
+        Falls back to find_workspaceitem_by_item_uuid if the response contains no body.
+        For workspace-only items: deletes directly.
+
+        Returns (success, message).
+        """
+        workflow_done = False
+        try:
+            if workflow_id:
+                url = f"{self.client.API_ENDPOINT}/workflow/workflowitems/{int(float(workflow_id))}?expunge=true"
+                response = self.client.api_delete(url)
+                workflow_done = True
+                self.logger.info("Workflow item %s rejected back to workspace.", workflow_id)
+
+                # DSpace returns the new workspace item in the response body.
+                # Parse its id to use for the workspace deletion step.
+                new_ws_id = self._parse_workspace_id_from_response(response)
+                if new_ws_id is not None:
+                    workspace_id = str(new_ws_id)
+                    self.logger.info("New workspace item %s found in response.", new_ws_id)
+                else:
+                    # Fallback: search by item UUID if the response had no body.
+                    self.logger.warning(
+                        "No workspace item in rejection response — searching by UUID."
+                    )
+                    if item_uuid:
+                        found = self.find_workspaceitem_by_item_uuid(item_uuid)
+                        if found is not None:
+                            workspace_id = str(found)
+                            self.logger.info("Found workspace item %s via UUID search.", found)
+
+            if workspace_id:
+                self.delete_workspace(int(float(str(workspace_id))))
+                self.logger.info("Workspace item %s deleted.", workspace_id)
+
+            return True, "Item supprimé avec succès."
+        except Exception as exc:
+            self.logger.error("delete_item failed (workflow_done=%s): %s", workflow_done, exc)
+            if workflow_done:
+                return False, (
+                    f"Le workflow a été rejeté mais la suppression du workspace a échoué : {exc}. "
+                    "Relancez la suppression — l'item est maintenant en workspace."
+                )
+            return False, f"Échec de la suppression : {exc}"
+
+    def _parse_workspace_id_from_response(self, response) -> int | None:
+        """Extract the workspace item id from a DSpace rejection response.
+
+        DSpace returns the new workspace item in the response body when a workflow
+        item is rejected with ?expunge=true. Returns None if the body is absent or
+        unparseable (204 No Content, network error, etc.).
+        """
+        if response is None:
+            return None
+        try:
+            if response.status_code in (200, 201) and response.content:
+                ws_id = response.json().get("id")
+                return int(ws_id) if ws_id is not None else None
+        except Exception as exc:
+            self.logger.warning("Could not parse workspace id from response: %s", exc)
+        return None
+
     def search_authority(
         self,
         authority_type="AuthorAuthority",

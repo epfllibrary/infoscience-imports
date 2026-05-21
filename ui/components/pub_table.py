@@ -2,6 +2,10 @@
 
 Renders as a self-contained HTML document via st.iframe (data URI) so that
 <dialog> modals and clipboard JS work correctly inside the iframe context.
+
+The delete action communicates with the parent Streamlit page via
+window.parent.postMessage(), which is the only cross-origin messaging API
+permitted from a data: URI iframe by modern browsers.
 """
 
 from __future__ import annotations
@@ -19,7 +23,6 @@ from ui.constants import (
     DB_META_SECTIONS,
     RAW_META_SECTIONS,
 )
-from ui.helpers import badge
 
 
 # ── Inline CSS for the iframe component ──────────────────────────────────────
@@ -52,7 +55,7 @@ tr:hover td{background:#F8F9FC}
 .badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;vertical-align:middle}
 .st-workflow{background:#EDE9FE;color:#6D28D9}.st-workspace{background:#FEF9C3;color:#854D0E}
 .st-deduplicated{background:#DBEAFE;color:#1D4ED8}.st-rejected{background:#FEE2E2;color:#B91C1C}
-.st-error{background:#FEE2E2;color:#B91C1C}
+.st-error{background:#FEE2E2;color:#B91C1C}.st-deleted{background:#F1F5F9;color:#64748B}
 .ttype{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;background:#F1F5F9;color:#475569;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .ttags{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:4px;align-items:center}
 .ttl{font-weight:500;color:#101828;font-size:12.5px;line-height:1.4}
@@ -195,6 +198,7 @@ def _action_btns(row: dict) -> str:
         u = row.get(col)
         if _nn(u):
             parts.append(f'<a href="{_e(u)}" target="_blank" class="ab {cls}">{lbl}</a>')
+
     return '<div class="abl">' + "".join(parts) + "</div>" if parts else '<span class="dash">—</span>'
 
 
@@ -347,8 +351,6 @@ def render_pub_component(
             f'<button class="copy-btn" data-copy="{_html.escape(doi_val)}" title="Copier le DOI">⎘</button>'
             f'</div>'
         ) if _nn(doi_u) and doi_val else ""
-        flag_note = DEDUP_LABELS.get(str(row.get("dedup_note") or ""), "")
-
         trows.append(
             f"<tr>"
             f'<td class="c-act">{_action_btns(row)}</td>'
