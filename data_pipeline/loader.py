@@ -1634,8 +1634,17 @@ class Loader:
 
             if workspace_response and isinstance(workspace_response, dict) and "id" in workspace_response:
                 workspace_id = workspace_response["id"]
-                logger.debug("Workspace item created: %s", workspace_id)
+                dspace_item_uuid = (
+                    workspace_response.get("_embedded", {})
+                    .get("item", {})
+                    .get("uuid")
+                    or workspace_response.get("_embedded", {})
+                    .get("item", {})
+                    .get("id")
+                )
+                logger.debug("Workspace item created: %s (dspace_uuid=%s)", workspace_id, dspace_item_uuid)
                 df_items_imported.at[index, "workspace_id"] = workspace_id
+                df_items_imported.at[index, "dspace_item_uuid"] = dspace_item_uuid
 
                 matching_authors = self.df_epfl_authors[
                     self.df_epfl_authors["row_id"] == row["row_id"]
@@ -1681,7 +1690,10 @@ class Loader:
                     )
                     if workflow_response and isinstance(workflow_response, dict) and "id" in workflow_response:
                         workflow_id = workflow_response["id"]
-                        logger.info("Loaded: workspace=%s → workflow=%s", workspace_id, workflow_id)
+                        logger.info(
+                            "Loaded: workspace=%s → workflow=%s (dspace_uuid=%s)",
+                            workspace_id, workflow_id, dspace_item_uuid,
+                        )
                         df_items_imported.at[index, "workflow_id"] = workflow_id
                     else:
                         logger.error(f"Unable to create workflow item for workspace item {workspace_id}")

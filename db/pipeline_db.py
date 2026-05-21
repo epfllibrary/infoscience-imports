@@ -175,6 +175,7 @@ class PipelineDB:
                     status VARCHAR,
                     workspace_id VARCHAR,
                     workflow_id VARCHAR,
+                    dspace_item_uuid VARCHAR,
                     error_msg VARCHAR,
                     dedup_note VARCHAR,
                     flagged_publication VARCHAR,
@@ -228,6 +229,7 @@ class PipelineDB:
             for _migration in [
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS dedup_note VARCHAR",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS flagged_publication VARCHAR",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS dspace_item_uuid VARCHAR",
             ]:
                 con.execute(_migration)
         finally:
@@ -508,7 +510,7 @@ class PipelineDB:
                 ))
                 rp_rows.append((
                     run_id, pub_id, s(row.get("row_id")),
-                    status, ws, wf, error,
+                    status, ws, wf, s(row.get("dspace_item_uuid")), error,
                     s(row.get("dedup_note")),
                     s(row.get("flagged_publication")),
                 ))
@@ -542,8 +544,8 @@ class PipelineDB:
         # Insert per-run records — ignore duplicates (same pub seen twice in one run).
         self._executemany(
             "INSERT INTO run_publications"
-            " (run_id, pub_id, row_id, status, workspace_id, workflow_id, error_msg, dedup_note, flagged_publication)"
-            " VALUES (?,?,?,?,?,?,?,?,?)"
+            " (run_id, pub_id, row_id, status, workspace_id, workflow_id, dspace_item_uuid, error_msg, dedup_note, flagged_publication)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT (run_id, pub_id) DO NOTHING",
             rp_rows,
         )
@@ -1028,7 +1030,7 @@ class PipelineDB:
         return self._query(
             f"SELECT DISTINCT rp.run_id, rp.row_id, p.doi, p.title,"
             f" p.source, p.dc_type, rp.status, rp.workspace_id,"
-            f" rp.workflow_id, rp.error_msg, rp.loaded_at,"
+            f" rp.workflow_id, rp.dspace_item_uuid, rp.error_msg, rp.loaded_at,"
             f" p.pub_year, p.upw_is_oa, p.upw_valid_pdf,"
             f" p.upw_oa_status, p.upw_license, p.internal_id,"
             f" p.seen_count, p.infoscience_dedup_count, rp.dedup_note, rp.flagged_publication"

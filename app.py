@@ -1376,14 +1376,22 @@ elif page == "Publications":
         d["doi_url"] = d["doi"].apply(
             lambda x: f"https://doi.org/{x}" if pd.notna(x) and str(x).startswith("10.") else None
         )
-        d["ws_url"] = d["workspace_id"].apply(
-            lambda w: f"{ds_base}/workspaceitems/{int(float(w))}/edit"
-                      if pd.notna(w) and w != "" else None
+        # ws_url is only valid while the item has not yet been submitted to workflow
+        d["ws_url"] = d.apply(
+            lambda r: f"{ds_base}/workspaceitems/{int(float(r['workspace_id']))}/edit"
+                      if pd.notna(r.get("workspace_id")) and r.get("workspace_id") != ""
+                      and (pd.isna(r.get("workflow_id")) or r.get("workflow_id") == "")
+                      else None,
+            axis=1,
         )
         d["wf_url"] = d["workflow_id"].apply(
             lambda w: f"{ds_base}/workflowitems/{int(float(w))}/edit"
                       if pd.notna(w) and w != "" else None
         )
+        d["item_url"] = d["dspace_item_uuid"].apply(
+            lambda u: f"{ds_base}/items/{u}"
+                      if pd.notna(u) and u != "" else None
+        ) if "dspace_item_uuid" in d.columns else None
 
         # Enrichment columns — keyed by (run_id, row_id) in all modes
         if _has_enrichment:
@@ -1414,7 +1422,7 @@ elif page == "Publications":
                "OA", "Licence", "PDF", "⚠️",
                "Auteurs EPFL", "Unités",
                "seen_count", "infoscience_dedup_count",
-               "src_url", "doi_url", "ws_url", "wf_url", "error_msg",
+               "src_url", "doi_url", "item_url", "ws_url", "wf_url", "error_msg",
                "dedup_note", "flagged_publication"]
         )
         _cols = [c for c in _cols if c in d.columns]
@@ -1445,6 +1453,8 @@ elif page == "Publications":
                                    display_text="raw_data"),
                 "doi_url":     st.column_config.LinkColumn("DOI",       width="medium",
                                    display_text=r"https://doi\.org/(.+)"),
+                "item_url":    st.column_config.LinkColumn("Infoscience", width="small",
+                                   display_text=r".*/items/(.+)"),
                 "ws_url":      st.column_config.LinkColumn("Workspace", width="small",
                                    display_text=r".*/workspaceitems/(\d+)/edit"),
                 "wf_url":      st.column_config.LinkColumn("Workflow",  width="small",

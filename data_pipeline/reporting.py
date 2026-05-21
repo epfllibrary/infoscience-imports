@@ -112,14 +112,20 @@ class GenerateReports:
         return df_reconciled_unit["row_id"].nunique(), df_reconciled_unit
 
     def imported_publications_workspace(self):
-        """Imported publications in workspace (drafts)."""
+        """Imported publications still in workspace (draft, not yet submitted to workflow)."""
         if (
             self.df_loaded is None
             or self.df_loaded.empty
             or "workspace_id" not in self.df_loaded.columns
         ):
             return 0, self._empty_result()
-        df_workspace = self.df_loaded[self.df_loaded["workspace_id"].notna()]
+        wf_col = self.df_loaded.get("workflow_id") if "workflow_id" in self.df_loaded.columns else None
+        if wf_col is not None:
+            df_workspace = self.df_loaded[
+                self.df_loaded["workspace_id"].notna() & self.df_loaded["workflow_id"].isna()
+            ]
+        else:
+            df_workspace = self.df_loaded[self.df_loaded["workspace_id"].notna()]
         return df_workspace.shape[0], df_workspace
 
     def imported_publications_workflow(self):
