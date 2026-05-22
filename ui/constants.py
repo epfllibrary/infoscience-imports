@@ -16,31 +16,9 @@ C_GRAY_600  = "#667085"
 C_GRAY_100  = "#E4E7EC"
 C_BLUE      = "#3B82F6"
 
-STATUS_COLORS: dict[str, str] = {
-    "imported":  C_GREEN,
-    "rejected":  C_RED,
-    "running":   C_YELLOW,
-    "completed": PRIMARY,
-    "failed":    C_RED_DARK,
-    "killed":    C_RED_DARK,
-}
-
 # ── Pipeline sources ──────────────────────────────────────────────────────────
 
 SOURCES: list[str] = ["scopus", "crossref", "openalex", "wos", "epo", "zenodo"]
-
-# ── Source tag CSS class + display label, keyed by lowercase source name ──────
-
-SOURCE_TAGS: dict[str, tuple[str, str]] = {
-    "scopus":            ("s-scopus",   "Scopus"),
-    "wos":               ("s-wos",      "WoS"),
-    "crossref":          ("s-crossref", "Crossref"),
-    "openalex+crossref": ("s-openalex", "OpenAlex"),
-    "openalex":          ("s-openalex", "OpenAlex"),
-    "zenodo":            ("s-zenodo",   "Zenodo"),
-    "epo":               ("s-epo",      "EPO"),
-    "datacite":          ("s-datacite", "DataCite"),
-}
 
 # ── Deduplication note labels ─────────────────────────────────────────────────
 

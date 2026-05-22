@@ -10,68 +10,9 @@ import pandas as pd
 import streamlit as st
 
 from db.pipeline_db import PipelineDB
-from ui.constants import C_GRAY_600
 from ui.helpers import page_title
 from ui.pub_helpers import is_weak, oa_text, lic_text, source_api_url
 from ui.components.pub_table import render_pub_component
-
-
-@st.dialog("Supprimer un item importé", width="small")
-def _confirm_delete_dialog(
-    workspace_id: str,
-    workflow_id: str | None,
-    item_uuid: str | None,
-    title: str,
-    db: PipelineDB,
-) -> None:
-    """Confirmation dialog — called directly from a native Streamlit button."""
-    st.markdown(f"**{title[:100]}**")
-    if workflow_id:
-        st.info(
-            "Item en **workflow** — suppression en deux étapes : "
-            "rejet du workflow puis suppression du workspace.",
-            icon=":material/info:",
-        )
-    st.caption(f"workspace_id : `{workspace_id}`" + (f"  |  workflow_id : `{workflow_id}`" if workflow_id else ""))
-    st.warning("Cette action est irréversible.", icon=":material/warning:")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Supprimer", type="primary", use_container_width=True,
-                     icon=":material/delete_forever:"):
-            from clients.dspace_client_wrapper import DSpaceClientWrapper
-            with st.spinner("Connexion à DSpace…"):
-                try:
-                    client = DSpaceClientWrapper()
-                except Exception as exc:
-                    st.error(f"Impossible de se connecter à DSpace : {exc}")
-                    return
-
-            label = "Rejet du workflow puis suppression…" if workflow_id else "Suppression en cours…"
-            with st.spinner(label):
-                ok, dspace_msg = client.delete_item(workspace_id, workflow_id, item_uuid)
-
-            if not ok:
-                st.error(dspace_msg)
-                return
-
-            with st.spinner("Mise à jour de la base…"):
-                try:
-                    from db.pipeline_db import PipelineDB as _WriteDB
-                    _WriteDB().mark_deleted_by_workspace(workspace_id)
-                except Exception as db_exc:
-                    st.error(
-                        f"Item supprimé dans DSpace mais la mise à jour de la base a échoué : {db_exc}."
-                    )
-                    return
-
-            st.session_state["_del_toast"] = f"«{title[:60]}» supprimé avec succès."
-            st.rerun()
-
-    with col2:
-        if st.button("Annuler", use_container_width=True):
-            st.rerun()
-
 
 _FILTER_DEFAULTS: dict[str, object] = {
     "pf_run": [], "pf_type": [], "pf_status": [], "pf_source": [],
@@ -88,6 +29,7 @@ _STATUS_LABELS: dict[str, str] = {
 
 def render(db: PipelineDB, role: str = "reporting") -> None:
     """Render the publications page — filterable paginated table with download buttons."""
+    st.markdown('<div id="pub-page"></div>', unsafe_allow_html=True)
     page_title("article", "Publications")
 
     _render_filters(db)
@@ -233,7 +175,7 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
 
     _pc1, _pc2, _pc3 = st.columns([2, 2, 6])
     with _pc1:
-        page_size = st.selectbox("Lignes / page", [25, 50, 100, 200], index=1, key="pub_page_size")
+        page_size = st.selectbox("Lignes / page", [10, 20, 30, 50], index=1, key="pub_page_size")
     total_pages = max(1, math.ceil(total / page_size))
     with _pc2:
         page_num = st.number_input(
@@ -242,8 +184,10 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
         )
     with _pc3:
         st.markdown(
-            f"<div style='padding-top:28px;color:{C_GRAY_600};font-size:0.88rem'>"
-            f"<b>{total}</b> publication(s) — page {page_num}/{total_pages}</div>",
+            f'<div style="padding-top:28px;font-size:0.88rem;color:#64748B">'
+            f'<b style="color:#0F172A;font-variant-numeric:tabular-nums">{total:,}</b> '
+            f'publication(s) &nbsp;·&nbsp; page <b>{page_num}</b> / {total_pages}'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
@@ -253,10 +197,25 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
     # ── Quick metrics ─────────────────────────────────────────────────────────
     _m = {s: db.count_publications(**{**filter_kwargs, "status": s}) for s in _STATUS_LABELS}
     _m_flagged = db.count_publications(**{**filter_kwargs, "dedup_note": "__flagged__"})
-    m_cols = st.columns(6)
-    for col, (stat, label) in zip(m_cols, _STATUS_LABELS.items()):
-        col.metric(label, _m[stat])
-    m_cols[5].metric("🚩 Signalées", _m_flagged)
+
+    _STATUS_COLORS_MAP = {
+        "workflow": "#6D28D9", "workspace": "#854D0E",
+        "deduplicated": "#1D4ED8", "rejected": "#B91C1C", "error": "#B91C1C",
+    }
+    _chips = "".join(
+        f'<div class="pub-stat">'
+        f'<span class="pub-stat-n" style="color:{_STATUS_COLORS_MAP.get(s,"#374151")}">{_m[s]}</span>'
+        f'<span class="pub-stat-l">{label}</span>'
+        f'</div>'
+        for s, label in _STATUS_LABELS.items()
+    )
+    _chips += (
+        f'<div class="pub-stat pub-stat-flagged">'
+        f'<span class="pub-stat-n">{_m_flagged}</span>'
+        f'<span class="pub-stat-l">Signalées</span>'
+        f'</div>'
+    )
+    st.markdown(f'<div class="pub-stats-bar">{_chips}</div>', unsafe_allow_html=True)
 
     if pub_df.empty:
         st.info("Aucune publication correspondant aux filtres.")
@@ -272,17 +231,15 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
            "Auteurs EPFL", "Unités",
            "seen_count", "infoscience_dedup_count",
            "src_url", "doi_url", "item_url", "ws_url", "wf_url",
-           "error_msg", "dedup_note", "flagged_publication"]
+           "workspace_id", "workflow_id", "dspace_item_uuid",
+           "error_msg", "dedup_note", "flagged_publication", "raw_metadata"]
     )
     _cols = [c for c in _cols if c in d.columns]
 
     authors_by_row = _build_authors_modal_dict(d, db, sel_run)
-    render_pub_component(d, _cols, authors_by_row, ds_base)
+    render_pub_component(d, _cols, authors_by_row, ds_base, role=role, db=db)
 
     _render_downloads(db, filter_kwargs, sel_run)
-
-    if role == "admin":
-        _render_delete_section(pub_df, db)
 
 
 def _enrich_dataframe(pub_df: pd.DataFrame, db: PipelineDB, sel_run: list, ds_base: str) -> pd.DataFrame:
@@ -427,59 +384,6 @@ def _render_downloads(db: PipelineDB, filter_kwargs: dict, sel_run: list) -> Non
                     )
             else:
                 st.caption("Aucun rapport Excel disponible.")
-
-
-# ── Admin delete section ──────────────────────────────────────────────────────
-
-def _render_delete_section(pub_df: pd.DataFrame, db: PipelineDB) -> None:
-    """List deletable items from the current page as individual Streamlit containers."""
-    from ui.helpers import sh
-    deletable = pub_df[
-        pub_df["workspace_id"].notna() & (pub_df["workspace_id"].astype(str) != "")
-    ]
-    if deletable.empty:
-        return
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(sh("delete_forever", "Supprimer un item importé"), unsafe_allow_html=True)
-    st.caption("Items de la page courante en workspace ou workflow.")
-
-    for _, row in deletable.iterrows():
-        ws_raw = row.get("workspace_id")
-        wf_raw = row.get("workflow_id")
-        try:
-            ws_id = str(int(float(str(ws_raw))))
-        except (ValueError, TypeError):
-            ws_id = _clean_str(ws_raw)
-        wf_id: str | None = None
-        if pd.notna(wf_raw) and str(wf_raw).strip() not in ("", "nan", "None"):
-            try:
-                wf_id = str(int(float(str(wf_raw))))
-            except (ValueError, TypeError):
-                wf_id = _clean_str(wf_raw) or None
-
-        item_uuid = _clean_str(row.get("dspace_item_uuid")) or None
-        title     = _clean_str(row.get("title")) or "—"
-        status    = _clean_str(row.get("status")) or "?"
-
-        with st.container(border=True):
-            col_info, col_btn = st.columns([5, 1])
-            with col_info:
-                st.markdown(
-                    f"**{title[:90]}**  \n"
-                    f"`{status}` — ws `{ws_id}`"
-                    + (f"  /  wf `{wf_id}`" if wf_id else "")
-                    + (f"  /  uuid `{item_uuid}`" if item_uuid else "")
-                )
-            with col_btn:
-                if st.button(
-                    "Supprimer",
-                    key=f"del_{ws_id}",
-                    use_container_width=True,
-                    icon=":material/delete_forever:",
-                    help="Supprimer cet item de DSpace",
-                ):
-                    _confirm_delete_dialog(ws_id, wf_id, item_uuid, title, db)
 
 
 # ── Pure data helpers ─────────────────────────────────────────────────────────

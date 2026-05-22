@@ -27,11 +27,6 @@
     color: var(--primary);
 }
 
-/* Filled variant — for active/emphasis states */
-.ms-filled {
-    font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-}
-
 /* Neutral — inherits parent colour (e.g. white icons on dark sidebar) */
 .ms-neutral { color: inherit; }
 
@@ -174,9 +169,11 @@
 }
 
 
-/* ── Buttons (main content) ───────────────────────────────────────────────── */
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
 
-.stButton > button,
+/* Primary — purple pill */
+.stButton > button[kind="primary"],
+[data-testid="stBaseButton-primary"],
 .stFormSubmitButton > button {
     background: #632CA6 !important;
     color: #ffffff !important;
@@ -185,26 +182,78 @@
     padding: 8px 24px !important;
     font-weight: 600 !important;
     font-size: 0.88rem !important;
-    letter-spacing: .01em;
-    transition: filter .15s ease;
+    letter-spacing: .01em !important;
+    transition: filter .15s ease !important;
+    filter: none !important;
 }
-.stButton > button:hover,
-.stFormSubmitButton > button:hover {
-    background: #632CA6 !important;
+.stButton > button[kind="primary"]:hover,
+[data-testid="stBaseButton-primary"]:hover {
     filter: brightness(.88) !important;
-    color: #ffffff !important;
 }
 
-/* Secondary button — white with border */
-.stButton > button[kind="secondary"] {
+/* Secondary / default — clean flat button */
+.stButton > button[kind="secondary"],
+[data-testid="stBaseButton-secondary"],
+.stButton > button:not([kind="primary"]) {
     background: #ffffff !important;
-    color: #1D2939 !important;
+    color: #374151 !important;
     border: 1px solid #E4E7EC !important;
-}
-.stButton > button[kind="secondary"]:hover {
-    background: #F7F7FB !important;
+    border-radius: 8px !important;
+    padding: 6px 16px !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    letter-spacing: 0 !important;
     filter: none !important;
-    color: #1D2939 !important;
+    transition: background .1s ease, border-color .1s ease !important;
+}
+.stButton > button[kind="secondary"]:hover,
+[data-testid="stBaseButton-secondary"]:hover,
+.stButton > button:not([kind="primary"]):hover {
+    background: #F0F4FF !important;
+    border-color: #C4B5FD !important;
+    color: #374151 !important;
+    filter: none !important;
+}
+
+/* ── Table icon buttons — scoped via :has() ─────────────────────────────── */
+/* Overrides both primary and secondary global styles for the table rows.    */
+/* :has() supported Chrome105+ / FF121+ / Safari15.4+                        */
+
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) .stButton > button,
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) [data-testid="stBaseButton-secondary"],
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) [data-testid="stBaseButton-primary"] {
+    background: #F9FAFB !important;
+    color: #374151 !important;
+    border: 1px solid #E4E7EC !important;
+    border-radius: 5px !important;
+    padding: 2px 2px !important;
+    min-height: 28px !important;
+    height: 28px !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+    letter-spacing: 0 !important;
+    font-weight: 400 !important;
+    width: 100% !important;
+    filter: none !important;
+    transition: background .1s ease, border-color .1s ease !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+}
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) .stButton > button:hover,
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) [data-testid="stBaseButton-secondary"]:hover {
+    background: #EEF2FF !important;
+    border-color: #A5B4FC !important;
+    color: #3730A3 !important;
+    filter: none !important;
+}
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) .stButton > button:disabled,
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) [data-testid="stBaseButton-secondary"]:disabled {
+    background: #F9FAFB !important;
+    border-color: #F1F5F9 !important;
+    color: #CBD5E1 !important;
+    opacity: 1 !important;
+    cursor: not-allowed !important;
 }
 
 
@@ -271,6 +320,7 @@
 .badge-running      { background: #FEF3C7; color: #92400E; }
 .badge-completed    { background: #EDE9FE; color: #6D28D9; }
 .badge-failed       { background: #FEE2E2; color: #B91C1C; }
+.badge-killed       { background: #FEE2E2; color: #B91C1C; }
 .badge-workflow     { background: #EDE9FE; color: #6D28D9; }
 .badge-workspace    { background: #FEF9C3; color: #854D0E; }
 .badge-deduplicated { background: #DBEAFE; color: #1D4ED8; }
@@ -360,7 +410,6 @@ div[data-testid="stDataFrame"] {
     box-shadow: 0 2px 8px rgba(16, 24, 40, .04) !important;
 }
 
-
 /* ── Page titles ──────────────────────────────────────────────────────────── */
 
 .page-title {
@@ -376,22 +425,6 @@ div[data-testid="stDataFrame"] {
 .page-title .ms {
     font-size: 28px;
     color: var(--primary);
-}
-
-
-/* ── Sidebar navigation items ─────────────────────────────────────────────── */
-
-/* Map each radio label to a Material Symbol via data-index injected by CSS */
-[data-testid="stSidebar"] [data-testid="stRadio"] label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 0;
-    font-size: 0.9rem;
-    transition: color .12s ease;
-}
-[data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
-    color: #C8D0E0 !important;
 }
 
 
@@ -448,4 +481,283 @@ div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) {
 [data-testid="stAlertContentError"] *,
 [data-testid="stAlertContentError"] p {
     color: #7F1D1D !important;
+}
+
+
+/* ── Publications native table ────────────────────────────────────────────── */
+
+/*
+ * Compact table using 3 outer Streamlit columns instead of 10.
+ * :has() selectors (Chrome105+ / FF121+ / Safari15.4+) scope all padding
+ * reductions and button overrides to rows containing a .ptbl-row element,
+ * leaving the rest of the app unaffected.
+ */
+
+/* ── Scoped column padding reduction ──────────────────────────────────── */
+
+/* Reduce inner padding on all columns in a row that contains ptbl content */
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) [data-testid="stColumn"] > div,
+[data-testid="stHorizontalBlock"]:has(.ptbl-hdr) [data-testid="stColumn"] > div {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    min-height: 0 !important;
+}
+
+/* Remove default element-container margins inside table rows */
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) .element-container {
+    margin: 0 !important;
+}
+
+/* Compact icon buttons scoped to table rows */
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) .stButton > button {
+    padding: 3px 4px !important;
+    min-height: 26px !important;
+    font-size: 13px !important;
+    line-height: 1 !important;
+    border-radius: 5px !important;
+    background: #F8FAFC !important;
+    color: #475569 !important;
+    border: 1px solid #E2E8F0 !important;
+    width: 100% !important;
+    filter: none !important;
+    font-weight: 400 !important;
+    letter-spacing: 0 !important;
+    transition: background .1s, border-color .1s !important;
+}
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) .stButton > button:hover {
+    background: #EEF2FF !important;
+    border-color: #A5B4FC !important;
+    filter: none !important;
+    color: #3730A3 !important;
+}
+[data-testid="stHorizontalBlock"]:has(.ptbl-row) .stButton > button:disabled {
+    opacity: 0.28 !important;
+    cursor: not-allowed !important;
+    background: #F8FAFC !important;
+}
+
+/* ── Publications table — white background ─────────────────────────────── */
+.stMainBlockContainer.block-container.st-emotion-cache-zy6yx3.eqt0gmo4>div>div:nth-child(10)>div  {
+    background: #ffffff;
+}
+/* ── Header ── */
+.ptbl-hdr {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+    color: #94A3B8;
+    padding: 8px 0 8px;
+    white-space: nowrap;
+}
+
+/* ── Row separator ── */
+hr.ptbl-sep {
+    border: none;
+    border-top: 1px solid #EEF2FF;
+    margin: 0;
+}
+
+/* ── Row content block ── */
+.ptbl-row {
+    padding: 6px 2px;
+}
+.ptbl-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 3px;
+}
+.ptbl-row-footer {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    margin-top: 4px;
+    line-height: 1.5;
+}
+
+/* ── Year ── */
+.ptbl-year {
+    font-weight: 700;
+    font-size: 13px;
+    color: #0F172A;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+
+/* ── Badges — base ── */
+.ptbl-badge {
+    padding: 1px 7px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    display: inline-block;
+    margin-right: 3px;
+    vertical-align: middle;
+    line-height: 1.7;
+    border: 1px solid transparent;
+}
+
+/* Source */
+.ptbl-src-scopus   { background: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; }
+.ptbl-src-wos      { background: #F5F3FF; color: #5B21B6; border-color: #DDD6FE; }
+.ptbl-src-crossref { background: #F0FDFA; color: #0F766E; border-color: #99F6E4; }
+.ptbl-src-openalex { background: #F0FDF4; color: #15803D; border-color: #BBF7D0; }
+.ptbl-src-zenodo   { background: #FFF7ED; color: #9A3412; border-color: #FED7AA; }
+.ptbl-src-epo      { background: #F8FAFC; color: #475569; border-color: #CBD5E1; }
+.ptbl-src-datacite { background: #FAF5FF; color: #7E22CE; border-color: #E9D5FF; }
+.ptbl-src-default  { background: #F8FAFC; color: #64748B; border-color: #CBD5E1; }
+
+/* Status — rect corners */
+.ptbl-st-workflow     { background: #F5F3FF; color: #6D28D9; border-color: #DDD6FE; border-radius: 4px; }
+.ptbl-st-workspace    { background: #FEFCE8; color: #854D0E; border-color: #FEF08A; border-radius: 4px; }
+.ptbl-st-deduplicated { background: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; border-radius: 4px; }
+.ptbl-st-rejected     { background: #FFF5F5; color: #B91C1C; border-color: #FECACA; border-radius: 4px; }
+.ptbl-st-error        { background: #FFF5F5; color: #B91C1C; border-color: #FECACA; border-radius: 4px; }
+.ptbl-st-deleted      { background: #F8FAFC; color: #f49f0c; border-color: #de670b; border-radius: 4px; }
+
+/* Type tag */
+.ptbl-type {
+    background: transparent;
+    color: #6fa4ee;
+    border: 1px solid #1473ee;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-block;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+/* Run chip (multi-run mode) */
+.ptbl-run-chip {
+    background: #F1F5F9;
+    color: #64748B;
+    border: 1px solid #E2E8F0;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 12px;
+    font-family: 'Roboto Mono', monospace;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+/* ── Title ── */
+.ptbl-title {
+    font-weight: 500;
+    font-size: 15px;
+    line-height: 1.4;
+    color: #0F172A;
+}
+
+/* ── Footer inline elements ── */
+.ptbl-oa-inline   { font-weight: 700; color: #15803D; font-size: 12px; }
+.ptbl-lic-inline  { color: #64748B; font-size: 12px; }
+.ptbl-pdf-inline  {
+    background: #F0FDF4; color: #15803D; border: 1px solid #86EFAC;
+    padding: 0px 6px; border-radius: 100px; font-size: 12px;
+    font-weight: 700; letter-spacing:.05em; text-transform:uppercase;
+    vertical-align: middle;
+}
+.ptbl-auth-inline  { color: #374151; font-size: 12px; }
+.ptbl-units-inline { color: red; font-size: 12px; }
+.ptbl-warn         { color: #D97706; font-size: 12px; }
+.ptbl-sep-dot      { color: #CBD5E1; font-size: 12px; margin: 0 4px; }
+
+/* ── Action links column ── */
+.ptbl-actions { display: flex; flex-direction: column; gap: 3px; padding: 4px 0; }
+.ptbl-act {
+    display: block;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none !important;
+    border: 1px solid;
+    line-height: 1.5;
+    letter-spacing: 0.01em;
+    transition: all .1s ease;
+    text-align: center;
+    white-space: nowrap;
+}
+.ptbl-act:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+    text-decoration: none !important;
+}
+.ptbl-act-view  { background: #F0FDF4; color: #15803D !important; border-color: #86EFAC; }
+.ptbl-act-edit  { background: #FEFCE8; color: #854D0E !important; border-color: #FDE68A; }
+.ptbl-act-claim { background: #F5F3FF; color: #6D28D9 !important; border-color: #C4B5FD; }
+
+/* ── DOI ── */
+.ptbl-doi {
+    font-family: 'Roboto Mono', 'SF Mono', monospace;
+    font-size: 12px;
+    color: #7C3AED;
+    text-decoration: none;
+    letter-spacing: -0.02em;
+}
+.ptbl-doi:hover { text-decoration: underline; color: #5B21B6; }
+
+/* ── Status bar (quick metrics) ── */
+.pub-stats-bar {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 14px;
+    flex-wrap: wrap;
+}
+.pub-stat {
+    background: #ffffff;
+    border: 1px solid #E4E7EC;
+    border-radius: 10px;
+    padding: 9px 16px 7px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    flex: 1;
+    min-width: 80px;
+    box-shadow: 0 1px 3px rgba(16,24,40,.04);
+    transition: box-shadow .12s ease;
+}
+.pub-stat:hover { box-shadow: 0 3px 8px rgba(16,24,40,.08); }
+.pub-stat-n {
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+}
+.pub-stat-l {
+    font-size: 0.68rem;
+    color: #667085;
+    margin-top: 4px;
+    font-weight: 500;
+    letter-spacing: .02em;
+    white-space: nowrap;
+}
+.pub-stat-flagged .pub-stat-n { color: #B91C1C; }
+.pub-stat-flagged { border-color: #FECACA; background: #FFF5F5; }
+
+/* ── Metadata modal section header ── */
+.ptbl-meta-sec {
+    font-size: 0.63rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+    color: #94A3B8;
+    margin: 16px 0 6px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #E2E8F0;
 }
