@@ -595,7 +595,7 @@ hr.ptbl-sep {
 .ptbl-badge {
     padding: 1px 7px;
     border-radius: 100px;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: .05em;
     text-transform: uppercase;
@@ -648,7 +648,7 @@ hr.ptbl-sep {
     border: 1px solid #E2E8F0;
     border-radius: 4px;
     padding: 1px 6px;
-    font-size: 12px;
+    font-size: 10px;
     font-family: 'Roboto Mono', monospace;
     display: inline-block;
     vertical-align: middle;
@@ -667,7 +667,7 @@ hr.ptbl-sep {
 .ptbl-lic-inline  { color: #64748B; font-size: 12px; }
 .ptbl-pdf-inline  {
     background: #F0FDF4; color: #15803D; border: 1px solid #86EFAC;
-    padding: 0px 6px; border-radius: 100px; font-size: 12px;
+    padding: 0px 6px; border-radius: 100px; font-size: 10px;
     font-weight: 700; letter-spacing:.05em; text-transform:uppercase;
     vertical-align: middle;
 }
@@ -750,14 +750,214 @@ hr.ptbl-sep {
 .pub-stat-flagged .pub-stat-n { color: #B91C1C; }
 .pub-stat-flagged { border-color: #FECACA; background: #FFF5F5; }
 
-/* ── Metadata modal section header ── */
-.ptbl-meta-sec {
-    font-size: 0.63rem;
+/* ── Modals — compact information-dense layout ────────────────────────────── */
+
+[data-testid="stDialogScrollingContainer"] {
+    padding: 10px 16px 16px !important;
+}
+
+.modal-header {
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #E2E8F0;
+}
+.modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #0F172A;
+    line-height: 1.35;
+    margin-bottom: 3px;
+}
+.modal-subtitle {
+    font-size: 11px;
+    color: #94A3B8;
+    font-family: 'Roboto Mono', monospace;
+}
+.modal-empty {
+    font-size: 11.5px;
+    color: #94A3B8;
+    font-style: italic;
+    margin-bottom: 8px;
+}
+.modal-sec {
+    font-size: 9.5px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: .09em;
+    letter-spacing: .1em;
     color: #94A3B8;
-    margin: 16px 0 6px;
-    padding-bottom: 5px;
-    border-bottom: 1px solid #E2E8F0;
+    padding: 10px 0 3px;
+    border-bottom: 1px solid #F1F5F9;
+    margin-bottom: 2px;
+    grid-column: 1 / -1;
+}
+.modal-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    align-items: baseline;
+}
+.modal-key {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10.5px;
+    color: #94A3B8;
+    padding: 3px 10px 3px 0;
+    align-self: start;
+    white-space: nowrap;
+}
+.modal-val {
+    font-size: 12.5px;
+    color: #1E293B;
+    padding: 3px 0;
+    word-break: break-word;
+    line-height: 1.4;
+}
+.modal-long {
+    align-self: start;
+    padding: 3px 0;
+}
+.modal-long > summary {
+    font-size: 12px;
+    color: #64748B;
+    cursor: pointer;
+    list-style: none;
+    line-height: 1.4;
+}
+.modal-long > summary::-webkit-details-marker { display: none; }
+.modal-val-long {
+    display: block;
+    font-size: 11.5px;
+    color: #475569;
+    background: #F8FAFC;
+    padding: 6px 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+    white-space: pre-wrap;
+}
+.modal-code {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    background: #F1F5F9;
+    color: #7C3AED;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.modal-link {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    color: #6D28D9;
+    text-decoration: none;
+    word-break: break-all;
+}
+.modal-link:hover { text-decoration: underline; }
+
+/* Author cards */
+.modal-author-list { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.modal-author-card {
+    padding: 7px 10px;
+    border: 1px solid #E2E8F0;
+    border-left: 3px solid #22C55E;
+    border-radius: 6px;
+    background: #FAFFFE;
+}
+.modal-author-weak {
+    border-left-color: #F59E0B;
+    background: #FFFDF5;
+}
+.modal-author-hd {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+.modal-author-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #0F172A;
+    flex: 1;
+}
+.modal-badge-weak {
+    font-size: 10px;
+    font-weight: 600;
+    color: #92400E;
+    background: #FEF3C7;
+    padding: 1px 6px;
+    border-radius: 100px;
+    white-space: nowrap;
+}
+.modal-author-link {
+    font-size: 11px;
+    font-weight: 600;
+    color: #6D28D9;
+    text-decoration: none;
+    padding: 1px 7px;
+    border: 1px solid #C4B5FD;
+    border-radius: 4px;
+    background: #F5F3FF;
+    white-space: nowrap;
+}
+.modal-author-link:hover { background: #EDE9FE; text-decoration: none; }
+.modal-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.modal-chip {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 7px;
+    border-radius: 100px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+/* Statut académique — bleu indigo */
+.modal-chip-status {
+    color: #3730A3;
+    background: #EEF2FF;
+    border-color: #C7D2FE;
+}
+/* Position / grade — violet */
+.modal-chip-pos {
+    color: #6D28D9;
+    background: #F5F3FF;
+    border-color: #DDD6FE;
+}
+/* Unité — cyan ardoise */
+.modal-chip-unit {
+    color: #0E7490;
+    background: #ECFEFF;
+    border-color: #A5F3FC;
+}
+/* SCIPER — gris neutre, monospace */
+.modal-chip-sciper {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10.5px;
+    color: #374151;
+    background: #F3F4F6;
+    border-color: #D1D5DB;
+}
+/* ORCID — vert émeraude, monospace */
+.modal-chip-orcid {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: #059669;
+    background: #ECFDF5;
+    border-color: #A7F3D0;
+}
+
+/* Flagged duplicate cards */
+.modal-dup-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.modal-dup-card {
+    padding: 8px 10px;
+    border: 1px solid #FECACA;
+    border-left: 3px solid #EF4444;
+    border-radius: 6px;
+    background: #FFF5F5;
+}
+.modal-flag-label {
+    display: inline-block;
+    margin-top: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #B91C1C;
+    background: #FEE2E2;
+    padding: 2px 8px;
+    border-radius: 100px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
 }

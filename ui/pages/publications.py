@@ -175,7 +175,7 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
 
     _pc1, _pc2, _pc3 = st.columns([2, 2, 6])
     with _pc1:
-        page_size = st.selectbox("Lignes / page", [10, 20, 30, 50], index=1, key="pub_page_size")
+        page_size = st.selectbox("Lignes / page", [10, 20, 30, 50], index=0, key="pub_page_size")
     total_pages = max(1, math.ceil(total / page_size))
     with _pc2:
         page_num = st.number_input(
@@ -331,6 +331,7 @@ def _build_authors_modal_dict(d: pd.DataFrame, db: PipelineDB, sel_run: list) ->
         out.setdefault(rk, []).append({
             "name":          _clean_str(ar.get("full_name")) or _clean_str(ar.get("sciper")) or "?",
             "sciper":        _clean_str(ar.get("sciper")),
+            "dspace_uuid":   _clean_str(ar.get("author_dspace_uuid")),
             "orcid":         _clean_str(ar.get("orcid")),
             "epfl_status":   st_val,
             "epfl_position": pos,

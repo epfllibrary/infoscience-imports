@@ -12,6 +12,7 @@ of the app unaffected.
 
 from __future__ import annotations
 
+import html as _html
 import json
 
 import pandas as pd
@@ -52,6 +53,10 @@ def _nn(v) -> bool:
 
 def _s(v, default: str = "") -> str:
     return str(v).strip() if _nn(v) else default
+
+
+def _esc(v) -> str:
+    return _html.escape(str(v)) if v is not None else ""
 
 
 # ── HTML fragment builders ─────────────────────────────────────────────────────
@@ -158,12 +163,9 @@ def _main_content(row: dict, title: str, has_run: bool, idx: int) -> str:
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────
 
-@st.dialog("📋 Métadonnées collectées", width="large")
+@st.dialog("Métadonnées", width="large")
 def _meta_modal(row: dict) -> None:
     """Show collected metadata for a publication."""
-    st.markdown(f"**{_s(row.get('title'), '—')}**")
-    st.caption(f"{_s(row.get('source'))} · {_s(row.get('pub_year'))}")
-    st.divider()
     rm = row.get("raw_metadata")
     meta: dict = {}
     sections = DB_META_SECTIONS
@@ -174,77 +176,133 @@ def _meta_modal(row: dict) -> None:
         except Exception:
             pass
     src = meta if meta else row
+
+    parts = [
+        f'<div class="modal-header">'
+        f'<div class="modal-title">{_esc(_s(row.get("title"), "—"))}</div>'
+        f'<div class="modal-subtitle">{_esc(_s(row.get("source")))} · {_esc(_s(row.get("pub_year")))}</div>'
+        f'</div>'
+    ]
     if not meta:
-        st.info("Métadonnées non disponibles pour cet item.")
+        parts.append('<p class="modal-empty">Métadonnées brutes non disponibles — colonnes DB affichées.</p>')
+
     for sec_name, keys in sections:
         items = [(k, str(src[k])) for k in keys if k in src and _nn(src.get(k))]
         if not items:
             continue
-        st.markdown(f'<div class="ptbl-meta-sec">{sec_name}</div>', unsafe_allow_html=True)
+        parts.append(f'<div class="modal-sec">{_esc(sec_name)}</div><div class="modal-grid">')
         for k, v in items:
-            if len(v) > 200:
-                st.text_area(k, v, height=88, key=f"_mta_{k}", disabled=True)
+            ev = _esc(v)
+            if len(v) > 250:
+                parts.append(
+                    f'<span class="modal-key">{_esc(k)}</span>'
+                    f'<details class="modal-long">'
+                    f'<summary>{ev[:100]}…</summary>'
+                    f'<span class="modal-val-long">{ev}</span>'
+                    f'</details>'
+                )
             else:
-                c1, c2 = st.columns([1, 3])
-                c1.caption(k)
-                c2.markdown(v)
+                parts.append(f'<span class="modal-key">{_esc(k)}</span><span class="modal-val">{ev}</span>')
+        parts.append("</div>")
+
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
-@st.dialog("👤 Auteurs EPFL", width="large")
-def _authors_modal(title: str, authors: list) -> None:
+@st.dialog("Auteurs EPFL", width="large")
+def _authors_modal(title: str, authors: list, ds_base: str = "") -> None:
     """Show reconciled EPFL authors for a publication."""
-    st.markdown(f"**{title}**")
-    st.divider()
     if not authors:
         st.info("Aucun auteur EPFL réconcilié pour cette publication.")
         return
+
+    parts = [
+        f'<div class="modal-header">'
+        f'<div class="modal-title">{_esc(title[:120])}</div>'
+        f'</div>'
+        f'<div class="modal-author-list">'
+    ]
     for a in authors:
-        sciper = a.get("sciper", "")
-        name   = a.get("name") or sciper or "?"
-        weak   = a.get("weak", False)
-        with st.container(border=True):
-            hd, btn = st.columns([4, 1])
-            with hd:
-                if weak:
-                    st.warning(f"⚠️ **{name}** — Statut faible")
-                else:
-                    st.markdown(f"**{name}**")
-            with btn:
-                if sciper:
-                    st.link_button("EPFL People", f"https://people.epfl.ch/{sciper}",
-                                   use_container_width=True)
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(f"**Statut** {a.get('epfl_status') or '—'}")
-            c2.markdown(f"**Position** {a.get('epfl_position') or '—'}")
-            c3.markdown(f"**Unité** {a.get('main_unit') or '—'}")
-            orcid = a.get("orcid", "")
-            if orcid:
-                st.markdown(f"**ORCID** [{orcid}](https://orcid.org/{orcid})")
+        sciper     = a.get("sciper", "")
+        dspace_uuid = a.get("dspace_uuid", "")
+        name       = _esc(a.get("name") or sciper or "?")
+        weak       = a.get("weak", False)
+        status     = _esc(a.get("epfl_status") or "")
+        pos        = _esc(a.get("epfl_position") or "")
+        unit       = _esc(a.get("main_unit") or "")
+        orcid      = _esc(a.get("orcid") or "")
+
+        card_cls   = "modal-author-card modal-author-weak" if weak else "modal-author-card"
+        weak_badge = '<span class="modal-badge-weak">⚠ Statut faible</span>' if weak else ""
+        people     = (f'<a href="https://people.epfl.ch/{sciper}" target="_blank" class="modal-author-link">People →</a>'
+                      if sciper else "")
+        infoscience = (f'<a href="{ds_base}/entities/person/{dspace_uuid}" target="_blank" class="modal-author-link">Infoscience →</a>'
+                       if dspace_uuid and ds_base else "")
+
+        sciper_chip = f'<span class="modal-chip modal-chip-sciper">SCIPER {_esc(sciper)}</span>' if sciper else ""
+        orcid_chip  = f'<span class="modal-chip modal-chip-orcid">ORCID {_esc(orcid)}</span>' if orcid else ""
+        status_chip = f'<span class="modal-chip modal-chip-status">{status}</span>' if status else ""
+        pos_chip    = f'<span class="modal-chip modal-chip-pos">{pos}</span>' if pos else ""
+        unit_chip   = f'<span class="modal-chip modal-chip-unit">{unit}</span>' if unit else ""
+        chips       = status_chip + pos_chip + unit_chip
+
+        parts.append(
+            f'<div class="{card_cls}">'
+            f'<div class="modal-author-hd">'
+            f'<span class="modal-author-name">{name}</span>'
+            f'{weak_badge}{people}{infoscience}'
+            f'</div>'
+            f'<div class="modal-chips">{chips}{sciper_chip}{orcid_chip}</div>'
+            f'</div>'
+        )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
-@st.dialog("🚩 Doublon Infoscience", width="large")
+@st.dialog("Doublon Infoscience", width="large")
 def _flagged_modal(title: str, flagged_raw: str, dedup_note: str, ds_base: str) -> None:
     """Show flagged duplicate info for curation."""
-    st.markdown(f"**{title}**")
-    st.error(f"**{DEDUP_LABELS.get(dedup_note, dedup_note or 'Signalé')}**")
-    st.divider()
+    label = _esc(DEDUP_LABELS.get(dedup_note, dedup_note or "Signalé"))
+    parts = [
+        f'<div class="modal-header">'
+        f'<div class="modal-title">{_esc(title[:120])}</div>'
+        f'<span class="modal-flag-label">{label}</span>'
+        f'</div>'
+    ]
     try:
         items = json.loads(flagged_raw)
     except Exception:
         items = []
     if not isinstance(items, list):
         items = [items]
+
+    parts.append('<div class="modal-dup-list">')
     for item in items:
-        with st.container(border=True):
-            uuid_val = item.get("uuid", "")
-            doi      = item.get("doi", "")
-            dc_type  = item.get("dc_type", "")
-            if uuid_val:
-                st.markdown(f"**UUID** [{uuid_val}]({ds_base}/items/{uuid_val})")
-            if doi:
-                st.markdown(f"**DOI** [{doi}](https://doi.org/{doi})")
-            if dc_type:
-                st.markdown(f"**Type** `{dc_type}`")
+        uuid_val = item.get("uuid", "")
+        doi      = item.get("doi", "")
+        dc_type  = item.get("dc_type", "")
+        parts.append('<div class="modal-dup-card"><div class="modal-grid">')
+        if uuid_val:
+            parts.append(
+                f'<span class="modal-key">uuid</span>'
+                f'<span class="modal-val">'
+                f'<a href="{ds_base}/items/{_esc(uuid_val)}" target="_blank" class="modal-link">{_esc(uuid_val)}</a>'
+                f'</span>'
+            )
+        if doi:
+            parts.append(
+                f'<span class="modal-key">doi</span>'
+                f'<span class="modal-val">'
+                f'<a href="https://doi.org/{_esc(doi)}" target="_blank" class="modal-link">{_esc(doi)}</a>'
+                f'</span>'
+            )
+        if dc_type:
+            parts.append(
+                f'<span class="modal-key">type</span>'
+                f'<span class="modal-val"><code class="modal-code">{_esc(dc_type)}</code></span>'
+            )
+        parts.append("</div></div>")
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 @st.dialog("Supprimer un item importé", width="small")
@@ -256,14 +314,23 @@ def _delete_modal(
     db,
 ) -> None:
     """Confirmation and execution of DSpace item deletion."""
-    st.markdown(f"**{title[:100]}**")
-    if workflow_id:
-        st.info("Item en **workflow** — rejet puis suppression du workspace.",
-                icon=":material/info:")
-    st.caption(
-        f"workspace_id : `{workspace_id}`"
-        + (f"  |  workflow_id : `{workflow_id}`" if workflow_id else "")
+    info = (
+        f'<div class="modal-header">'
+        f'<div class="modal-title">{_esc(title[:100])}</div>'
+        f'</div>'
+        f'<div class="modal-grid" style="margin-bottom:10px">'
+        f'<span class="modal-key">workspace</span>'
+        f'<span class="modal-val"><code class="modal-code">{_esc(str(workspace_id))}</code></span>'
     )
+    if workflow_id:
+        info += (
+            f'<span class="modal-key">workflow</span>'
+            f'<span class="modal-val"><code class="modal-code">{_esc(str(workflow_id))}</code></span>'
+        )
+    info += "</div>"
+    if workflow_id:
+        info += '<p class="modal-empty" style="color:#92400E;margin-bottom:6px">Rejet du workflow avant suppression du workspace.</p>'
+    st.markdown(info, unsafe_allow_html=True)
     st.warning("Cette action est irréversible.", icon=":material/warning:")
     col1, col2 = st.columns(2)
     with col1:
@@ -360,7 +427,7 @@ def render_pub_component(
                              use_container_width=True, help="Auteurs EPFL",
                              disabled=not auths):
                 if auths:
-                    _authors_modal(title, auths)
+                    _authors_modal(title, auths, ds_base)
 
             # col 4 — flagged
             if rc[4].button("", icon=":material/flag:", key=f"flag_{idx}",
