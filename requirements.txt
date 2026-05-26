@@ -18,6 +18,7 @@ tenacity
 pycountry
 openpyxl
 xlsxwriter
+xlwt
 duckdb
 flask
 marimo

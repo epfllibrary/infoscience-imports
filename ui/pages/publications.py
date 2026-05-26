@@ -18,7 +18,7 @@ _FILTER_DEFAULTS: dict[str, object] = {
     "pf_run": [], "pf_type": [], "pf_status": [], "pf_source": [],
     "pf_unit": [], "pf_sciper": "", "pf_search": "",
     "pf_oa": "Tous", "pf_pdf": "Tous", "pf_licence": [], "pf_epfl": "Tous",
-    "pf_dedup_note": "Tous",
+    "pf_dedup_note": "Tous", "pf_no_abstract": "Tous",
 }
 
 _STATUS_LABELS: dict[str, str] = {
@@ -60,9 +60,9 @@ def _render_filters(db: PipelineDB) -> None:
             st.multiselect("Unité", db.get_distinct_units(), key="pf_unit")
             st.text_input("SCIPER ou nom auteur EPFL", placeholder="123456 ou Dupont", key="pf_sciper")
 
-        st.text_input("Recherche titre / DOI", placeholder="deep learning…", key="pf_search")
+        st.text_input("Recherche titre / DOI / ID source", placeholder="deep learning…", key="pf_search")
 
-        cf1, cf2, cf3, cf4, cf5, cf6 = st.columns([2, 2, 2, 2, 2, 1])
+        cf1, cf2, cf3 = st.columns(3)
         with cf1:
             st.selectbox(
                 "Statut OA", ["Tous", "OA", "Non-OA", "Non-libre", "Non défini"],
@@ -78,6 +78,8 @@ def _render_filters(db: PipelineDB) -> None:
                 "Licence", db.get_distinct_licences(),
                 help="Filtre sur la licence Unpaywall.", key="pf_licence",
             )
+
+        cf4, cf5, cf6, cf7 = st.columns([3, 3, 3, 1])
         with cf4:
             st.selectbox(
                 "Statut auteurs EPFL",
@@ -99,6 +101,11 @@ def _render_filters(db: PipelineDB) -> None:
                 key="pf_dedup_note",
             )
         with cf6:
+            st.selectbox(
+                "Résumé", ["Tous", "Sans résumé"],
+                help="Afficher uniquement les publications sans abstract.", key="pf_no_abstract",
+            )
+        with cf7:
             st.markdown("<div style='padding-top:24px'>", unsafe_allow_html=True)
             st.button("Reset", icon=":material/refresh:", on_click=_reset,
                       use_container_width=True, help="Réinitialiser tous les filtres")
@@ -118,6 +125,7 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
     sel_licence    = st.session_state.get("pf_licence", [])
     sel_epfl       = st.session_state.get("pf_epfl", "Tous")
     sel_dedup_note = st.session_state.get("pf_dedup_note", "Tous")
+    no_abstract    = st.session_state.get("pf_no_abstract", "Tous") == "Sans résumé"
 
     resolved_sciper = _resolve_sciper(db, sciper_q)
 
@@ -141,6 +149,7 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
             "__flagged__" if sel_dedup_note == "🚩 Flaggés" else
             sel_dedup_note
         ),
+        no_abstract   = no_abstract,
     ), sel_run
 
 
@@ -271,11 +280,17 @@ def _enrich_dataframe(pub_df: pd.DataFrame, db: PipelineDB, sel_run: list, ds_ba
             else None
         ), axis=1,
     )
-    d["item_url"] = (
-        d["dspace_item_uuid"].apply(
-            lambda u: f"{ds_base}/items/{u}" if pd.notna(u) and u != "" else None
-        )
-        if "dspace_item_uuid" in d.columns else None
+    d["item_url"] = d.apply(
+        lambda r: (
+            f"{ds_base}/workflowitems/{int(float(r['workflow_id']))}/view"
+            if pd.notna(r.get("workflow_id")) and r.get("workflow_id") != ""
+            else (
+                f"{ds_base}/items/{r['dspace_item_uuid']}"
+                if "dspace_item_uuid" in r and pd.notna(r.get("dspace_item_uuid"))
+                and r.get("dspace_item_uuid") != ""
+                else None
+            )
+        ), axis=1,
     )
 
     # Author + unit enrichment
@@ -343,7 +358,7 @@ def _build_authors_modal_dict(d: pd.DataFrame, db: PipelineDB, sel_run: list) ->
 
 def _render_downloads(db: PipelineDB, filter_kwargs: dict, sel_run: list) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
-    dl_cols = st.columns(3)
+    dl_cols = st.columns(4)
     run_label = "-".join(sel_run) if sel_run else "all"
 
     with dl_cols[0]:
@@ -370,6 +385,26 @@ def _render_downloads(db: PipelineDB, filter_kwargs: dict, sel_run: list) -> Non
 
     with dl_cols[2]:
         if len(sel_run) == 1:
+            uuids = (
+                full_df["dspace_item_uuid"]
+                .dropna()
+                .pipe(lambda s: s[s.str.strip() != ""])
+                .unique()
+                .tolist()
+            )
+            if uuids:
+                st.download_button(
+                    "Update archive XLS",
+                    icon=":material/download:",
+                    data=_build_update_archive_xls(uuids),
+                    file_name=f"update_archive_{sel_run[0]}_{date.today()}.xls",
+                    mime="application/vnd.ms-excel",
+                )
+            else:
+                st.caption("Aucun UUID disponible pour l'export.")
+
+    with dl_cols[3]:
+        if len(sel_run) == 1:
             from pathlib import Path
             _project_root = Path(__file__).resolve().parent.parent.parent
             run_dir  = _project_root / "data" / sel_run[0]
@@ -385,6 +420,21 @@ def _render_downloads(db: PipelineDB, filter_kwargs: dict, sel_run: list) -> Non
                     )
             else:
                 st.caption("Aucun rapport Excel disponible.")
+
+
+def _build_update_archive_xls(uuids: list[str]) -> bytes:
+    import io
+    import xlwt
+    wb  = xlwt.Workbook(encoding="utf-8")
+    ws  = wb.add_sheet("Feuil1")
+    ws.write(0, 0, "ID")
+    ws.write(0, 1, "ACTION")
+    for i, uuid in enumerate(uuids, start=1):
+        ws.write(i, 0, uuid)
+        ws.write(i, 1, "UPDATE_ARCHIVE")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 # ── Pure data helpers ─────────────────────────────────────────────────────────
