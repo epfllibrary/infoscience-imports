@@ -78,7 +78,7 @@ def source_api_url(source: str, internal_id, doi) -> str | None:
                 return f"https://zenodo.org/api/records/{m.group(1)}"
         return None
     if source == "epo":
-        return f"https://ops.epo.org/rest-services/published-data/publication/docdb/{iid}/biblio" if iid else None
+        return f"https://worldwide.espacenet.com/patent/search?q=pn%3D{iid}" if iid else None
     if source == "datacite":
         key = iid or d_
         return f"https://api.datacite.org/dois/{key}" if key else None
