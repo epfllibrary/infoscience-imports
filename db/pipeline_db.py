@@ -949,7 +949,7 @@ class PipelineDB:
 
     def _pub_filters(self, run_id, status, source, dc_type, sciper, unit_acronym,
                      search, has_pdf=None, oa_filter=None, licence=None,
-                     epfl_strength=None, dedup_note=None):
+                     epfl_strength=None, dedup_note=None, no_abstract=False):
         """Shared filter-building logic for get_publications and count_publications.
 
         run_id, status, source, dc_type, unit_acronym, licence each accept either a
@@ -984,8 +984,11 @@ class PipelineDB:
                 filters.append(cond); params.extend(vals)
 
         if search:
-            filters.append("(LOWER(p.title) LIKE ? OR LOWER(p.doi) LIKE ?)")
-            params += [f"%{search.lower()}%", f"%{search.lower()}%"]
+            filters.append(
+                "(LOWER(p.title) LIKE ? OR LOWER(p.doi) LIKE ?"
+                " OR LOWER(COALESCE(p.internal_id,'')) LIKE ?)"
+            )
+            params += [f"%{search.lower()}%"] * 3
         if has_pdf is True:
             filters.append("p.upw_valid_pdf = TRUE")
         elif has_pdf is False:
@@ -1043,6 +1046,13 @@ class PipelineDB:
                 filters.append(f"{_has_author} AND NOT {_has_strong}")
             else:  # strong
                 filters.append(_has_strong)
+        if no_abstract:
+            filters.append(
+                "(rp.raw_metadata IS NULL"
+                " OR json_extract_string(rp.raw_metadata, '$.abstract') IS NULL"
+                " OR TRIM(json_extract_string(rp.raw_metadata, '$.abstract')) = '')"
+            )
+
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         return join_a, join_u, where, params
 
@@ -1050,11 +1060,12 @@ class PipelineDB:
                            dc_type=None, sciper=None, unit_acronym=None,
                            search=None, has_pdf=None, oa_filter=None,
                            licence=None, epfl_strength=None,
-                           dedup_note=None) -> int:
+                           dedup_note=None, no_abstract=False) -> int:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
-            epfl_strength=epfl_strength, dedup_note=dedup_note)
+            epfl_strength=epfl_strength, dedup_note=dedup_note,
+            no_abstract=no_abstract)
         r = self._query_one(
             f"SELECT COUNT(*) FROM ("
             f"  SELECT DISTINCT rp.run_id, rp.pub_id, p.doi, p.title,"
@@ -1073,11 +1084,12 @@ class PipelineDB:
                          dc_type=None, sciper=None, unit_acronym=None,
                          search=None, has_pdf=None, oa_filter=None,
                          licence=None, epfl_strength=None, dedup_note=None,
-                         limit=100, offset=0) -> pd.DataFrame:
+                         no_abstract=False, limit=100, offset=0) -> pd.DataFrame:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
-            epfl_strength=epfl_strength, dedup_note=dedup_note)
+            epfl_strength=epfl_strength, dedup_note=dedup_note,
+            no_abstract=no_abstract)
         params += [limit, offset]
         return self._query(
             f"SELECT DISTINCT rp.run_id, rp.row_id, p.doi, p.title,"
