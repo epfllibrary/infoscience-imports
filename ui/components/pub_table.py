@@ -51,6 +51,17 @@ def _nn(v) -> bool:
     return v is not None and not (isinstance(v, float) and pd.isna(v)) and str(v).strip() not in ("", "nan", "None")
 
 
+def _has_no_abstract(row: dict) -> bool:
+    rm = row.get("raw_metadata")
+    if not _nn(rm):
+        return True
+    try:
+        abst = json.loads(str(rm)).get("abstract")
+        return not abst or not str(abst).strip()
+    except Exception:
+        return True
+
+
 def _s(v, default: str = "") -> str:
     return str(v).strip() if _nn(v) else default
 
@@ -113,6 +124,10 @@ def _main_content(row: dict, title: str, has_run: bool, idx: int) -> str:
         f'{_status_badge(row.get("status"))}'
         f'{_type_badge(row.get("dc_type"))}'
     )
+    if _has_no_abstract(row):
+        meta += '<span class="ms ptbl-no-abst ptbl-no-abst--missing" title="Résumé manquant">hide_source</span>'
+    else:
+        meta += '<span class="ms ptbl-no-abst ptbl-no-abst--present" title="Résumé présent">subject</span>'
     if has_run:
         meta += f'<span class="ptbl-run-chip">{_s(row.get("run_id"))}</span>'
 
