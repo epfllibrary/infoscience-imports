@@ -674,6 +674,9 @@ hr.ptbl-sep {
 .ptbl-auth-inline  { color: #374151; font-size: 12px; }
 .ptbl-units-inline { color: red; font-size: 12px; }
 .ptbl-warn         { color: #D97706; font-size: 12px; }
+.ptbl-no-abst               { font-size: 14px !important; vertical-align: middle; margin-left: 3px; }
+.ptbl-no-abst--present      { color: #16A34A; }
+.ptbl-no-abst--missing      { color: #DC2626; }
 .ptbl-sep-dot      { color: #CBD5E1; font-size: 12px; margin: 0 4px; }
 
 /* ── Action links column ── */
