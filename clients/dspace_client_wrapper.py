@@ -649,6 +649,112 @@ class DSpaceClientWrapper:
             self.logger.warning("Could not parse workspace id from response: %s", exc)
         return None
 
+    def check_item_infoscience_status(
+        self,
+        dspace_item_uuid: "str | None",
+        workspace_id: "str | None",
+        workflow_id: "str | None",
+    ) -> "tuple[str, str | None]":
+        """Check the current Infoscience status of a previously imported item.
+
+        Returns (status, handle) where status is one of:
+          'published'     — item is in archive (inArchive=True)
+          'withdrawn'     — item has been withdrawn
+          'deleted'       — item no longer exists anywhere
+          'rejected'      — workspace item has epfl.workflow.rejected=true
+          'still_pending' — item exists but is not yet published
+
+        handle is the Infoscience handle string (e.g. "20.500.14299/12345") when
+        status='published', None otherwise.
+        """
+        # Step 1 — try the canonical item endpoint via dspace_item_uuid
+        if dspace_item_uuid:
+            url = f"{self.client.API_ENDPOINT}/core/items/{dspace_item_uuid}"
+            r = self.client.api_get(url)
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                except Exception:
+                    data = {}
+                if data.get("inArchive"):
+                    handle = data.get("handle") or None
+                    return "published", handle
+                if data.get("withdrawn"):
+                    return "withdrawn", None
+                # Item exists but is neither published nor withdrawn — could be
+                # still_pending or rejected (workspace). Fall through to the
+                # workspace check to detect the rejection flag.
+            elif r.status_code == 404:
+                # Item UUID not found — fall through to workspace/workflow checks.
+                pass
+            else:
+                self.logger.warning(
+                    "Unexpected status %s fetching item %s",
+                    r.status_code, dspace_item_uuid,
+                )
+                return "still_pending", None
+
+        # Step 2 — resolve the live workspace item.
+        # After a workflow rejection DSpace assigns a NEW workspace id, so the
+        # stored workspace_id is stale.  Search by item UUID via the supervision
+        # configuration first, then fall back to the stored id.
+        live_ws_id = None
+        if dspace_item_uuid:
+            live_ws_id = self.find_workspaceitem_by_item_uuid(dspace_item_uuid)
+        if live_ws_id is None and workspace_id:
+            try:
+                live_ws_id = int(float(str(workspace_id)))
+            except (ValueError, TypeError):
+                pass
+
+        if live_ws_id is not None:
+            try:
+                url = (
+                    f"{self.client.API_ENDPOINT}/submission/workspaceitems/{live_ws_id}"
+                    "?embed=item&embed=collection"
+                )
+                r = self.client.api_get(url)
+                if r.status_code == 200:
+                    try:
+                        ws_data = r.json()
+                    except Exception:
+                        ws_data = {}
+                    item_meta = (
+                        ws_data.get("_embedded", {})
+                        .get("item", {})
+                        .get("metadata", {})
+                    )
+                    rejected = item_meta.get("epfl.workflow.rejected", [])
+                    if any(
+                        str(entry.get("value", "")).lower() == "true"
+                        for entry in rejected
+                    ):
+                        return "rejected", None
+                    return "still_pending", None
+                elif r.status_code == 404:
+                    pass  # workspace item gone — fall through
+            except Exception as exc:
+                self.logger.warning("Workspace check failed for %s: %s", live_ws_id, exc)
+
+        # Step 3 — check workflow item
+        if workflow_id:
+            try:
+                wf_int = int(float(str(workflow_id)))
+                url = f"{self.client.API_ENDPOINT}/workflow/workflowitems/{wf_int}"
+                r = self.client.api_get(url)
+                if r.status_code == 200:
+                    return "still_pending", None
+                # 404 → workflow item gone too
+            except Exception as exc:
+                self.logger.warning("Workflow check failed for %s: %s", workflow_id, exc)
+
+        # Nothing found — item has been fully deleted or never existed
+        if dspace_item_uuid or workspace_id or workflow_id:
+            return "deleted", None
+
+        # No identifiers at all — cannot determine status
+        return "still_pending", None
+
     def search_authority(
         self,
         authority_type="AuthorAuthority",

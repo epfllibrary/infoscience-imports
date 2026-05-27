@@ -1074,6 +1074,19 @@ hr.rtbl-sep {
     font-family: 'Roboto Mono', monospace;
     letter-spacing: .02em;
 }
+.rtbl-published-chip {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #EEF2FF;
+    color: #3730A3;
+    font-size: 0.65rem;
+    font-weight: 600;
+    font-family: 'Roboto Mono', monospace;
+    letter-spacing: .01em;
+    border: 1px solid #C7D2FE;
+    margin-top: 3px;
+}
 .rtbl-user {
     font-size: 10px;
     color: #94A3B8;
@@ -1129,6 +1142,25 @@ hr.rtbl-sep {
     opacity: 1 !important;
     cursor: not-allowed !important;
 }
+
+/* ── Infoscience status mini-badge (pub table) ── */
+.ifs-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: .02em;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.ifs-st-published  { background: #DCFCE7; color: #15803D; }
+.ifs-st-withdrawn  { background: #FEF9C3; color: #92400E; }
+.ifs-st-deleted    { background: #FEE2E2; color: #991B1B; }
+.ifs-st-rejected   { background: #FEE2E2; color: #991B1B; }
+.ifs-st-pending    { background: #F1F5F9; color: #475569; }
 
 /* ── Runs section card ── */
 .runs-card-anchor { display: none; }

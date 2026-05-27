@@ -22,6 +22,8 @@ from ui.constants import (
     DEDUP_LABELS,
     DB_META_SECTIONS,
     RAW_META_SECTIONS,
+    INFOSCIENCE_STATUS_LABELS,
+    INFOSCIENCE_STATUS_CSS,
 )
 
 
@@ -88,6 +90,15 @@ def _status_badge(status) -> str:
     return f'<span class="ptbl-badge {css}">{s}</span>' if s else ""
 
 
+def _infoscience_badge(status) -> str:
+    s = _s(status).lower()
+    if not s:
+        return ""
+    css   = INFOSCIENCE_STATUS_CSS.get(s, "ifs-st-pending")
+    label = INFOSCIENCE_STATUS_LABELS.get(s, s)
+    return f'<span class="ifs-badge {css}">{label}</span>'
+
+
 def _type_badge(dc_type) -> str:
     if not _nn(dc_type):
         return ""
@@ -117,12 +128,13 @@ def _main_content(row: dict, title: str, has_run: bool, idx: int) -> str:
     year = _s(row.get("pub_year"), "—")
     src_u   = row.get("src_url") if _nn(row.get("src_url")) else None
 
-    # ── Meta line: year · source badge · status badge · type
+    # ── Meta line: year · source badge · status badge · type · infoscience status
     meta = (
         f'<span class="ptbl-year">{year}</span>'
         f'{_src_badge(row.get("source"), src_u)}'
         f'{_status_badge(row.get("status"))}'
         f'{_type_badge(row.get("dc_type"))}'
+        f'{_infoscience_badge(row.get("infoscience_status"))}'
     )
     if _has_no_abstract(row):
         meta += '<span class="ms ptbl-no-abst ptbl-no-abst--missing" title="Résumé manquant">hide_source</span>'

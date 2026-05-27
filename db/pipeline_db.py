@@ -272,6 +272,9 @@ class PipelineDB:
                 "ALTER TABLE runs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP",
                 "ALTER TABLE runs ADD COLUMN IF NOT EXISTS review_status VARCHAR",
                 "ALTER TABLE runs ADD COLUMN IF NOT EXISTS review_updated_at TIMESTAMP",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS infoscience_status VARCHAR",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS infoscience_checked_at TIMESTAMP",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS infoscience_handle VARCHAR",
             ]:
                 con.execute(_migration)
         finally:
@@ -807,6 +810,12 @@ class PipelineDB:
             f" (SELECT COUNT(*) FROM run_publications rp"
             f"  WHERE rp.run_id = runs.run_id"
             f"  AND rp.status IN ('workflow','workspace')) AS imported_count,"
+            f" (SELECT COUNT(*) FROM run_publications rp"
+            f"  WHERE rp.run_id = runs.run_id"
+            f"  AND rp.infoscience_status = 'published') AS published_count,"
+            f" (SELECT COUNT(*) FROM run_publications rp"
+            f"  WHERE rp.run_id = runs.run_id"
+            f"  AND rp.infoscience_status IS NOT NULL) AS synced_count,"
             f" claimed_by, claimed_at, review_status, review_updated_at"
             f" FROM runs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
             params)
@@ -888,6 +897,53 @@ class PipelineDB:
             "SELECT changed_at, changed_by, from_status, to_status"
             " FROM run_review_history WHERE run_id=? ORDER BY changed_at",
             [run_id])
+
+    # ── infoscience status sync ──────────────────────────────────────────
+
+    _INFOSCIENCE_TERMINAL = frozenset({"published", "withdrawn", "deleted", "rejected"})
+
+    def get_pending_status_checks(self, months: int = 3) -> pd.DataFrame:
+        """Return workspace/workflow items eligible for an Infoscience status check.
+
+        Eligibility:
+          - run status = 'completed' AND review_status = 'done'
+          - rp.status IN ('workflow', 'workspace')
+          - imported within the last ``months`` months
+          - infoscience_status IS NULL OR infoscience_status = 'still_pending'
+        """
+        return self._query(
+            "SELECT rp.run_id, rp.pub_id, rp.row_id,"
+            "  rp.dspace_item_uuid, rp.workspace_id, rp.workflow_id,"
+            "  p.title, rp.infoscience_status"
+            " FROM run_publications rp"
+            " JOIN publications p ON p.pub_id = rp.pub_id"
+            " JOIN runs r ON r.run_id = rp.run_id"
+            " WHERE rp.status IN ('workflow','workspace')"
+            "   AND r.status = 'completed'"
+            "   AND r.review_status = 'done'"
+            "   AND rp.loaded_at >= NOW() - INTERVAL (?) MONTH"
+            "   AND (rp.infoscience_status IS NULL"
+            "        OR rp.infoscience_status = 'still_pending')"
+            " ORDER BY rp.loaded_at DESC",
+            [months],
+        )
+
+    def update_infoscience_status(
+        self,
+        run_id: str,
+        pub_id: str,
+        status: str,
+        handle: "str | None" = None,
+    ) -> None:
+        """Persist a new Infoscience status for one run_publication row."""
+        self._exec(
+            "UPDATE run_publications"
+            " SET infoscience_status = ?,"
+            "     infoscience_checked_at = NOW(),"
+            "     infoscience_handle = ?"
+            " WHERE run_id = ? AND pub_id = ?",
+            [status, handle, run_id, pub_id],
+        )
 
     def get_summary_stats(self) -> dict:
         r = self._query_one(
@@ -1102,7 +1158,8 @@ class PipelineDB:
 
     def _pub_filters(self, run_id, status, source, dc_type, sciper, unit_acronym,
                      search, has_pdf=None, oa_filter=None, licence=None,
-                     epfl_strength=None, dedup_note=None, no_abstract=False):
+                     epfl_strength=None, dedup_note=None, no_abstract=False,
+                     infoscience_status=None):
         """Shared filter-building logic for get_publications and count_publications.
 
         run_id, status, source, dc_type, unit_acronym, licence each accept either a
@@ -1206,6 +1263,14 @@ class PipelineDB:
                 " OR TRIM(json_extract_string(rp.raw_metadata, '$.abstract')) = '')"
             )
 
+        if infoscience_status == "__not_checked__":
+            filters.append("rp.infoscience_status IS NULL")
+        elif infoscience_status:
+            ifs_list = self._as_filter_list(infoscience_status)
+            if ifs_list:
+                cond, vals = self._in_clause("rp.infoscience_status", ifs_list)
+                filters.append(cond); params.extend(vals)
+
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         return join_a, join_u, where, params
 
@@ -1213,12 +1278,13 @@ class PipelineDB:
                            dc_type=None, sciper=None, unit_acronym=None,
                            search=None, has_pdf=None, oa_filter=None,
                            licence=None, epfl_strength=None,
-                           dedup_note=None, no_abstract=False) -> int:
+                           dedup_note=None, no_abstract=False,
+                           infoscience_status=None) -> int:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
-            no_abstract=no_abstract)
+            no_abstract=no_abstract, infoscience_status=infoscience_status)
         r = self._query_one(
             f"SELECT COUNT(*) FROM ("
             f"  SELECT DISTINCT rp.run_id, rp.pub_id, p.doi, p.title,"
@@ -1237,12 +1303,13 @@ class PipelineDB:
                          dc_type=None, sciper=None, unit_acronym=None,
                          search=None, has_pdf=None, oa_filter=None,
                          licence=None, epfl_strength=None, dedup_note=None,
-                         no_abstract=False, limit=100, offset=0) -> pd.DataFrame:
+                         no_abstract=False, infoscience_status=None,
+                         limit=100, offset=0) -> pd.DataFrame:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
-            no_abstract=no_abstract)
+            no_abstract=no_abstract, infoscience_status=infoscience_status)
         params += [limit, offset]
         return self._query(
             f"SELECT DISTINCT rp.run_id, rp.row_id, p.doi, p.title,"
@@ -1251,7 +1318,8 @@ class PipelineDB:
             f" p.pub_year, p.upw_is_oa, p.upw_valid_pdf,"
             f" p.upw_oa_status, p.upw_license, p.internal_id,"
             f" p.seen_count, p.infoscience_dedup_count, rp.dedup_note, rp.flagged_publication,"
-            f" rp.raw_metadata"
+            f" rp.raw_metadata,"
+            f" rp.infoscience_status, rp.infoscience_checked_at, rp.infoscience_handle"
             f" FROM run_publications rp"
             f" JOIN publications p ON p.pub_id = rp.pub_id"
             f" {join_a} {join_u} {where}"

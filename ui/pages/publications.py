@@ -13,12 +13,14 @@ from db.pipeline_db import PipelineDB
 from ui.helpers import page_title
 from ui.pub_helpers import is_weak, oa_text, lic_text, source_api_url
 from ui.components.pub_table import render_pub_component
+from ui.constants import INFOSCIENCE_STATUS_LABELS, INFOSCIENCE_STATUSES
 
 _FILTER_DEFAULTS: dict[str, object] = {
     "pf_run": [], "pf_type": [], "pf_status": [], "pf_source": [],
     "pf_unit": [], "pf_sciper": "", "pf_search": "",
     "pf_oa": "Tous", "pf_pdf": "Tous", "pf_licence": [], "pf_epfl": "Tous",
     "pf_dedup_note": "Tous", "pf_no_abstract": "Tous",
+    "pf_infoscience_status": [],
 }
 
 _STATUS_LABELS: dict[str, str] = {
@@ -119,6 +121,19 @@ def _render_filters(db: PipelineDB) -> None:
                       use_container_width=True, help="Réinitialiser tous les filtres")
             st.markdown("</div>", unsafe_allow_html=True)
 
+        _ifs_opts = ["__not_checked__"] + INFOSCIENCE_STATUSES
+        st.multiselect(
+            "Statut Infoscience",
+            _ifs_opts,
+            format_func=lambda v: "Non vérifié" if v == "__not_checked__"
+                                  else INFOSCIENCE_STATUS_LABELS.get(v, v),
+            help=(
+                "Filtre sur le statut de suivi post-import dans Infoscience.\n"
+                "'Non vérifié' : le statut n'a pas encore été déterminé."
+            ),
+            key="pf_infoscience_status",
+        )
+
 
 def _build_filter_kwargs(db: PipelineDB) -> dict:
     sel_run        = st.session_state.get("pf_run", [])
@@ -132,32 +147,42 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
     sel_pdf        = st.session_state.get("pf_pdf", "Tous")
     sel_licence    = st.session_state.get("pf_licence", [])
     sel_epfl       = st.session_state.get("pf_epfl", "Tous")
-    sel_dedup_note = st.session_state.get("pf_dedup_note", "Tous")
-    no_abstract    = st.session_state.get("pf_no_abstract", "Tous") == "Sans résumé"
+    sel_dedup_note        = st.session_state.get("pf_dedup_note", "Tous")
+    no_abstract           = st.session_state.get("pf_no_abstract", "Tous") == "Sans résumé"
+    sel_infoscience_status = st.session_state.get("pf_infoscience_status", [])
 
     resolved_sciper = _resolve_sciper(db, sciper_q)
 
+    # Resolve __not_checked__ sentinel: keep as-is, the DB layer handles it.
+    ifs_filter: "str | list | None" = None
+    if sel_infoscience_status:
+        if len(sel_infoscience_status) == 1:
+            ifs_filter = sel_infoscience_status[0]
+        else:
+            ifs_filter = sel_infoscience_status
+
     return dict(
-        run_id        = sel_run or None,
-        status        = sel_status or None,
-        source        = sel_source or None,
-        dc_type       = sel_type or None,
-        sciper        = resolved_sciper or None,
-        unit_acronym  = sel_unit or None,
-        search        = search_q.strip() or None,
-        has_pdf       = True if sel_pdf == "Avec PDF" else (False if sel_pdf == "Sans PDF" else None),
-        oa_filter     = None if sel_oa == "Tous" else sel_oa,
-        licence       = sel_licence or None,
-        epfl_strength = (
+        run_id             = sel_run or None,
+        status             = sel_status or None,
+        source             = sel_source or None,
+        dc_type            = sel_type or None,
+        sciper             = resolved_sciper or None,
+        unit_acronym       = sel_unit or None,
+        search             = search_q.strip() or None,
+        has_pdf            = True if sel_pdf == "Avec PDF" else (False if sel_pdf == "Sans PDF" else None),
+        oa_filter          = None if sel_oa == "Tous" else sel_oa,
+        licence            = sel_licence or None,
+        epfl_strength      = (
             "weak"   if sel_epfl == "⚠️ Statut faible" else
             "strong" if sel_epfl == "✅ Statut fort"   else None
         ),
-        dedup_note    = (
+        dedup_note         = (
             None          if sel_dedup_note == "Tous"     else
             "__flagged__" if sel_dedup_note == "🚩 Flaggés" else
             sel_dedup_note
         ),
-        no_abstract   = no_abstract,
+        no_abstract        = no_abstract,
+        infoscience_status = ifs_filter,
     ), sel_run
 
 
@@ -249,7 +274,8 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
            "seen_count", "infoscience_dedup_count",
            "src_url", "doi_url", "item_url", "ws_url", "wf_url",
            "workspace_id", "workflow_id", "dspace_item_uuid",
-           "error_msg", "dedup_note", "flagged_publication", "raw_metadata"]
+           "error_msg", "dedup_note", "flagged_publication", "raw_metadata",
+           "infoscience_status", "infoscience_handle"]
     )
     _cols = [c for c in _cols if c in d.columns]
 

@@ -163,10 +163,17 @@ def render_run_table(db: PipelineDB) -> None:
             unsafe_allow_html=True,
         )
 
-        # col 6: imported count (workflow + workspace)
-        _imported = int(_row.get("imported_count") or 0)
-        _imp_html = f'<span class="rtbl-count-chip">{_imported}</span>' if _imported else "—"
-        _c[6].markdown(f'<div class="rtbl-cell">{_imp_html}</div>', unsafe_allow_html=True)
+        # col 6: imported count until first sync, then published/imported ratio
+        _imported  = int(_row.get("imported_count")  or 0)
+        _published = int(_row.get("published_count") or 0)
+        _synced    = int(_row.get("synced_count")    or 0)
+        if _synced > 0 and _imported > 0:
+            _col6_html = f'<span class="rtbl-published-chip">{_published}/{_imported}</span>'
+        elif _imported:
+            _col6_html = f'<span class="rtbl-count-chip">{_imported}</span>'
+        else:
+            _col6_html = "—"
+        _c[6].markdown(f'<div class="rtbl-cell">{_col6_html}</div>', unsafe_allow_html=True)
 
         # DuckDB 1.5+ returns str dtype for mixed NULL/string columns;
         # NULL rows come back as float NaN (truthy) instead of None.

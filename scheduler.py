@@ -50,19 +50,24 @@ logger = logging.getLogger("scheduler")
 
 # ── Schedule file I/O ─────────────────────────────────────────────────────────
 
-def _read_schedules() -> list[dict]:
+def _read_json() -> dict:
     if not SCHEDULES_FILE.exists():
-        return []
+        return {}
     try:
-        return json.loads(SCHEDULES_FILE.read_text(encoding="utf-8")).get("schedules", [])
+        return json.loads(SCHEDULES_FILE.read_text(encoding="utf-8"))
     except Exception as exc:
         logger.error("Cannot read schedules.json: %s", exc)
-        return []
+        return {}
 
 
-def _write_schedules(schedules: list[dict]) -> None:
+def _read_schedules() -> list[dict]:
+    return _read_json().get("schedules", [])
+
+
+def _write_json(data: dict) -> None:
+    """Atomically write the full schedules.json, preserving all top-level keys."""
     SCHEDULES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"schedules": schedules}, indent=2, ensure_ascii=False)
+    payload = json.dumps(data, indent=2, ensure_ascii=False)
     tmp = Path(tempfile.mktemp(dir=SCHEDULES_FILE.parent, suffix=".tmp"))
     try:
         tmp.write_text(payload, encoding="utf-8")
@@ -72,6 +77,12 @@ def _write_schedules(schedules: list[dict]) -> None:
         raise
 
 
+def _write_schedules(schedules: list[dict]) -> None:
+    data = _read_json()
+    data["schedules"] = schedules
+    _write_json(data)
+
+
 def _patch_schedule(schedule_id: str, **fields) -> None:
     """Atomically update one schedule's fields in the JSON file."""
     schedules = _read_schedules()
@@ -79,6 +90,13 @@ def _patch_schedule(schedule_id: str, **fields) -> None:
         if s["id"] == schedule_id:
             s.update(fields)
     _write_schedules(schedules)
+
+
+def _patch_system_job(key: str, **fields) -> None:
+    """Atomically update a system job's fields in the JSON file."""
+    data = _read_json()
+    data.setdefault("system_jobs", {}).setdefault(key, {}).update(fields)
+    _write_json(data)
 
 
 # ── Run helpers ───────────────────────────────────────────────────────────────
@@ -247,14 +265,58 @@ def _sync_jobs(scheduler: BackgroundScheduler) -> None:
             )
 
     for job in scheduler.get_jobs():
-        if job.id not in wanted_ids:
+        if job.id not in wanted_ids and job.id != _INFOSCIENCE_SYNC_JOB_ID:
             scheduler.remove_job(job.id)
             logger.info("Removed job %s", job.id)
+
+
+_INFOSCIENCE_SYNC_JOB_KEY = "infoscience_sync"
+_INFOSCIENCE_SYNC_JOB_ID  = "nightly_infoscience_sync"
+
+
+def run_infoscience_sync() -> None:
+    """Nightly job: check and update Infoscience statuses for imported items."""
+    if not _read_json().get("system_jobs", {}).get(_INFOSCIENCE_SYNC_JOB_KEY, {}).get("enabled", True):
+        logger.info("Infoscience status sync is disabled — skipping.")
+        return
+
+    logger.info("Infoscience status sync starting.")
+    last_status = "failed"
+    try:
+        from data_pipeline.infoscience_status_sync import run_sync
+        summary = run_sync()
+        last_status = "completed"
+        logger.info(
+            "Infoscience status sync done: checked=%d updated=%d errors=%d skipped=%d",
+            summary.get("checked", 0), summary.get("updated", 0),
+            summary.get("errors", 0), summary.get("skipped", 0),
+        )
+    except Exception as exc:
+        logger.error("Infoscience status sync failed: %s", exc)
+    finally:
+        _patch_system_job(
+            _INFOSCIENCE_SYNC_JOB_KEY,
+            last_run_at=datetime.now().isoformat(),
+            last_run_status=last_status,
+        )
 
 
 def main() -> None:
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
     _sync_jobs(scheduler)
+
+    # Fixed nightly infoscience status sync — not user-configurable.
+    scheduler.add_job(
+        run_infoscience_sync,
+        trigger=CronTrigger(hour=2, minute=30, timezone=TIMEZONE),
+        id=_INFOSCIENCE_SYNC_JOB_ID,
+        replace_existing=True,
+        name="Nightly Infoscience status sync",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    logger.info("Registered nightly Infoscience sync job (02:30 %s)", TIMEZONE)
+
     scheduler.start()
     logger.info("Scheduler started — polling %s every %ds", SCHEDULES_FILE, RELOAD_INTERVAL)
 

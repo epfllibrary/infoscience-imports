@@ -24,6 +24,28 @@ SOURCES: list[str] = ["scopus", "crossref", "openalex", "wos", "epo", "zenodo"]
 
 RUN_STATUSES: list[str] = ["running", "completed", "failed", "killed"]
 
+# ── Infoscience item statuses (post-import tracking) ──────────────────────────
+
+INFOSCIENCE_STATUSES: list[str] = [
+    "published", "withdrawn", "deleted", "rejected", "still_pending",
+]
+
+INFOSCIENCE_STATUS_LABELS: dict[str, str] = {
+    "published":     "Publié",
+    "withdrawn":     "Retiré",
+    "deleted":       "Supprimé",
+    "rejected":      "Rejeté",
+    "still_pending": "En attente",
+}
+
+INFOSCIENCE_STATUS_CSS: dict[str, str] = {
+    "published":     "ifs-st-published",
+    "withdrawn":     "ifs-st-withdrawn",
+    "deleted":       "ifs-st-deleted",
+    "rejected":      "ifs-st-rejected",
+    "still_pending": "ifs-st-pending",
+}
+
 # ── Deduplication note labels ─────────────────────────────────────────────────
 
 DEDUP_LABELS: dict[str, str] = {

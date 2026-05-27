@@ -24,6 +24,10 @@ _STATUS_ICON: dict[str | None, str] = {
     "completed": "✅", "running": "⏳", "failed": "❌", "killed": "🛑", None: "—",
 }
 
+_INFOSCIENCE_SYNC_JOB_KEY = "infoscience_sync"
+_INFOSCIENCE_SYNC_CRON    = "30 2 * * *"
+_INFOSCIENCE_SYNC_NAME    = "Synchronisation statuts Infoscience"
+
 _CRON_PRESETS: dict[str, str] = {
     "Quotidien à 06:00":           "0 6 * * *",
     "Quotidien à 22:00":           "0 22 * * *",
@@ -33,6 +37,58 @@ _CRON_PRESETS: dict[str, str] = {
     "Mensuel (1er du mois 06:00)": "0 6 1 * *",
     "Personnalisé…":               "",
 }
+
+
+def _render_infoscience_sync_card(sched_file: Path, root: Path, active_env: str) -> None:
+    """Render the fixed Infoscience status sync system job card (no delete, fixed cron)."""
+    job     = _load_system_jobs(sched_file).get(_INFOSCIENCE_SYNC_JOB_KEY, {})
+    enabled = job.get("enabled", True)
+    last_at = (job.get("last_run_at") or "—")[:16].replace("T", " ")
+    last_icon = _STATUS_ICON.get(job.get("last_run_status"), "—")
+
+    with st.container(border=True):
+        _ca, _cb, _cc, _cd = st.columns([4, 3, 3, 2])
+        with _ca:
+            st.markdown(
+                f"**{_INFOSCIENCE_SYNC_NAME}**  "
+                f"<span style='background:#F1F5F9;color:#475569;border-radius:4px;"
+                f"padding:1px 7px;font-size:.78rem;font-weight:700'>SYSTÈME</span>",
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                f"Statuts post-import : published / rejected / deleted / still_pending.  |  "
+                f"Cron : `{_INFOSCIENCE_SYNC_CRON}` (02h30 chaque nuit, non modifiable)"
+            )
+        with _cb:
+            st.markdown(f"**Prochain run**  \n{_next_run_str(_INFOSCIENCE_SYNC_CRON)}")
+        with _cc:
+            st.markdown(f"**Dernier run**  \n{last_icon} {last_at}")
+        with _cd:
+            new_enabled = st.toggle("Actif", value=enabled, key="tog_ifs_sync")
+            if new_enabled != enabled:
+                _save_system_job(sched_file, _INFOSCIENCE_SYNC_JOB_KEY, {"enabled": new_enabled})
+                st.rerun()
+            if st.button("▶ Now", key="run_ifs_sync", use_container_width=True,
+                         help="Lancer la synchronisation maintenant"):
+                with st.spinner("Synchronisation en cours…"):
+                    try:
+                        from data_pipeline.infoscience_status_sync import run_sync
+                        _r = run_sync(db_path=root / "data" / f"pipeline_{active_env}.duckdb")
+                        _save_system_job(sched_file, _INFOSCIENCE_SYNC_JOB_KEY, {
+                            "last_run_at": datetime.now().isoformat(),
+                            "last_run_status": "completed",
+                        })
+                        st.success(
+                            f"{_r['checked']} vérifiés · "
+                            f"{_r['updated']} mis à jour · "
+                            f"{_r['errors']} erreurs"
+                        )
+                    except Exception as _exc:
+                        _save_system_job(sched_file, _INFOSCIENCE_SYNC_JOB_KEY, {
+                            "last_run_at": datetime.now().isoformat(),
+                            "last_run_status": "failed",
+                        })
+                        st.error(f"Erreur : {_exc}")
 
 
 def render(active_env: str, root: Path, sources: list[str], username: str) -> None:
@@ -58,6 +114,10 @@ def render(active_env: str, root: Path, sources: list[str], username: str) -> No
     with st.expander("➕ Nouveau schedule", expanded=not schedules):
         _render_new_schedule_form(schedules, sched_file, active_env, sources, username)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(sh("settings_applications", "Tâches système"), unsafe_allow_html=True)
+    _render_infoscience_sync_card(sched_file, root, active_env)
+
     sched_log = root / "logs" / "scheduler.log"
     if sched_log.exists():
         with st.expander("Logs du scheduler (50 dernières lignes)"):
@@ -78,9 +138,37 @@ def _load(path: Path) -> list[dict]:
 
 def _save(path: Path, schedules: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"schedules": schedules}, indent=2, ensure_ascii=False)
+    existing: dict = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    existing["schedules"] = schedules
     tmp = Path(tempfile.mktemp(dir=path.parent, suffix=".tmp"))
-    tmp.write_text(payload, encoding="utf-8")
+    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_system_jobs(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("system_jobs", {})
+    except Exception:
+        return {}
+
+
+def _save_system_job(path: Path, key: str, updates: dict) -> None:
+    existing: dict = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    existing.setdefault("system_jobs", {}).setdefault(key, {}).update(updates)
+    tmp = Path(tempfile.mktemp(dir=path.parent, suffix=".tmp"))
+    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
 
 
