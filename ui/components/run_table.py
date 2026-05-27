@@ -231,7 +231,7 @@ def render_run_table(db: PipelineDB) -> None:
                         "run_id": _rid, "to_status": None,
                     }
                     st.rerun()
-            elif _rs == "done" and _role == "admin":
+            elif _rs == "done" and (_role == "admin" or (_role == "curator" and _cb == _username)):
                 if st.button("", icon=":material/restart_alt:",
                              key=f"reopen_{_rid}", use_container_width=True,
                              help="Réouvrir"):

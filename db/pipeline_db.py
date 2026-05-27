@@ -819,7 +819,7 @@ class PipelineDB:
           - Claim (NULL → in_progress)        : any authenticated user
           - Done / Unclaim (in_progress → *)  : claimer or admin
           - Reclaim (in_progress → in_progress): claimer or admin
-          - Reopen (done → in_progress)        : admin only
+          - Reopen (done → in_progress)        : admin, or curator who is the claimer
 
         Raises PermissionError for unauthorized transitions.
         All reads and writes share one connection for history consistency.
@@ -839,6 +839,7 @@ class PipelineDB:
             # ── Authorization ──────────────────────────────────────────────────
             is_claimer = (username == claimed_by)
             is_admin   = (role == "admin")
+            is_curator = (role == "curator")
 
             if to_status == "in_progress":
                 if from_status == "in_progress" and not is_claimer and not is_admin:
@@ -846,10 +847,10 @@ class PipelineDB:
                     raise PermissionError(
                         f"{username!r} cannot reclaim run {run_id!r} "
                         f"(held by {claimed_by!r})")
-                if from_status == "done" and not is_admin:
-                    # Reopen a closed run — admin only
+                if from_status == "done" and not is_admin and not (is_curator and is_claimer):
+                    # Reopen: admin always, curator only if they are the claimer
                     raise PermissionError(
-                        f"{username!r} cannot reopen run {run_id!r} (admin required)")
+                        f"{username!r} cannot reopen run {run_id!r}")
             else:
                 # Done / unclaim — claimer or admin only
                 if from_status is not None and not is_claimer and not is_admin:
