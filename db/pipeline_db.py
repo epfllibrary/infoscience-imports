@@ -238,6 +238,12 @@ class PipelineDB:
                     run_id VARCHAR NOT NULL, row_id VARCHAR NOT NULL,
                     author_name VARCHAR NOT NULL,
                     PRIMARY KEY (run_id, row_id, author_name))""",
+                """CREATE TABLE IF NOT EXISTS run_review_history (
+                    run_id VARCHAR NOT NULL,
+                    changed_at TIMESTAMP DEFAULT NOW(),
+                    changed_by VARCHAR NOT NULL,
+                    from_status VARCHAR,
+                    to_status VARCHAR)""",
             ]:
                 con.execute(stmt)
 
@@ -261,6 +267,10 @@ class PipelineDB:
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS flagged_publication VARCHAR",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS dspace_item_uuid VARCHAR",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS raw_metadata TEXT",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS claimed_by VARCHAR",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS review_status VARCHAR",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS review_updated_at TIMESTAMP",
             ]:
                 con.execute(_migration)
         finally:
@@ -727,14 +737,140 @@ class PipelineDB:
 
     # ── read — dashboard ─────────────────────────────────────────────────
 
-    def get_runs(self, limit=50) -> pd.DataFrame:
+    def _run_filters(self, status=None, date_from=None, date_to=None,
+                     search=None, review_status=None):
+        filters, params = [], []
+        if search:
+            filters.append("LOWER(run_id) LIKE ?")
+            params.append(f"%{search.lower()}%")
+        if status:
+            placeholders = ", ".join("?" * len(status))
+            filters.append(f"status IN ({placeholders})")
+            params.extend(status)
+        if date_from:
+            filters.append("CAST(started_at AS DATE) >= ?")
+            params.append(date_from)
+        if date_to:
+            filters.append("CAST(started_at AS DATE) <= ?")
+            params.append(date_to)
+        if review_status:
+            non_null = [v for v in review_status if v != "unclaimed"]
+            has_unclaimed = "unclaimed" in review_status
+            parts = []
+            if has_unclaimed:
+                parts.append("(review_status IS NULL AND status = 'completed')")
+            if non_null:
+                ph = ", ".join("?" * len(non_null))
+                parts.append(f"review_status IN ({ph})")
+                params.extend(non_null)
+            filters.append(f"({' OR '.join(parts)})")
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        return where, params
+
+    def count_runs(self, status=None, date_from=None, date_to=None,
+                   search=None, review_status=None) -> int:
+        where, params = self._run_filters(
+            status=status, date_from=date_from, date_to=date_to,
+            search=search, review_status=review_status)
+        r = self._query_one(
+            f"SELECT COUNT(*) FROM runs {where}", params or None)
+        return int(r[0]) if r and r[0] else 0
+
+    def get_runs(self, status=None, date_from=None, date_to=None,
+                 search=None, review_status=None, limit=20, offset=0) -> pd.DataFrame:
+        where, params = self._run_filters(
+            status=status, date_from=date_from, date_to=date_to,
+            search=search, review_status=review_status)
+        params += [limit, offset]
         return self._query(
-            "SELECT run_id, started_at, ended_at,"
-            " CASE WHEN ended_at IS NOT NULL"
-            "      THEN CAST(epoch(ended_at) - epoch(started_at) AS INTEGER)"
-            "      ELSE NULL END AS duration_s,"
-            " window_start, window_end, sources, dry_run, status"
-            " FROM runs ORDER BY started_at DESC LIMIT ?", [limit])
+            f"SELECT run_id, started_at, ended_at,"
+            f" CASE WHEN ended_at IS NOT NULL"
+            f"      THEN CAST(epoch(ended_at) - epoch(started_at) AS INTEGER)"
+            f"      ELSE NULL END AS duration_s,"
+            f" window_start, window_end, sources, dry_run, status,"
+            f" (SELECT COUNT(*) FROM run_publications rp"
+            f"  WHERE rp.run_id = runs.run_id"
+            f"  AND rp.status IN ('workflow','workspace')) AS imported_count,"
+            f" claimed_by, claimed_at, review_status, review_updated_at"
+            f" FROM runs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            params)
+
+    def set_run_review_status(self, run_id: str, to_status: "str | None",
+                              username: str, role: str = "reporting") -> None:
+        """Transition review_status and record the change in run_review_history.
+
+        Authorization rules (enforced here, not only in the UI layer):
+          - Claim (NULL → in_progress)        : any authenticated user
+          - Done / Unclaim (in_progress → *)  : claimer or admin
+          - Reclaim (in_progress → in_progress): claimer or admin
+          - Reopen (done → in_progress)        : admin only
+
+        Raises PermissionError for unauthorized transitions.
+        All reads and writes share one connection for history consistency.
+        """
+        con = self._connect()
+        try:
+            row = con.execute(
+                "SELECT review_status, claimed_by FROM runs WHERE run_id=?",
+                [run_id],
+            ).fetchone()
+            if not row:
+                return
+            # Normalize NaN (DuckDB 1.5+ mixed-dtype VARCHAR columns)
+            from_status = None if (row[0] is None or (isinstance(row[0], float) and pd.isna(row[0]))) else row[0]
+            claimed_by  = None if (row[1] is None or (isinstance(row[1], float) and pd.isna(row[1]))) else row[1]
+
+            # ── Authorization ──────────────────────────────────────────────────
+            is_claimer = (username == claimed_by)
+            is_admin   = (role == "admin")
+
+            if to_status == "in_progress":
+                if from_status == "in_progress" and not is_claimer and not is_admin:
+                    # Reclaim a run held by someone else
+                    raise PermissionError(
+                        f"{username!r} cannot reclaim run {run_id!r} "
+                        f"(held by {claimed_by!r})")
+                if from_status == "done" and not is_admin:
+                    # Reopen a closed run — admin only
+                    raise PermissionError(
+                        f"{username!r} cannot reopen run {run_id!r} (admin required)")
+            else:
+                # Done / unclaim — claimer or admin only
+                if from_status is not None and not is_claimer and not is_admin:
+                    raise PermissionError(
+                        f"{username!r} cannot modify run {run_id!r} "
+                        f"(held by {claimed_by!r})")
+
+            if to_status is None:
+                con.execute(
+                    "UPDATE runs SET review_status=NULL, claimed_by=NULL,"
+                    " claimed_at=NULL, review_updated_at=NULL WHERE run_id=?",
+                    [run_id])
+            elif to_status == "in_progress":
+                con.execute(
+                    "UPDATE runs SET review_status='in_progress',"
+                    " claimed_by=?, claimed_at=NOW(), review_updated_at=NOW()"
+                    " WHERE run_id=?",
+                    [username, run_id])
+            else:
+                con.execute(
+                    "UPDATE runs SET review_status=?, review_updated_at=NOW()"
+                    " WHERE run_id=?",
+                    [to_status, run_id])
+
+            con.execute(
+                "INSERT INTO run_review_history"
+                " (run_id, changed_at, changed_by, from_status, to_status)"
+                " VALUES (?, NOW(), ?, ?, ?)",
+                [run_id, username, from_status, to_status])
+        finally:
+            con.close()
+
+    def get_run_review_history(self, run_id: str) -> pd.DataFrame:
+        return self._query(
+            "SELECT changed_at, changed_by, from_status, to_status"
+            " FROM run_review_history WHERE run_id=? ORDER BY changed_at",
+            [run_id])
 
     def get_summary_stats(self) -> dict:
         r = self._query_one(

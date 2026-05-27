@@ -29,6 +29,11 @@ _STATUS_LABELS: dict[str, str] = {
 
 def render(db: PipelineDB, role: str = "reporting") -> None:
     """Render the publications page — filterable paginated table with download buttons."""
+    if "_jump_to_run" in st.session_state:
+        st.session_state["pf_run"] = [st.session_state.pop("_jump_to_run")]
+        st.session_state["pub_page"] = 1
+        st.session_state.pop("_pub_filter_sig", None)
+
     st.markdown('<div id="pub-page"></div>', unsafe_allow_html=True)
     page_title("article", "Publications")
 
@@ -47,6 +52,9 @@ def _render_filters(db: PipelineDB) -> None:
         with c1:
             runs_df = db.get_runs(limit=50)
             run_opts = runs_df["run_id"].tolist() if not runs_df.empty else []
+            for _rid in st.session_state.get("pf_run", []):
+                if _rid not in run_opts:
+                    run_opts.insert(0, _rid)
             st.multiselect("Run", run_opts, key="pf_run")
             st.multiselect("Type de document", db.get_distinct_dc_types(), key="pf_type")
         with c2:

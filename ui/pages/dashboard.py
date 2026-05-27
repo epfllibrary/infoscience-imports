@@ -6,16 +6,16 @@ import plotly.express as px
 import streamlit as st
 
 from db.pipeline_db import PipelineDB
+from ui.components.run_table import render_run_table
 from ui.constants import PRIMARY, C_BLUE, C_GRAY_600, C_RED, SECONDARY
-from ui.helpers import fmt_dur, metric_card, page_title, sh, badge
+from ui.helpers import fmt_dur, metric_card, page_title, sh
 
 
 def render(db: PipelineDB) -> None:
     """Render the dashboard page — KPI tiles, trends, and per-run breakdown."""
     page_title("dashboard", "Tableau de bord")
 
-    _kpis    = db.get_dashboard_kpis(months=12)
-    _runs_df = db.get_runs(limit=20)
+    _kpis = db.get_dashboard_kpis(months=12)
 
     # ── KPI tiles ─────────────────────────────────────────────────────────────
     _kc1, _kc2, _kc3, _kc4, _kc5 = st.columns(5)
@@ -38,6 +38,13 @@ def render(db: PipelineDB) -> None:
         st.markdown(
             metric_card("Durée moyenne / run", fmt_dur(_kpis["avg_duration_s"])),
             unsafe_allow_html=True)
+
+    # ── Runs table (filterable + paginated) ───────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<span class="runs-card-anchor"></span>', unsafe_allow_html=True)
+        st.markdown(sh("history", "Runs"), unsafe_allow_html=True)
+        render_run_table(db)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -110,27 +117,6 @@ def render(db: PipelineDB) -> None:
         else:
             st.caption("Aucune donnée.")
 
-    # ── Recent runs table ─────────────────────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(sh("history", "Runs récents"), unsafe_allow_html=True)
-    if not _runs_df.empty:
-        from ui.helpers import fmt_dt
-        _disp = _runs_df.copy()
-        _disp["Démarré"] = _disp["started_at"].apply(fmt_dt)
-        _disp["Terminé"] = _disp["ended_at"].apply(fmt_dt)
-        _disp["Durée"]   = _disp["duration_s"].apply(fmt_dur)
-        _disp["Statut"]  = _disp["status"].apply(badge)
-        _disp["DR"]      = _disp["dry_run"].apply(lambda v: "✓" if v else "")
-        _disp["Sources"] = _disp["sources"].apply(lambda v: v or "—")
-        st.write(
-            _disp[["run_id", "Démarré", "Terminé", "Durée", "Sources", "Statut", "DR"]]
-            .rename(columns={"run_id": "Run", "DR": "Dry-run"})
-            .to_html(escape=False, index=False),
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("Aucun run enregistré.")
-
     # ── Imports by source × document type ────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
@@ -158,3 +144,4 @@ def render(db: PipelineDB) -> None:
         st.plotly_chart(_fig, width="stretch")
     else:
         st.caption("Aucune donnée.")
+

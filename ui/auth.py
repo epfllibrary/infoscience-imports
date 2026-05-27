@@ -23,6 +23,7 @@ cookie:
 Roles
 -----
 admin     — full access: all pages including run launcher, scheduling, configuration
+curator   — dashboard, run launcher, publications, statistics (no scheduling/config)
 reporting — read-only: dashboard, publications, statistics
 
 CLI
@@ -57,6 +58,12 @@ ROLE_PAGES: dict[str, list[str]] = {
         "Publications",
         "Statistiques",
         "Configuration",
+    ],
+    "curator": [
+        "Tableau de bord",
+        "Lancer un run",
+        "Publications",
+        "Statistiques",
     ],
     "reporting": [
         "Tableau de bord",

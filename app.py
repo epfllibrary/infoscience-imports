@@ -140,7 +140,7 @@ with st.sidebar:
 
     st.markdown("---")
     _, _dname, _ = current_user()
-    _role_label = {"admin": "Admin", "reporting": "Reporting"}.get(_role, _role)
+    _role_label = {"admin": "Admin", "curator": "Curator", "reporting": "Reporting"}.get(_role, _role)
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">'
         f'<span class="ms ms-neutral" style="font-size:17px">person</span>'

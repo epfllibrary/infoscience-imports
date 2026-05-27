@@ -964,3 +964,173 @@ hr.ptbl-sep {
     letter-spacing: .04em;
     text-transform: uppercase;
 }
+
+
+/* ── Runs table ────────────────────────────────────────────────────────────── */
+
+/* Compact column padding — header and data rows */
+[data-testid="stHorizontalBlock"]:has(.rtbl-row) [data-testid="stColumn"] > div,
+[data-testid="stHorizontalBlock"]:has(.rtbl-hdr) [data-testid="stColumn"] > div {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    min-height: 0 !important;
+}
+
+[data-testid="stHorizontalBlock"]:has(.rtbl-row) .element-container {
+    margin: 0 !important;
+}
+
+/* CSS scope marker — invisible sentinel in col-0 of each data row */
+.rtbl-row { display: none; }
+
+/* Column headers */
+.rtbl-hdr {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+    color: #94A3B8;
+    padding: 8px 0 6px;
+    white-space: nowrap;
+}
+
+/* Row separator */
+hr.rtbl-sep {
+    border: none;
+    border-top: 1px solid #F1F5F9;
+    margin: 0;
+}
+
+/* Generic cell text */
+.rtbl-cell {
+    font-size: 12px;
+    color: #374151;
+    padding: 4px 0;
+    line-height: 1.5;
+}
+
+/* Run ID monospace chip */
+.rtbl-run-id {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 10px;
+    color: #64748B;
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+    word-break: break-all;
+    line-height: 1.6;
+    margin-top: 2px;
+}
+
+/* Review status pill */
+.rtbl-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px 2px 5px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 2px;
+}
+.rtbl-status .ms {
+    font-size: 13px !important;
+    margin-right: 1px !important;
+    line-height: 1;
+}
+.rtbl-inprogress {
+    background: #FEF3C7;
+    color: #92400E;
+    border: 1px solid #FDE68A;
+}
+.rtbl-done {
+    background: #DCFCE7;
+    color: #15803D;
+    border: 1px solid #86EFAC;
+}
+
+/* Claimant username below the pill */
+.rtbl-ts {
+    display: block;
+    font-size: 10px;
+    color: #94A3B8;
+    font-family: 'Roboto Mono', monospace;
+    margin-top: 2px;
+    white-space: nowrap;
+}
+.rtbl-count {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #475569;
+}
+.rtbl-user {
+    font-size: 10px;
+    color: #94A3B8;
+    font-family: 'Roboto Mono', monospace;
+    display: block;
+    margin-bottom: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* "unclaimed" pill — neutral grey */
+.rtbl-unclaimed {
+    background: #F8FAFC;
+    color: #94A3B8;
+    border: 1px solid #E2E8F0;
+}
+.rtbl-unclaimed .ms {
+    font-size: 12px !important;
+    color: #CBD5E1 !important;
+}
+
+/* Action buttons — same compact icon-button style as pub_table */
+[data-testid="stHorizontalBlock"]:has(.rtbl-row) .stButton > button {
+    background: #F9FAFB !important;
+    color: #374151 !important;
+    border: 1px solid #E4E7EC !important;
+    border-radius: 5px !important;
+    padding: 2px 2px !important;
+    min-height: 28px !important;
+    height: 28px !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+    letter-spacing: 0 !important;
+    font-weight: 400 !important;
+    width: 100% !important;
+    filter: none !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+    transition: background .1s ease, border-color .1s ease !important;
+}
+[data-testid="stHorizontalBlock"]:has(.rtbl-row) .stButton > button:hover {
+    background: #EEF2FF !important;
+    border-color: #A5B4FC !important;
+    color: #3730A3 !important;
+    filter: none !important;
+}
+[data-testid="stHorizontalBlock"]:has(.rtbl-row) .stButton > button:disabled {
+    background: #F9FAFB !important;
+    border-color: #F1F5F9 !important;
+    color: #CBD5E1 !important;
+    opacity: 1 !important;
+    cursor: not-allowed !important;
+}
+
+/* ── Runs section card ── */
+.runs-card-anchor { display: none; }
+.stVerticalBlock:has(.runs-card-anchor) {
+    background: #FFFFFF;
+    border-radius: 12px;
+    border: 1px solid #E2E8F0;
+    padding: 1.25rem 1.5rem 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
