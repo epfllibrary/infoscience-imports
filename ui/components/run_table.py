@@ -19,9 +19,8 @@ import streamlit as st
 
 from db.pipeline_db import PipelineDB
 from ui.auth import current_user
+from ui.constants import RUN_STATUSES
 from ui.helpers import badge, fmt_dt, fmt_dur
-
-_RUN_STATUSES         = ["running", "completed", "failed", "killed"]
 _REVIEW_STATUS_OPTIONS = ["unclaimed", "in_progress", "done"]
 _REVIEW_STATUS_LABELS  = {
     "unclaimed":   "Non pris en charge",
@@ -62,7 +61,7 @@ def render_run_table(db: PipelineDB) -> None:
         with _fc2:
             st.date_input("Démarré avant", value=None, key="rf_date_to")
         with _fc3:
-            st.multiselect("Statut pipeline", _RUN_STATUSES, key="rf_status")
+            st.multiselect("Statut pipeline", RUN_STATUSES, key="rf_status")
         with _fc4:
             st.multiselect(
                 "Suivi", _REVIEW_STATUS_OPTIONS,

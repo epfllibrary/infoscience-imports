@@ -20,6 +20,10 @@ C_BLUE      = "#3B82F6"
 
 SOURCES: list[str] = ["scopus", "crossref", "openalex", "wos", "epo", "zenodo"]
 
+# ── Run statuses ──────────────────────────────────────────────────────────────
+
+RUN_STATUSES: list[str] = ["running", "completed", "failed", "killed"]
+
 # ── Deduplication note labels ─────────────────────────────────────────────────
 
 DEDUP_LABELS: dict[str, str] = {
