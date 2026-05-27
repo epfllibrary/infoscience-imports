@@ -665,6 +665,34 @@ class PublicationProcessor:
     def fetch_unpaywall_data(self, doi):
         return UnpaywallClient.fetch_by_doi(doi, format=self.unpaywall_format)
 
+    def _fetch_openalex_pdf(self, doi: str):
+        """Try to download a PDF from the OpenAlex content API (primary PDF source).
+
+        Only downloads when the work is OA and carries an open licence (cc-* or
+        public-domain), mirroring the conditions applied to Unpaywall PDFs.
+        Returns (content_url, local_filename) on success, or (None, None).
+        """
+        try:
+            record = OpenAlexClient.fetch_record_by_unique_id(doi, format="digest")
+            if not isinstance(record, dict) or not record.get("has_content_pdf"):
+                return None, None
+
+            oa_is_oa = str(record.get("oa_is_oa", "")).lower() == "true"
+            license_val = str(record.get("best_oa_license") or "").lower().strip()
+            is_open_license = license_val.startswith("cc-") or license_val in ("public-domain", "pd")
+            if not oa_is_oa or not is_open_license:
+                return None, None
+
+            content_url = record.get("content_url_pdf", "")
+            if not content_url:
+                return None, None
+
+            filename = OpenAlexClient.download_content_pdf(content_url, doi)
+            return (content_url, filename) if filename else (None, None)
+        except Exception as e:
+            self.logger.warning("OpenAlex PDF fetch error for DOI %s: %s", doi, e)
+            return None, None
+
     def process(self, return_df=True):
         self.df = self.df.copy()
 
@@ -680,16 +708,38 @@ class PublicationProcessor:
         self.df["upw_oai_id"] = None
         self.df["upw_pdf_urls"] = None
         self.df["upw_valid_pdf"] = None
+        self.df["oa_content_url"] = None
 
-        # Filtrer uniquement les lignes avec un DOI valide
         valid_dois = self.df["doi"].dropna()
         valid_indexes = valid_dois.index
 
-        # Récupérer les données Unpaywall en parallèle
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(self.fetch_unpaywall_data, valid_dois))
+        # === Pass 1: OpenAlex content API (primary PDF source) ===
+        for idx, doi in zip(valid_indexes, valid_dois):
+            if doi:
+                content_url, filename = self._fetch_openalex_pdf(doi)
+                if filename:
+                    self.df.at[idx, "upw_valid_pdf"] = filename
+                    self.df.at[idx, "oa_content_url"] = content_url
+                    self.logger.info(
+                        "OpenAlex content PDF: %s → %s (%s)", doi, filename, content_url
+                    )
 
-        # Injecter les résultats dans le DataFrame original
+        # === Pass 2: Unpaywall — OA metadata for all; PDF only as fallback ===
+        openalex_covered = {
+            doi for idx, doi in zip(valid_indexes, valid_dois)
+            if not pd.isnull(self.df.at[idx, "upw_valid_pdf"])
+        }
+
+        def _fetch_upw(doi):
+            return UnpaywallClient.fetch_by_doi(
+                doi,
+                format=self.unpaywall_format,
+                skip_pdf=(doi in openalex_covered),
+            )
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            results = list(executor.map(_fetch_upw, valid_dois))
+
         for index, result in zip(valid_indexes, results):
             if result is not None:
                 self.df.at[index, "upw_is_oa"] = bool(result.get("is_oa"))
@@ -703,18 +753,20 @@ class PublicationProcessor:
 
                 if self.unpaywall_format == "best-oa-location":
                     self.df.at[index, "upw_pdf_urls"] = result.get("pdf_urls")
+                    # Use Unpaywall PDF only when OpenAlex did not find one.
                     # Publisher-specific or implied-OA licences are NOT truly open:
                     # the PDF may be freely viewable but redistribution is restricted.
-                    # Block upw_valid_pdf so the loader never tries to attach these files.
-                    _lic = str(result.get("license") or "").lower().strip()
-                    _is_open_license = _lic.startswith("cc-") or _lic in ("public-domain", "pd")
                     # None (not False) — the loader treats valid_pdf as a filename
                     # string and does `pdf_dir / valid_pdf`; a boolean would crash it.
-                    valid_pdf = result.get("valid_pdf") if _is_open_license else None
-                    self.df.at[index, "upw_valid_pdf"] = valid_pdf
+                    if pd.isnull(self.df.at[index, "upw_valid_pdf"]):
+                        _lic = str(result.get("license") or "").lower().strip()
+                        _is_open_license = _lic.startswith("cc-") or _lic in ("public-domain", "pd")
+                        self.df.at[index, "upw_valid_pdf"] = (
+                            result.get("valid_pdf") if _is_open_license else None
+                        )
                 else:
                     self.df.at[index, "upw_pdf_urls"] = None
-                    self.df.at[index, "upw_valid_pdf"] = None
+                    # upw_valid_pdf: keep OpenAlex result if set, leave None otherwise
             else:
                 self.logger.warning(
                     "No unpaywall data returned for DOI %s.", self.df.at[index, "doi"]
