@@ -30,9 +30,9 @@ _REVIEW_STATUS_LABELS  = {
 }
 _PAGE_SIZE_OPTIONS = [10, 20, 50]
 
-# col layout: Run | Démarré | Terminé | Durée | Sources | Pipeline | DR | Importés | Suivi | Actions | Voir
-_COLS = [3.0, 1.4, 1.4, 0.9, 2.0, 1.2, 0.45, 0.8, 1.8, 0.9, 0.7]
-_HEADERS = ["Run", "Démarré", "Terminé", "Durée", "Sources", "Pipeline",
+# col layout: Run | Terminé | Durée | Sources | Pipeline | DR | Importés | Suivi | Actions | Voir
+_COLS = [3.0, 1.4, 0.9, 2.0, 1.2, 0.45, 0.8, 1.8, 0.9, 0.7]
+_HEADERS = ["Run", "Terminé", "Durée", "Sources", "Pipeline",
             "DR", "Importés", "Suivi", "Actions", "Voir"]
 
 
@@ -138,27 +138,23 @@ def render_run_table(db: PipelineDB) -> None:
             f'<span class="rtbl-run-id">{_rid}</span>',
             unsafe_allow_html=True,
         )
-        _c[1].markdown(f'<div class="rtbl-cell">{fmt_dt(_row["started_at"])}</div>',
+        _c[1].markdown(f'<div class="rtbl-cell">{fmt_dt(_row["ended_at"])}</div>',
                        unsafe_allow_html=True)
-        _c[2].markdown(f'<div class="rtbl-cell">{fmt_dt(_row["ended_at"])}</div>',
+        _c[2].markdown(f'<div class="rtbl-cell">{fmt_dur(_row["duration_s"])}</div>',
                        unsafe_allow_html=True)
-        _c[3].markdown(f'<div class="rtbl-cell">{fmt_dur(_row["duration_s"])}</div>',
+        _c[3].markdown(f'<div class="rtbl-cell">{_row["sources"] or "—"}</div>',
                        unsafe_allow_html=True)
-        _c[4].markdown(f'<div class="rtbl-cell">{_row["sources"] or "—"}</div>',
-                       unsafe_allow_html=True)
-        _c[5].markdown(badge(_row["status"]), unsafe_allow_html=True)
-        _c[6].markdown(
+        _c[4].markdown(badge(_row["status"]), unsafe_allow_html=True)
+        _c[5].markdown(
             f'<div class="rtbl-cell">'
             f'{_mi("check", "ms-neutral") if _row["dry_run"] else ""}</div>',
             unsafe_allow_html=True,
         )
 
-        # col 7: imported count (workflow + workspace)
+        # col 6: imported count (workflow + workspace)
         _imported = int(_row.get("imported_count") or 0)
-        _c[7].markdown(
-            f'<div class="rtbl-cell rtbl-count">{_imported if _imported else "—"}</div>',
-            unsafe_allow_html=True,
-        )
+        _imp_html = f'<span class="rtbl-count-chip">{_imported}</span>' if _imported else "—"
+        _c[6].markdown(f'<div class="rtbl-cell">{_imp_html}</div>', unsafe_allow_html=True)
 
         # DuckDB 1.5+ returns str dtype for mixed NULL/string columns;
         # NULL rows come back as float NaN (truthy) instead of None.
@@ -171,33 +167,33 @@ def render_run_table(db: PipelineDB) -> None:
         _can_act = _username == _cb or _role == "admin"
         _done    = _row["status"] == "completed"
 
-        # col 8: review status badge (read-only)
+        # col 7: review status badge (read-only)
         if not _done:
-            _c[8].markdown(
+            _c[7].markdown(
                 '<span class="rtbl-cell" style="color:#CBD5E1">—</span>',
                 unsafe_allow_html=True)
         elif not _rs:
-            _c[8].markdown(
+            _c[7].markdown(
                 f'<div class="rtbl-status rtbl-unclaimed">'
                 f'{_mi("radio_button_unchecked")}Non pris en charge</div>',
                 unsafe_allow_html=True)
         elif _rs == "in_progress":
-            _c[8].markdown(
+            _c[7].markdown(
                 f'<div class="rtbl-status rtbl-inprogress">'
                 f'{_mi("schedule")}En cours</div>'
                 f'<span class="rtbl-user">{_cb}</span>'
                 f'<span class="rtbl-ts">{fmt_dt(_rts)}</span>',
                 unsafe_allow_html=True)
         elif _rs == "done":
-            _c[8].markdown(
+            _c[7].markdown(
                 f'<div class="rtbl-status rtbl-done">'
                 f'{_mi("check_circle")}Traité</div>'
                 f'<span class="rtbl-user">{_cb}</span>'
                 f'<span class="rtbl-ts">{fmt_dt(_rts)}</span>',
                 unsafe_allow_html=True)
 
-        # col 9: action buttons
-        with _c[9]:
+        # col 8: action buttons
+        with _c[8]:
             if not _done:
                 pass
             elif not _rs:
@@ -232,8 +228,8 @@ def render_run_table(db: PipelineDB) -> None:
                     }
                     st.rerun()
 
-        # col 10: navigate to publications filtered by this run
-        with _c[10]:
+        # col 9: navigate to publications filtered by this run
+        with _c[9]:
             if st.button("", icon=":material/visibility:",
                          key=f"pubs_{_rid}", use_container_width=True,
                          help="Voir les publications"):

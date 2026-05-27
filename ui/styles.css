@@ -1063,11 +1063,16 @@ hr.rtbl-sep {
     margin-top: 2px;
     white-space: nowrap;
 }
-.rtbl-count {
+.rtbl-count-chip {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    background: #DCFCE7;
+    color: #15803D;
+    font-size: 0.71rem;
+    font-weight: 600;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: #475569;
+    letter-spacing: .02em;
 }
 .rtbl-user {
     font-size: 10px;
