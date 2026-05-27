@@ -743,7 +743,7 @@ class PipelineDB:
     # ── read — dashboard ─────────────────────────────────────────────────
 
     def _run_filters(self, status=None, date_from=None, date_to=None,
-                     search=None, review_status=None):
+                     search=None, review_status=None, claimed_by=None):
         filters, params = [], []
         if search:
             filters.append("LOWER(run_id) LIKE ?")
@@ -769,23 +769,34 @@ class PipelineDB:
                 parts.append(f"review_status IN ({ph})")
                 params.extend(non_null)
             filters.append(f"({' OR '.join(parts)})")
+        if claimed_by:
+            ph = ", ".join("?" * len(claimed_by))
+            filters.append(f"claimed_by IN ({ph})")
+            params.extend(claimed_by)
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         return where, params
 
+    def get_distinct_claimers(self) -> list[str]:
+        df = self._query(
+            "SELECT DISTINCT claimed_by FROM runs"
+            " WHERE claimed_by IS NOT NULL ORDER BY claimed_by")
+        return df["claimed_by"].tolist() if not df.empty else []
+
     def count_runs(self, status=None, date_from=None, date_to=None,
-                   search=None, review_status=None) -> int:
+                   search=None, review_status=None, claimed_by=None) -> int:
         where, params = self._run_filters(
             status=status, date_from=date_from, date_to=date_to,
-            search=search, review_status=review_status)
+            search=search, review_status=review_status, claimed_by=claimed_by)
         r = self._query_one(
             f"SELECT COUNT(*) FROM runs {where}", params or None)
         return int(r[0]) if r and r[0] else 0
 
     def get_runs(self, status=None, date_from=None, date_to=None,
-                 search=None, review_status=None, limit=20, offset=0) -> pd.DataFrame:
+                 search=None, review_status=None, claimed_by=None,
+                 limit=20, offset=0) -> pd.DataFrame:
         where, params = self._run_filters(
             status=status, date_from=date_from, date_to=date_to,
-            search=search, review_status=review_status)
+            search=search, review_status=review_status, claimed_by=claimed_by)
         params += [limit, offset]
         return self._query(
             f"SELECT run_id, started_at, ended_at,"

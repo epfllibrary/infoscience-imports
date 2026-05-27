@@ -68,14 +68,21 @@ def render_run_table(db: PipelineDB) -> None:
                 "Suivi", _REVIEW_STATUS_OPTIONS,
                 format_func=lambda v: _REVIEW_STATUS_LABELS[v],
                 key="rf_review_status")
-        _fs1, _fs2 = st.columns([3, 1])
+        _fs1, _fs2, _fs3 = st.columns([2, 1, 1])
         with _fs1:
             st.text_input("Nom du run", placeholder="20250527…", key="rf_search")
         with _fs2:
+            _claimer_opts = ["__me__"] + db.get_distinct_claimers()
+            st.multiselect(
+                "Traité par",
+                _claimer_opts,
+                format_func=lambda v: "Mes runs" if v == "__me__" else v,
+                key="rf_claimed_by")
+        with _fs3:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Réinitialiser", key="rf_reset", use_container_width=True):
                 for _k in ("rf_date_from", "rf_date_to", "rf_status",
-                           "rf_review_status", "rf_search"):
+                           "rf_review_status", "rf_search", "rf_claimed_by"):
                     st.session_state.pop(_k, None)
                 st.session_state["run_page"] = 1
                 st.rerun()
@@ -85,10 +92,16 @@ def render_run_table(db: PipelineDB) -> None:
     _status        = st.session_state.get("rf_status") or None
     _review_status = st.session_state.get("rf_review_status") or None
     _search        = st.session_state.get("rf_search") or None
+    _claimed_by_raw = st.session_state.get("rf_claimed_by") or None
+    _claimed_by = (
+        [_username if v == "__me__" else v for v in _claimed_by_raw]
+        if _claimed_by_raw else None
+    )
 
     _filter_sig = (
         _date_from, _date_to,
-        tuple(_status or []), tuple(_review_status or []), _search or "",
+        tuple(_status or []), tuple(_review_status or []),
+        _search or "", tuple(_claimed_by_raw or []),
     )
     if st.session_state.get("_run_filter_sig") != _filter_sig:
         st.session_state["_run_filter_sig"] = _filter_sig
@@ -97,7 +110,7 @@ def render_run_table(db: PipelineDB) -> None:
     # ── Pagination ────────────────────────────────────────────────────────────
     _total = db.count_runs(
         status=_status, date_from=_date_from, date_to=_date_to,
-        search=_search, review_status=_review_status)
+        search=_search, review_status=_review_status, claimed_by=_claimed_by)
 
     _pc1, _pc2, _pc3 = st.columns([2, 2, 5])
     with _pc1:
@@ -114,7 +127,7 @@ def render_run_table(db: PipelineDB) -> None:
     _offset  = (_page_num - 1) * _page_size
     _runs_df = db.get_runs(
         status=_status, date_from=_date_from, date_to=_date_to,
-        search=_search, review_status=_review_status,
+        search=_search, review_status=_review_status, claimed_by=_claimed_by,
         limit=_page_size, offset=_offset)
 
     if _runs_df.empty:
