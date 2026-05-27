@@ -15,6 +15,7 @@ import json
 import logging
 import math
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -490,10 +491,14 @@ class PipelineDB:
     # ── run lifecycle ────────────────────────────────────────────────────
 
     def start_run(self, run_id, window_start, window_end, sources, dry_run=False):
+        try:
+            started_at = datetime.strptime(run_id[:19], "%Y-%m-%d_%H-%M-%S")
+        except (ValueError, TypeError):
+            started_at = datetime.now()
         self._exec(
             "INSERT INTO runs (run_id,started_at,window_start,window_end,sources,dry_run,status)"
-            " VALUES (?,NOW(),?,?,?,?,'running')",
-            [run_id, window_start, window_end, ",".join(sources), dry_run])
+            " VALUES (?,?,?,?,?,?,'running')",
+            [run_id, started_at, window_start, window_end, ",".join(sources), dry_run])
 
     def finish_run(self, run_id, status="completed"):
         self._exec("UPDATE runs SET ended_at=NOW(), status=? WHERE run_id=?",
