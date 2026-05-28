@@ -914,7 +914,9 @@ class PipelineDB:
 
     _INFOSCIENCE_TERMINAL = frozenset({"published", "withdrawn", "deleted", "rejected"})
 
-    def get_pending_status_checks(self, months: int = 3) -> pd.DataFrame:
+    def get_pending_status_checks(
+        self, months: int = 3, run_id: "str | None" = None
+    ) -> pd.DataFrame:
         """Return workspace/workflow items eligible for an Infoscience status check.
 
         Eligibility:
@@ -923,6 +925,8 @@ class PipelineDB:
           - imported within the last ``months`` months
           - infoscience_status IS NULL OR infoscience_status = 'still_pending'
         """
+        run_filter = " AND rp.run_id = ?" if run_id else ""
+        params: list = [months] + ([run_id] if run_id else [])
         return self._query(
             "SELECT rp.run_id, rp.pub_id, rp.row_id,"
             "  rp.dspace_item_uuid, rp.workspace_id, rp.workflow_id,"
@@ -936,8 +940,9 @@ class PipelineDB:
             "   AND rp.loaded_at >= NOW() - INTERVAL (?) MONTH"
             "   AND (rp.infoscience_status IS NULL"
             "        OR rp.infoscience_status = 'still_pending')"
+            + run_filter +
             " ORDER BY rp.loaded_at DESC",
-            [months],
+            params,
         )
 
     def update_infoscience_status(

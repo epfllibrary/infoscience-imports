@@ -22,12 +22,17 @@ from pathlib import Path
 logger = logging.getLogger("pipeline.infoscience_sync")
 
 
-def run_sync(db_path: "str | Path | None" = None, months: int = 3) -> dict:
+def run_sync(
+    db_path: "str | Path | None" = None,
+    months: int = 3,
+    run_id: "str | None" = None,
+) -> dict:
     """Check and update Infoscience statuses for eligible imported items.
 
     Args:
         db_path: Path to the DuckDB database. Defaults to the active environment DB.
         months:  Only check items imported within the last N months.
+        run_id:  Restrict the sync to a single run (optional).
 
     Returns:
         dict with keys: checked, updated, errors, skipped
@@ -36,7 +41,7 @@ def run_sync(db_path: "str | Path | None" = None, months: int = 3) -> dict:
     from clients.dspace_client_wrapper import DSpaceClientWrapper
 
     db = PipelineDB(db_path)
-    pending = db.get_pending_status_checks(months=months)
+    pending = db.get_pending_status_checks(months=months, run_id=run_id)
 
     summary = {"checked": 0, "updated": 0, "errors": 0, "skipped": 0}
 

@@ -17,6 +17,7 @@ import math
 import pandas as pd
 import streamlit as st
 
+from data_pipeline.infoscience_status_sync import run_sync as _infoscience_sync
 from db.pipeline_db import PipelineDB
 from ui.auth import current_user
 from ui.constants import RUN_STATUSES, SOURCES
@@ -52,6 +53,15 @@ def render_run_table(db: PipelineDB) -> None:
         PipelineDB(db.db_path).set_run_review_status(
             _action["run_id"], _action["to_status"], _username, _role
         )
+
+    _sync_run_id = st.session_state.pop("_run_pending_sync", None)
+    if _sync_run_id:
+        with st.spinner(f"Synchronisation Infoscience pour {_sync_run_id}…"):
+            _res = _infoscience_sync(db_path=db.db_path, run_id=_sync_run_id)
+        _parts = [f"{_res['updated']} mis à jour", f"{_res['checked']} vérifiés"]
+        if _res["errors"]:
+            _parts.append(f"{_res['errors']} erreurs")
+        st.toast(", ".join(_parts) + ".", icon="✅" if not _res["errors"] else "⚠️")
 
     # ── Filters ───────────────────────────────────────────────────────────────
     with st.expander("Filtres", icon=":material/search:", expanded=False):
@@ -251,6 +261,11 @@ def render_run_table(db: PipelineDB) -> None:
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": "in_progress",
                     }
+                    st.rerun()
+                if st.button("", icon=":material/sync:",
+                             key=f"sync_{_rid}", use_container_width=True,
+                             help="Synchroniser les statuts Infoscience"):
+                    st.session_state["_run_pending_sync"] = _rid
                     st.rerun()
 
         # col 9: navigate to publications filtered by this run
