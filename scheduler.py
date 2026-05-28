@@ -68,8 +68,10 @@ def _write_json(data: dict) -> None:
     """Atomically write the full schedules.json, preserving all top-level keys."""
     SCHEDULES_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data, indent=2, ensure_ascii=False)
-    tmp = Path(tempfile.mktemp(dir=SCHEDULES_FILE.parent, suffix=".tmp"))
+    fd, tmp_path = tempfile.mkstemp(dir=SCHEDULES_FILE.parent, suffix=".tmp")
+    tmp = Path(tmp_path)
     try:
+        os.close(fd)
         tmp.write_text(payload, encoding="utf-8")
         tmp.replace(SCHEDULES_FILE)
     except Exception:

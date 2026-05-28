@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import uuid
@@ -145,9 +146,15 @@ def _save(path: Path, schedules: list[dict]) -> None:
         except Exception:
             pass
     existing["schedules"] = schedules
-    tmp = Path(tempfile.mktemp(dir=path.parent, suffix=".tmp"))
-    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    tmp = Path(tmp_path)
+    try:
+        os.close(fd)
+        tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _load_system_jobs(path: Path) -> dict:
@@ -167,9 +174,15 @@ def _save_system_job(path: Path, key: str, updates: dict) -> None:
         except Exception:
             pass
     existing.setdefault("system_jobs", {}).setdefault(key, {}).update(updates)
-    tmp = Path(tempfile.mktemp(dir=path.parent, suffix=".tmp"))
-    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    tmp = Path(tmp_path)
+    try:
+        os.close(fd)
+        tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _next_run_str(cron_expr: str) -> str:
