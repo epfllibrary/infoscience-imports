@@ -58,17 +58,20 @@ ROLE_PAGES: dict[str, list[str]] = {
         "Publications",
         "Statistiques",
         "Configuration",
+        "Aide",
     ],
     "curator": [
         "Tableau de bord",
         "Lancer un run",
         "Publications",
         "Statistiques",
+        "Aide",
     ],
     "reporting": [
         "Tableau de bord",
         "Publications",
         "Statistiques",
+        "Aide",
     ],
 }
 

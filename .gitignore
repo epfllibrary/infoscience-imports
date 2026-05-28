@@ -40,3 +40,4 @@ test.csv
 **/.env**
 **/config.ini
 .streamlit/auth.yaml
+docs/documentation.local.md

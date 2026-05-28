@@ -82,6 +82,7 @@ _NAV_ICONS = {
     "Publications":    "article",
     "Statistiques":    "bar_chart",
     "Configuration":   "settings",
+    "Aide":            "menu_book",
 }
 
 with st.sidebar:
@@ -196,3 +197,7 @@ elif page == "Statistiques":
 elif page == "Configuration":
     from ui.pages.configuration import render
     render(db, active_env=ACTIVE_ENV)
+
+elif page == "Aide":
+    from ui.pages.help import render
+    render(root=ROOT)
