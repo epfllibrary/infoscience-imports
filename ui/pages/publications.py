@@ -33,6 +33,7 @@ def render(db: PipelineDB, role: str = "reporting") -> None:
     """Render the publications page — filterable paginated table with download buttons."""
     if "_jump_to_run" in st.session_state:
         st.session_state["pf_run"] = [st.session_state.pop("_jump_to_run")]
+        st.session_state["pf_status"] = ["workspace", "workflow"]
         st.session_state["pub_page"] = 1
         st.session_state.pop("_pub_filter_sig", None)
 
