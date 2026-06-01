@@ -22,24 +22,6 @@ if ! "$PYTHON" -c "import streamlit" 2>/dev/null; then
     exit 1
 fi
 
-if ! "$PYTHON" -c "import apscheduler" 2>/dev/null; then
-    echo "❌ APScheduler non trouvé. Installez les dépendances :"
-    echo "   pip install -r requirements.txt"
-    exit 1
-fi
-
-# ── Démarrer le scheduler en arrière-plan ────────────────────────────────────
-"$PYTHON" scheduler.py &
-SCHEDULER_PID=$!
-echo "⏰ Scheduler démarré (PID $SCHEDULER_PID)"
-
-# Arrêter le scheduler proprement à la sortie du script (Ctrl-C ou fin Streamlit)
-cleanup() {
-    echo "⏹  Arrêt du scheduler (PID $SCHEDULER_PID)…"
-    kill "$SCHEDULER_PID" 2>/dev/null || true
-}
-trap cleanup EXIT
-
 # ── Démarrer Streamlit ────────────────────────────────────────────────────────
 echo "🚀 Démarrage de l'interface sur http://localhost:$PORT"
 "$PYTHON" -m streamlit run app.py \
