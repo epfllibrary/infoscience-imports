@@ -107,7 +107,19 @@ def _type_badge(dc_type) -> str:
     return f'<span class="ptbl-type" title="{dc_type}">{lbl}</span>'
 
 
-def _action_links(row: dict) -> str:
+def _action_links(row: dict, ds_base: str = "") -> str:
+    ifs = _s(row.get("infoscience_status")).lower()
+    if ifs == "published":
+        handle = row.get("infoscience_handle")
+        if _nn(handle) and ds_base:
+            href = f"{ds_base}/handle/{handle}"
+            return (
+                '<div class="ptbl-actions">'
+                f'<a href="{href}" target="_blank" class="ptbl-act ptbl-act-public">Public</a>'
+                "</div>"
+            )
+        return '<span style="color:#D0D5DD;font-size:11px">—</span>'
+
     parts = []
     for col, lbl, css in [
         ("item_url", "View",  "ptbl-act-view"),
@@ -436,7 +448,7 @@ def render_pub_component(
             rc = st.columns(widths)
 
             # col 0 — action links (HTML only, no Streamlit widget)
-            rc[0].markdown(_action_links(row), unsafe_allow_html=True)
+            rc[0].markdown(_action_links(row, ds_base), unsafe_allow_html=True)
 
             # col 1 — rich content block (carries row class for :has() CSS)
             rc[1].markdown(
@@ -468,7 +480,7 @@ def render_pub_component(
                         ds_base,
                     )
 
-            # col 5 — delete (admin only)
+            # col 5 — delete (admin only, disabled once published)
             if role == "admin":
                 ws_id: str | None = None
                 if _nn(ws_raw):
@@ -477,9 +489,10 @@ def render_pub_component(
                     except (ValueError, TypeError):
                         ws_id = _s(ws_raw) or None
 
+                _is_published = _s(row.get("infoscience_status")).lower() == "published"
                 if rc[5].button("", icon=":material/delete:", key=f"del_{idx}",
                                  use_container_width=True, help="Supprimer",
-                                 disabled=not ws_id):
+                                 disabled=not ws_id or _is_published):
                     if ws_id:
                         wf_id: str | None = None
                         if _nn(wf_raw):

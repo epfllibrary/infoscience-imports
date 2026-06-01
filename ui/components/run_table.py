@@ -17,11 +17,15 @@ import math
 import pandas as pd
 import streamlit as st
 
+import os
+
 from data_pipeline.infoscience_status_sync import run_sync as _infoscience_sync
 from db.pipeline_db import PipelineDB
 from ui.auth import current_user
 from ui.constants import RUN_STATUSES, SOURCES
 from ui.helpers import badge, fmt_dt, fmt_dur
+_DS_BASE_URL = os.environ.get("DS_API_ENDPOINT", "").split("/server")[0]
+
 _REVIEW_STATUS_OPTIONS = ["unclaimed", "in_progress", "done"]
 _REVIEW_STATUS_LABELS  = {
     "unclaimed":   "Non traité",
@@ -183,8 +187,16 @@ def render_run_table(db: PipelineDB) -> None:
         _imported  = int(_row.get("imported_count")  or 0)
         _published = int(_row.get("published_count") or 0)
         _synced    = int(_row.get("synced_count")    or 0)
+        _pub_handle = None if pd.isna(_row.get("published_handle") or None) else _row.get("published_handle")
         if _synced > 0 and _imported > 0:
-            _col6_html = f'<span class="rtbl-published-chip">{_published}/{_imported}</span>'
+            if _published == 1 and _pub_handle and _DS_BASE_URL:
+                _href = f"{_DS_BASE_URL}/handle/{_pub_handle}"
+                _col6_html = (
+                    f'<a href="{_href}" target="_blank" class="rtbl-published-chip rtbl-published-link">'
+                    f'{_published}/{_imported}</a>'
+                )
+            else:
+                _col6_html = f'<span class="rtbl-published-chip">{_published}/{_imported}</span>'
         elif _imported:
             _col6_html = f'<span class="rtbl-count-chip">{_imported}</span>'
         else:

@@ -828,6 +828,11 @@ class PipelineDB:
             f" (SELECT COUNT(*) FROM run_publications rp"
             f"  WHERE rp.run_id = runs.run_id"
             f"  AND rp.infoscience_status IS NOT NULL) AS synced_count,"
+            f" (SELECT infoscience_handle FROM run_publications rp"
+            f"  WHERE rp.run_id = runs.run_id"
+            f"  AND rp.infoscience_status = 'published'"
+            f"  AND rp.infoscience_handle IS NOT NULL"
+            f"  LIMIT 1) AS published_handle,"
             f" claimed_by, claimed_at, review_status, review_updated_at"
             f" FROM runs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
             params)
