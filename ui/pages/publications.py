@@ -328,7 +328,7 @@ def _enrich_dataframe(pub_df: pd.DataFrame, db: PipelineDB, sel_run: list, ds_ba
     )
     d["wf_url"] = d.apply(
         lambda r: (
-            f"{ds_base}/mydspace?configuration=workflow&spc.page=1&query={r['dspace_item_uuid']}"
+            f"{ds_base}/mydspace?configuration=workflow&spc.page=1&query=Item-{r['dspace_item_uuid']}"
             if pd.notna(r.get("workflow_id")) and r.get("workflow_id") != ""
             and pd.notna(r.get("dspace_item_uuid")) and r.get("dspace_item_uuid") != ""
             else None
