@@ -99,6 +99,19 @@ def _infoscience_badge(status) -> str:
     return f'<span class="ifs-badge {css}">{label}</span>'
 
 
+def _quality_badges(row: dict) -> str:
+    if _s(row.get("infoscience_status")).lower() != "published":
+        return ""
+    if row.get("quality_checked_at") is None:
+        return ""
+    parts = []
+    if row.get("quality_abstract_ok") is False:
+        parts.append('<span class="pub-quality-warn" title="Résumé absent dans Infoscience">⚑ résumé</span>')
+    if row.get("quality_pdf_ok") is False:
+        parts.append('<span class="pub-quality-warn" title="PDF OA non trouvé dans Infoscience">⚑ PDF OA</span>')
+    return "".join(parts)
+
+
 def _type_badge(dc_type) -> str:
     if not _nn(dc_type):
         return ""
@@ -147,6 +160,7 @@ def _main_content(row: dict, title: str, has_run: bool, idx: int) -> str:
         f'{_status_badge(row.get("status"))}'
         f'{_type_badge(row.get("dc_type"))}'
         f'{_infoscience_badge(row.get("infoscience_status"))}'
+        f'{_quality_badges(row)}'
     )
     if _has_no_abstract(row):
         meta += '<span class="ms ptbl-no-abst ptbl-no-abst--missing" title="Résumé manquant">hide_source</span>'

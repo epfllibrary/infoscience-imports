@@ -184,10 +184,13 @@ def render_run_table(db: PipelineDB) -> None:
         )
 
         # col 6: imported count until first sync, then published/imported ratio
+        # + quality warning chips when quality issues are detected
         _imported  = int(_row.get("imported_count")  or 0)
         _published = int(_row.get("published_count") or 0)
         _synced    = int(_row.get("synced_count")    or 0)
         _pub_handle = None if pd.isna(_row.get("published_handle") or None) else _row.get("published_handle")
+        _no_abstract = int(_row.get("quality_no_abstract_count") or 0)
+        _no_pdf      = int(_row.get("quality_no_pdf_count")      or 0)
         if _synced > 0 and _imported > 0:
             if _published == 1 and _pub_handle and _DS_BASE_URL:
                 _href = f"{_DS_BASE_URL}/handle/{_pub_handle}"
@@ -201,7 +204,22 @@ def render_run_table(db: PipelineDB) -> None:
             _col6_html = f'<span class="rtbl-count-chip">{_imported}</span>'
         else:
             _col6_html = "—"
-        _c[6].markdown(f'<div class="rtbl-cell">{_col6_html}</div>', unsafe_allow_html=True)
+        _quality_html = ""
+        if _no_abstract:
+            _quality_html += (
+                f'<span class="pub-quality-warn" title="Notices publiées sans résumé">'
+                f'⚑ {_no_abstract} résumé{"s" if _no_abstract > 1 else ""}</span>'
+            )
+        if _no_pdf:
+            _quality_html += (
+                f'<span class="pub-quality-warn" title="Notices publiées sans PDF OA">'
+                f'⚑ {_no_pdf} PDF OA</span>'
+            )
+        _c[6].markdown(
+            f'<div class="rtbl-cell">{_col6_html}'
+            f'{"<br>" + _quality_html if _quality_html else ""}</div>',
+            unsafe_allow_html=True,
+        )
 
         # DuckDB 1.5+ returns str dtype for mixed NULL/string columns;
         # NULL rows come back as float NaN (truthy) instead of None.

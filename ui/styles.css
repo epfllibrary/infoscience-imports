@@ -700,9 +700,10 @@ hr.ptbl-sep {
     box-shadow: 0 2px 6px rgba(0,0,0,.08);
     text-decoration: none !important;
 }
-.ptbl-act-view  { background: #F0FDF4; color: #15803D !important; border-color: #86EFAC; }
-.ptbl-act-edit  { background: #FEFCE8; color: #854D0E !important; border-color: #FDE68A; }
-.ptbl-act-claim { background: #F5F3FF; color: #6D28D9 !important; border-color: #C4B5FD; }
+.ptbl-act-view   { background: #F0FDF4; color: #15803D !important; border-color: #86EFAC; }
+.ptbl-act-edit   { background: #FEFCE8; color: #854D0E !important; border-color: #FDE68A; }
+.ptbl-act-claim  { background: #F5F3FF; color: #6D28D9 !important; border-color: #C4B5FD; }
+.ptbl-act-public { background: #EEF2FF; color: #3730A3 !important; border-color: #C7D2FE; }
 
 /* ── DOI ── */
 .ptbl-doi {
@@ -1087,6 +1088,14 @@ hr.rtbl-sep {
     border: 1px solid #C7D2FE;
     margin-top: 3px;
 }
+a.rtbl-published-link {
+    text-decoration: none;
+    cursor: pointer;
+}
+a.rtbl-published-link:hover {
+    background: #C7D2FE;
+    border-color: #818CF8;
+}
 .rtbl-user {
     font-size: 10px;
     color: #94A3B8;
@@ -1161,6 +1170,23 @@ hr.rtbl-sep {
 .ifs-st-deleted    { background: #FEE2E2; color: #991B1B; }
 .ifs-st-rejected   { background: #FEE2E2; color: #991B1B; }
 .ifs-st-pending    { background: #F1F5F9; color: #475569; }
+
+/* ── Publication quality warning chips (published items only) ── */
+.pub-quality-warn {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 0.63rem;
+    font-weight: 600;
+    letter-spacing: .02em;
+    vertical-align: middle;
+    white-space: nowrap;
+    background: #FEF3C7;
+    color: #92400E;
+    border: 1px solid #FDE68A;
+    margin-left: 3px;
+}
 
 /* ── Runs section card ── */
 .runs-card-anchor { display: none; }

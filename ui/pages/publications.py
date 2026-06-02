@@ -20,7 +20,7 @@ _FILTER_DEFAULTS: dict[str, object] = {
     "pf_unit": [], "pf_sciper": "", "pf_search": "",
     "pf_oa": "Tous", "pf_pdf": "Tous", "pf_licence": [], "pf_epfl": "Tous",
     "pf_dedup_note": "Tous", "pf_no_abstract": "Tous",
-    "pf_infoscience_status": [],
+    "pf_infoscience_status": [], "pf_quality": "Tous",
 }
 
 _STATUS_LABELS: dict[str, str] = {
@@ -90,7 +90,7 @@ def _render_filters(db: PipelineDB) -> None:
                 help="Filtre sur la licence Unpaywall.", key="pf_licence",
             )
 
-        cf4, cf5, cf6, cf7 = st.columns([3, 3, 3, 1])
+        cf4, cf5, cf6, cf6b, cf7 = st.columns([3, 3, 3, 3, 1])
         with cf4:
             st.selectbox(
                 "Statut auteurs EPFL",
@@ -115,6 +115,18 @@ def _render_filters(db: PipelineDB) -> None:
             st.selectbox(
                 "Résumé", ["Tous", "Sans résumé"],
                 help="Afficher uniquement les publications sans abstract.", key="pf_no_abstract",
+            )
+        with cf6b:
+            st.selectbox(
+                "Qualité (publiés)",
+                ["Tous", "Sans résumé publié", "Sans PDF OA publié"],
+                help=(
+                    "Filtre sur les contrôles qualité des notices publiées dans Infoscience.\n"
+                    "'Sans résumé publié' : abstract absent dans la notice DSpace.\n"
+                    "'Sans PDF OA publié' : PDF OA non trouvé dans le bundle ORIGINAL "
+                    "(uniquement pour les notices avec licence CC à l'import)."
+                ),
+                key="pf_quality",
             )
         with cf7:
             st.markdown("<div style='padding-top:24px'>", unsafe_allow_html=True)
@@ -151,6 +163,7 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
     sel_dedup_note        = st.session_state.get("pf_dedup_note", "Tous")
     no_abstract           = st.session_state.get("pf_no_abstract", "Tous") == "Sans résumé"
     sel_infoscience_status = st.session_state.get("pf_infoscience_status", [])
+    sel_quality           = st.session_state.get("pf_quality", "Tous")
 
     resolved_sciper = _resolve_sciper(db, sciper_q)
 
@@ -184,6 +197,12 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
         ),
         no_abstract        = no_abstract,
         infoscience_status = ifs_filter,
+        quality_filter     = (
+            None          if sel_quality == "Tous"               else
+            "no_abstract" if sel_quality == "Sans résumé publié" else
+            "no_pdf"      if sel_quality == "Sans PDF OA publié" else
+            None
+        ),
     ), sel_run
 
 

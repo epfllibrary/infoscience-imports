@@ -649,27 +649,99 @@ class DSpaceClientWrapper:
             self.logger.warning("Could not parse workspace id from response: %s", exc)
         return None
 
+    @staticmethod
+    def _extract_item_quality(data: dict) -> dict:
+        """Extract quality indicators from a fully-embedded DSpace item response.
+
+        Checks performed:
+          abstract_ok — dc.description.abstract present and non-empty.
+          pdf_ok      — at least one bitstream in the ORIGINAL bundle has
+                        dc.type = "main document" with an openaccess resource
+                        policy (falls back to True if policy embed is absent).
+        """
+        meta = data.get("metadata") or {}
+        abstract_ok = any(
+            str(v.get("value", "")).strip()
+            for v in meta.get("dc.description.abstract", [])
+            if isinstance(v, dict)
+        )
+
+        pdf_ok = False
+        for bundle in (
+            data.get("_embedded", {})
+                .get("bundles", {})
+                .get("_embedded", {})
+                .get("bundles", [])
+        ):
+            if bundle.get("name") != "ORIGINAL":
+                continue
+            for bs in (
+                bundle.get("_embedded", {})
+                      .get("bitstreams", {})
+                      .get("_embedded", {})
+                      .get("bitstreams", [])
+            ):
+                bs_meta = bs.get("metadata") or {}
+                is_main = any(
+                    "main document" in str(v.get("value", "")).lower()
+                    for v in bs_meta.get("dc.type", [])
+                    if isinstance(v, dict)
+                )
+                if not is_main:
+                    continue
+                # Verify openaccess resource policy when embedded; trust main
+                # document type alone if the embed is not supported.
+                policies = (
+                    bs.get("_embedded", {})
+                      .get("accessConditions", {})
+                      .get("_embedded", {})
+                      .get("resourcepolicies", [])
+                )
+                is_open = (
+                    any(
+                        str(p.get("name", "")).lower() == "openaccess"
+                        for p in policies if isinstance(p, dict)
+                    )
+                    if policies else True
+                )
+                if is_open:
+                    pdf_ok = True
+                    break
+            if pdf_ok:
+                break
+
+        return {"abstract_ok": abstract_ok, "pdf_ok": pdf_ok}
+
     def check_item_infoscience_status(
         self,
         dspace_item_uuid: "str | None",
         workspace_id: "str | None",
         workflow_id: "str | None",
-    ) -> "tuple[str, str | None]":
+        check_quality: bool = False,
+    ) -> "tuple[str, str | None, dict | None]":
         """Check the current Infoscience status of a previously imported item.
 
-        Returns (status, handle) where status is one of:
-          'published'     — item is in archive (inArchive=True)
-          'withdrawn'     — item has been withdrawn
-          'deleted'       — item no longer exists anywhere
-          'rejected'      — workspace item has epfl.workflow.rejected=true
-          'still_pending' — item exists but is not yet published
+        Returns (status, handle, quality) where:
+          status  — one of: 'published', 'withdrawn', 'deleted', 'rejected',
+                    'still_pending'
+          handle  — Infoscience handle (e.g. "20.500.14299/12345") when
+                    status='published', None otherwise
+          quality — dict {"abstract_ok": bool, "pdf_ok": bool} when
+                    status='published' and check_quality=True, None otherwise
 
-        handle is the Infoscience handle string (e.g. "20.500.14299/12345") when
-        status='published', None otherwise.
+        When check_quality=True the published-item call embeds bundles and
+        bitstreams so that status, abstract, and PDF presence are resolved in
+        a single round-trip.
         """
         # Step 1 — try the canonical item endpoint via dspace_item_uuid
         if dspace_item_uuid:
             url = f"{self.client.API_ENDPOINT}/core/items/{dspace_item_uuid}"
+            if check_quality:
+                url += (
+                    "?embed=bundles"
+                    "&embed=bundles/bitstreams"
+                    "&embed=bundles/bitstreams/accessConditions"
+                )
             r = self.client.api_get(url)
             if r.status_code == 200:
                 try:
@@ -678,9 +750,10 @@ class DSpaceClientWrapper:
                     data = {}
                 if data.get("inArchive"):
                     handle = data.get("handle") or None
-                    return "published", handle
+                    quality = self._extract_item_quality(data) if check_quality else None
+                    return "published", handle, quality
                 if data.get("withdrawn"):
-                    return "withdrawn", None
+                    return "withdrawn", None, None
                 # Item exists but is neither published nor withdrawn — could be
                 # still_pending or rejected (workspace). Fall through to the
                 # workspace check to detect the rejection flag.
@@ -692,7 +765,7 @@ class DSpaceClientWrapper:
                     "Unexpected status %s fetching item %s",
                     r.status_code, dspace_item_uuid,
                 )
-                return "still_pending", None
+                return "still_pending", None, None
 
         # Step 2 — resolve the live workspace item.
         # After a workflow rejection DSpace assigns a NEW workspace id, so the
@@ -729,8 +802,8 @@ class DSpaceClientWrapper:
                         str(entry.get("value", "")).lower() == "true"
                         for entry in rejected
                     ):
-                        return "rejected", None
-                    return "still_pending", None
+                        return "rejected", None, None
+                    return "still_pending", None, None
                 elif r.status_code == 404:
                     pass  # workspace item gone — fall through
             except Exception as exc:
@@ -743,17 +816,17 @@ class DSpaceClientWrapper:
                 url = f"{self.client.API_ENDPOINT}/workflow/workflowitems/{wf_int}"
                 r = self.client.api_get(url)
                 if r.status_code == 200:
-                    return "still_pending", None
+                    return "still_pending", None, None
                 # 404 → workflow item gone too
             except Exception as exc:
                 self.logger.warning("Workflow check failed for %s: %s", workflow_id, exc)
 
         # Nothing found — item has been fully deleted or never existed
         if dspace_item_uuid or workspace_id or workflow_id:
-            return "deleted", None
+            return "deleted", None, None
 
         # No identifiers at all — cannot determine status
-        return "still_pending", None
+        return "still_pending", None, None
 
     def search_authority(
         self,

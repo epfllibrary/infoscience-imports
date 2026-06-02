@@ -275,6 +275,9 @@ class PipelineDB:
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS infoscience_status VARCHAR",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS infoscience_checked_at TIMESTAMP",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS infoscience_handle VARCHAR",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_abstract_ok BOOLEAN",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_pdf_ok BOOLEAN",
+                "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_checked_at TIMESTAMP",
             ]:
                 con.execute(_migration)
         finally:
@@ -833,6 +836,12 @@ class PipelineDB:
             f"  AND rp.infoscience_status = 'published'"
             f"  AND rp.infoscience_handle IS NOT NULL"
             f"  LIMIT 1) AS published_handle,"
+            f" (SELECT COUNT(*) FROM run_publications rp"
+            f"  WHERE rp.run_id = runs.run_id"
+            f"  AND rp.quality_abstract_ok = FALSE) AS quality_no_abstract_count,"
+            f" (SELECT COUNT(*) FROM run_publications rp"
+            f"  WHERE rp.run_id = runs.run_id"
+            f"  AND rp.quality_pdf_ok = FALSE) AS quality_no_pdf_count,"
             f" claimed_by, claimed_at, review_status, review_updated_at"
             f" FROM runs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
             params)
@@ -935,7 +944,7 @@ class PipelineDB:
         return self._query(
             "SELECT rp.run_id, rp.pub_id, rp.row_id,"
             "  rp.dspace_item_uuid, rp.workspace_id, rp.workflow_id,"
-            "  p.title, rp.infoscience_status"
+            "  p.title, p.upw_license, rp.infoscience_status"
             " FROM run_publications rp"
             " JOIN publications p ON p.pub_id = rp.pub_id"
             " JOIN runs r ON r.run_id = rp.run_id"
@@ -965,6 +974,23 @@ class PipelineDB:
             "     infoscience_handle = ?"
             " WHERE run_id = ? AND pub_id = ?",
             [status, handle, run_id, pub_id],
+        )
+
+    def update_quality_checks(
+        self,
+        run_id: str,
+        pub_id: str,
+        abstract_ok: bool,
+        pdf_ok: "bool | None",
+    ) -> None:
+        """Store quality snapshot for a newly-published item (written once)."""
+        self._exec(
+            "UPDATE run_publications"
+            " SET quality_abstract_ok = ?,"
+            "     quality_pdf_ok = ?,"
+            "     quality_checked_at = NOW()"
+            " WHERE run_id = ? AND pub_id = ?",
+            [abstract_ok, pdf_ok, run_id, pub_id],
         )
 
     def get_summary_stats(self) -> dict:
@@ -1181,7 +1207,7 @@ class PipelineDB:
     def _pub_filters(self, run_id, status, source, dc_type, sciper, unit_acronym,
                      search, has_pdf=None, oa_filter=None, licence=None,
                      epfl_strength=None, dedup_note=None, no_abstract=False,
-                     infoscience_status=None):
+                     infoscience_status=None, quality_filter=None):
         """Shared filter-building logic for get_publications and count_publications.
 
         run_id, status, source, dc_type, unit_acronym, licence each accept either a
@@ -1293,6 +1319,17 @@ class PipelineDB:
                 cond, vals = self._in_clause("rp.infoscience_status", ifs_list)
                 filters.append(cond); params.extend(vals)
 
+        if quality_filter == "no_abstract":
+            filters.append(
+                "rp.infoscience_status = 'published'"
+                " AND rp.quality_abstract_ok = FALSE"
+            )
+        elif quality_filter == "no_pdf":
+            filters.append(
+                "rp.infoscience_status = 'published'"
+                " AND rp.quality_pdf_ok = FALSE"
+            )
+
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         return join_a, join_u, where, params
 
@@ -1301,12 +1338,13 @@ class PipelineDB:
                            search=None, has_pdf=None, oa_filter=None,
                            licence=None, epfl_strength=None,
                            dedup_note=None, no_abstract=False,
-                           infoscience_status=None) -> int:
+                           infoscience_status=None, quality_filter=None) -> int:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
-            no_abstract=no_abstract, infoscience_status=infoscience_status)
+            no_abstract=no_abstract, infoscience_status=infoscience_status,
+            quality_filter=quality_filter)
         r = self._query_one(
             f"SELECT COUNT(*) FROM ("
             f"  SELECT DISTINCT rp.run_id, rp.pub_id, p.doi, p.title,"
@@ -1326,12 +1364,14 @@ class PipelineDB:
                          search=None, has_pdf=None, oa_filter=None,
                          licence=None, epfl_strength=None, dedup_note=None,
                          no_abstract=False, infoscience_status=None,
+                         quality_filter=None,
                          limit=100, offset=0) -> pd.DataFrame:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
-            no_abstract=no_abstract, infoscience_status=infoscience_status)
+            no_abstract=no_abstract, infoscience_status=infoscience_status,
+            quality_filter=quality_filter)
         params += [limit, offset]
         return self._query(
             f"SELECT DISTINCT rp.run_id, rp.row_id, p.doi, p.title,"
@@ -1341,7 +1381,8 @@ class PipelineDB:
             f" p.upw_oa_status, p.upw_license, p.internal_id,"
             f" p.seen_count, p.infoscience_dedup_count, rp.dedup_note, rp.flagged_publication,"
             f" rp.raw_metadata,"
-            f" rp.infoscience_status, rp.infoscience_checked_at, rp.infoscience_handle"
+            f" rp.infoscience_status, rp.infoscience_checked_at, rp.infoscience_handle,"
+            f" rp.quality_abstract_ok, rp.quality_pdf_ok, rp.quality_checked_at"
             f" FROM run_publications rp"
             f" JOIN publications p ON p.pub_id = rp.pub_id"
             f" {join_a} {join_u} {where}"
