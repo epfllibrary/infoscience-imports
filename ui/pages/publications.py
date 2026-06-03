@@ -21,6 +21,7 @@ _FILTER_DEFAULTS: dict[str, object] = {
     "pf_oa": "Tous", "pf_pdf": "Tous", "pf_licence": [], "pf_epfl": "Tous",
     "pf_dedup_note": "Tous", "pf_no_abstract": "Tous",
     "pf_infoscience_status": [], "pf_quality": "Tous",
+    "pf_needs_attention": False,
 }
 
 _STATUS_LABELS: dict[str, str] = {
@@ -51,6 +52,18 @@ def _render_filters(db: PipelineDB) -> None:
         st.session_state["pub_page"] = 1
 
     with st.expander("Filtres", icon=":material/search:", expanded=True):
+        # ── Filtre rapide : publications à traiter ────────────────────────────
+        st.toggle(
+            "Publications à traiter uniquement",
+            key="pf_needs_attention",
+            help=(
+                "Affiche uniquement les publications qui nécessitent une action :\n"
+                "• en workspace ou workflow (non encore publiées dans Infoscience)\n"
+                "• statut « en attente » après synchronisation (still_pending)\n"
+                "• publiées dans Infoscience mais avec un résumé ou un PDF OA absent"
+            ),
+        )
+
         # ── Recherche pleine largeur ──────────────────────────────────────────
         st.text_input(
             "Recherche titre / DOI / ID source",
@@ -202,6 +215,7 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
     no_abstract           = st.session_state.get("pf_no_abstract", "Tous") == "Sans résumé"
     sel_infoscience_status = st.session_state.get("pf_infoscience_status", [])
     sel_quality           = st.session_state.get("pf_quality", "Tous")
+    needs_attention       = bool(st.session_state.get("pf_needs_attention", False))
 
     resolved_sciper = _resolve_sciper(db, sciper_q)
 
@@ -241,6 +255,7 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
             "no_pdf"      if sel_quality == "Sans PDF OA publié" else
             None
         ),
+        needs_attention    = needs_attention,
     ), sel_run
 
 

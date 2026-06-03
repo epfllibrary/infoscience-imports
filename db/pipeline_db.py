@@ -1211,7 +1211,8 @@ class PipelineDB:
     def _pub_filters(self, run_id, status, source, dc_type, sciper, unit_acronym,
                      search, has_pdf=None, oa_filter=None, licence=None,
                      epfl_strength=None, dedup_note=None, no_abstract=False,
-                     infoscience_status=None, quality_filter=None):
+                     infoscience_status=None, quality_filter=None,
+                     needs_attention=False):
         """Shared filter-building logic for get_publications and count_publications.
 
         run_id, status, source, dc_type, unit_acronym, licence each accept either a
@@ -1334,6 +1335,15 @@ class PipelineDB:
                 " AND rp.quality_pdf_ok = FALSE"
             )
 
+        if needs_attention:
+            filters.append(
+                "(rp.status IN ('workspace','workflow')"
+                " OR rp.infoscience_status = 'still_pending'"
+                " OR (rp.infoscience_status = 'published'"
+                "     AND (rp.quality_abstract_ok = FALSE"
+                "          OR rp.quality_pdf_ok = FALSE)))"
+            )
+
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         return join_a, join_u, where, params
 
@@ -1342,13 +1352,14 @@ class PipelineDB:
                            search=None, has_pdf=None, oa_filter=None,
                            licence=None, epfl_strength=None,
                            dedup_note=None, no_abstract=False,
-                           infoscience_status=None, quality_filter=None) -> int:
+                           infoscience_status=None, quality_filter=None,
+                           needs_attention=False) -> int:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
             no_abstract=no_abstract, infoscience_status=infoscience_status,
-            quality_filter=quality_filter)
+            quality_filter=quality_filter, needs_attention=needs_attention)
         r = self._query_one(
             f"SELECT COUNT(*) FROM ("
             f"  SELECT DISTINCT rp.run_id, rp.pub_id, p.doi, p.title,"
@@ -1368,14 +1379,14 @@ class PipelineDB:
                          search=None, has_pdf=None, oa_filter=None,
                          licence=None, epfl_strength=None, dedup_note=None,
                          no_abstract=False, infoscience_status=None,
-                         quality_filter=None,
+                         quality_filter=None, needs_attention=False,
                          limit=100, offset=0) -> pd.DataFrame:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
             no_abstract=no_abstract, infoscience_status=infoscience_status,
-            quality_filter=quality_filter)
+            quality_filter=quality_filter, needs_attention=needs_attention)
         params += [limit, offset]
         return self._query(
             f"SELECT DISTINCT rp.run_id, rp.pub_id, rp.row_id, p.doi, p.title,"
