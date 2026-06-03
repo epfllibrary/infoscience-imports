@@ -35,7 +35,7 @@ _REVIEW_STATUS_LABELS  = {
 _PAGE_SIZE_OPTIONS = [10, 20, 50]
 
 # col layout: Run | Terminé | Durée | Sources | Pipeline | DR | Importés | Suivi | Actions | Voir
-_COLS = [3.0, 1.4, 0.9, 2.0, 1.2, 0.45, 0.8, 1.8, 0.9, 0.7]
+_COLS = [2.6, 1.4, 0.9, 2.0, 1.2, 0.45, 1.2, 1.8, 0.9, 0.7]
 _HEADERS = ["Run", "Terminé", "Durée", "Sources", "Pipeline",
             "DR", "Importés", "Suivi", "Actions", "Voir"]
 
@@ -215,9 +215,12 @@ def render_run_table(db: PipelineDB) -> None:
                 f'<span class="pub-quality-warn" title="Notices publiées sans PDF OA">'
                 f'⚑ {_no_pdf} PDF OA</span>'
             )
+        _quality_block = (
+            f'<div class="rtbl-quality-wrap">{_quality_html}</div>'
+            if _quality_html else ""
+        )
         _c[6].markdown(
-            f'<div class="rtbl-cell">{_col6_html}'
-            f'{"<br>" + _quality_html if _quality_html else ""}</div>',
+            f'<div class="rtbl-cell">{_col6_html}{_quality_block}</div>',
             unsafe_allow_html=True,
         )
 

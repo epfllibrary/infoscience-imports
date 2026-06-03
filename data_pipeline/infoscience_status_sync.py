@@ -1,13 +1,17 @@
 """Infoscience status sync — checks and updates imported item statuses.
 
 Queries the database for workspace/workflow items from completed, reviewed runs
-(collected within the last N months) that have not yet reached a terminal status,
+(collected within the last N months) that require a status or quality re-check,
 then calls the DSpace API item by item to resolve their current state.
 
 Terminal statuses (not rechecked on subsequent runs):
-  published, withdrawn, deleted, rejected
+  withdrawn, deleted, rejected
 
-Non-terminal:
+Conditionally re-checked until the N-month window expires:
+  published — re-checked while quality_abstract_ok=FALSE or quality_pdf_ok=FALSE,
+               so that abstracts or OA PDFs added after publication are detected.
+
+Non-terminal (always rechecked):
   still_pending, NULL (not yet checked)
 
 Returns a summary dict: {checked, updated, errors, skipped}.

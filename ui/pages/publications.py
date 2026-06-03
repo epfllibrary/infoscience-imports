@@ -51,47 +51,60 @@ def _render_filters(db: PipelineDB) -> None:
         st.session_state["pub_page"] = 1
 
     with st.expander("Filtres", icon=":material/search:", expanded=True):
-        c1, c2, c3 = st.columns(3)
-        with c1:
+        # ── Recherche pleine largeur ──────────────────────────────────────────
+        st.text_input(
+            "Recherche titre / DOI / ID source",
+            placeholder="deep learning, 10.1234/…",
+            key="pf_search",
+        )
+
+        # ── Ligne 1 : contexte du run ─────────────────────────────────────────
+        _r1 = st.columns(4)
+        with _r1[0]:
             runs_df = db.get_runs(limit=50)
             run_opts = runs_df["run_id"].tolist() if not runs_df.empty else []
             for _rid in st.session_state.get("pf_run", []):
                 if _rid not in run_opts:
                     run_opts.insert(0, _rid)
             st.multiselect("Run", run_opts, key="pf_run")
-            st.multiselect("Type de document", db.get_distinct_dc_types(), key="pf_type")
-        with c2:
+        with _r1[1]:
+            st.multiselect("Source", db.get_distinct_sources(), key="pf_source")
+        with _r1[2]:
             st.multiselect(
-                "Statut",
+                "Statut Import",
                 ["workflow", "workspace", "deduplicated", "rejected", "error", "deleted"],
                 key="pf_status",
             )
-            st.multiselect("Source", db.get_distinct_sources(), key="pf_source")
-        with c3:
+        with _r1[3]:
+            st.multiselect("Type de document", db.get_distinct_dc_types(), key="pf_type")
+
+        # ── Ligne 2 : périmètre auteurs / OA ─────────────────────────────────
+        _r2 = st.columns(4)
+        with _r2[0]:
             st.multiselect("Unité", db.get_distinct_units(), key="pf_unit")
-            st.text_input("SCIPER ou nom auteur EPFL", placeholder="123456 ou Dupont", key="pf_sciper")
-
-        st.text_input("Recherche titre / DOI / ID source", placeholder="deep learning…", key="pf_search")
-
-        cf1, cf2, cf3 = st.columns(3)
-        with cf1:
+        with _r2[1]:
+            st.text_input(
+                "SCIPER ou nom auteur EPFL", placeholder="123456 ou Dupont", key="pf_sciper",
+            )
+        with _r2[2]:
             st.selectbox(
                 "Statut OA", ["Tous", "OA", "Non-OA", "Non-libre", "Non défini"],
                 help="Filtre sur le statut Open Access (Unpaywall).", key="pf_oa",
             )
-        with cf2:
+        with _r2[3]:
             st.selectbox(
                 "PDF récupéré", ["Tous", "Avec PDF", "Sans PDF"],
                 help="Filtre sur la présence d'un PDF en accès libre.", key="pf_pdf",
             )
-        with cf3:
+
+        # ── Ligne 3 : signaux qualité ─────────────────────────────────────────
+        _r3 = st.columns(4)
+        with _r3[0]:
             st.multiselect(
                 "Licence", db.get_distinct_licences(),
                 help="Filtre sur la licence Unpaywall.", key="pf_licence",
             )
-
-        cf4, cf5, cf6, cf6b, cf7 = st.columns([3, 3, 3, 3, 1])
-        with cf4:
+        with _r3[1]:
             st.selectbox(
                 "Statut auteurs EPFL",
                 ["Tous", "⚠️ Statut faible", "✅ Statut fort"],
@@ -101,7 +114,7 @@ def _render_filters(db: PipelineDB) -> None:
                 ),
                 key="pf_epfl",
             )
-        with cf5:
+        with _r3[2]:
             st.selectbox(
                 "Signalement dedup",
                 ["Tous", "🚩 Flaggés", "supersedes_preprint", "cross_type_doi"],
@@ -111,41 +124,49 @@ def _render_filters(db: PipelineDB) -> None:
                 ),
                 key="pf_dedup_note",
             )
-        with cf6:
+        with _r3[3]:
             st.selectbox(
-                "Résumé", ["Tous", "Sans résumé"],
-                help="Afficher uniquement les publications sans abstract.", key="pf_no_abstract",
+                "Résumé (import)", ["Tous", "Sans résumé"],
+                help="Afficher uniquement les publications sans abstract à l'import.",
+                key="pf_no_abstract",
             )
-        with cf6b:
+
+        # ── Ligne 4 : post-publication + Infoscience + reset ──────────────────
+        _r4 = st.columns([2, 2, 4, 2])
+        with _r4[0]:
             st.selectbox(
                 "Qualité (publiés)",
                 ["Tous", "Sans résumé publié", "Sans PDF OA publié"],
                 help=(
-                    "Filtre sur les contrôles qualité des notices publiées dans Infoscience.\n"
+                    "Contrôles qualité des notices publiées dans Infoscience.\n"
                     "'Sans résumé publié' : abstract absent dans la notice DSpace.\n"
-                    "'Sans PDF OA publié' : PDF OA non trouvé dans le bundle ORIGINAL "
+                    "'Sans PDF OA publié' : PDF OA absent du bundle ORIGINAL "
                     "(uniquement pour les notices avec licence CC à l'import)."
                 ),
                 key="pf_quality",
             )
-        with cf7:
-            st.markdown("<div style='padding-top:24px'>", unsafe_allow_html=True)
-            st.button("Reset", icon=":material/refresh:", on_click=_reset,
-                      use_container_width=True, help="Réinitialiser tous les filtres")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        _ifs_opts = ["__not_checked__"] + INFOSCIENCE_STATUSES
-        st.multiselect(
-            "Statut Infoscience",
-            _ifs_opts,
-            format_func=lambda v: "Non vérifié" if v == "__not_checked__"
-                                  else INFOSCIENCE_STATUS_LABELS.get(v, v),
-            help=(
-                "Filtre sur le statut de suivi post-import dans Infoscience.\n"
-                "'Non vérifié' : le statut n'a pas encore été déterminé."
-            ),
-            key="pf_infoscience_status",
-        )
+        with _r4[1]:
+            _ifs_opts = ["__not_checked__"] + INFOSCIENCE_STATUSES
+            st.multiselect(
+                "Statut Infoscience",
+                _ifs_opts,
+                format_func=lambda v: "Non vérifié" if v == "__not_checked__"
+                                      else INFOSCIENCE_STATUS_LABELS.get(v, v),
+                help=(
+                    "Statut de suivi post-import dans Infoscience.\n"
+                    "'Non vérifié' : statut pas encore déterminé."
+                ),
+                key="pf_infoscience_status",
+            )
+        with _r4[2]:
+            pass
+        with _r4[3]:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.button(
+                "Réinitialiser les filtres", icon=":material/refresh:",
+                on_click=_reset, use_container_width=True,
+                help="Remettre tous les filtres à zéro",
+            )
 
 
 def _build_filter_kwargs(db: PipelineDB) -> dict:

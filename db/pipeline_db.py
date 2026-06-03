@@ -937,7 +937,8 @@ class PipelineDB:
           - run status = 'completed' AND review_status = 'done'
           - rp.status IN ('workflow', 'workspace')
           - imported within the last ``months`` months
-          - infoscience_status IS NULL OR infoscience_status = 'still_pending'
+          - infoscience_status IS NULL, 'still_pending', OR 'published' with
+            unresolved quality issues (abstract_ok=FALSE or pdf_ok=FALSE)
         """
         run_filter = " AND rp.run_id = ?" if run_id else ""
         params: list = [months] + ([run_id] if run_id else [])
@@ -953,7 +954,10 @@ class PipelineDB:
             "   AND r.review_status = 'done'"
             "   AND rp.loaded_at >= NOW() - INTERVAL (?) MONTH"
             "   AND (rp.infoscience_status IS NULL"
-            "        OR rp.infoscience_status = 'still_pending')"
+            "        OR rp.infoscience_status = 'still_pending'"
+            "        OR (rp.infoscience_status = 'published'"
+            "            AND (rp.quality_abstract_ok = FALSE"
+            "                 OR rp.quality_pdf_ok = FALSE)))"
             + run_filter +
             " ORDER BY rp.loaded_at DESC",
             params,
@@ -983,7 +987,7 @@ class PipelineDB:
         abstract_ok: bool,
         pdf_ok: "bool | None",
     ) -> None:
-        """Store quality snapshot for a newly-published item (written once)."""
+        """Store or refresh quality snapshot for a published item."""
         self._exec(
             "UPDATE run_publications"
             " SET quality_abstract_ok = ?,"

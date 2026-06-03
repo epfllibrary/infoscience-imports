@@ -1172,20 +1172,25 @@ a.rtbl-published-link:hover {
 .ifs-st-pending    { background: #F1F5F9; color: #475569; }
 
 /* ── Publication quality warning chips (published items only) ── */
+.rtbl-quality-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
+}
 .pub-quality-warn {
     display: inline-flex;
     align-items: center;
-    padding: 1px 5px;
-    border-radius: 999px;
+    align-self: flex-start;
+    padding: 1px 6px;
+    border-radius: 4px;
     font-size: 0.63rem;
     font-weight: 600;
     letter-spacing: .02em;
-    vertical-align: middle;
     white-space: nowrap;
     background: #FEF3C7;
     color: #92400E;
     border: 1px solid #FDE68A;
-    margin-left: 3px;
 }
 
 /* ── Runs section card ── */
