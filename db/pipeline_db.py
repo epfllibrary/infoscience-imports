@@ -1337,8 +1337,10 @@ class PipelineDB:
 
         if needs_attention:
             filters.append(
-                "(rp.status IN ('workspace','workflow')"
-                " OR rp.infoscience_status = 'still_pending'"
+                "((rp.status IN ('workspace','workflow')"
+                "  AND (rp.infoscience_status IS NULL"
+                "       OR rp.infoscience_status NOT IN"
+                "          ('published','rejected','deleted','withdrawn')))"
                 " OR (rp.infoscience_status = 'published'"
                 "     AND (rp.quality_abstract_ok = FALSE"
                 "          OR rp.quality_pdf_ok = FALSE)))"
