@@ -552,6 +552,13 @@ div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) {
     padding: 8px 0 8px;
     white-space: nowrap;
 }
+.ptbl-hdr-icon {
+    font-size: 15px !important;
+    margin: 0 !important;
+    color: #CBD5E1 !important;
+    vertical-align: middle;
+    cursor: default;
+}
 
 /* ── Row separator ── */
 hr.ptbl-sep {

@@ -418,9 +418,18 @@ def _delete_modal(
 
 # ── Column widths ──────────────────────────────────────────────────────────────
 
-_W_ACT   = 0.9   # action links
-_W_MAIN  = 7.5   # rich content block
-_W_BTN   = 0.38  # each icon button
+_W_ACT   = 0.85  # action links
+_W_MAIN  = 6.8   # rich content block
+_W_BTN   = 0.46  # each icon button
+
+# Header icon for each button column (Material Symbols name → tooltip)
+_BTN_HEADER: dict[str, tuple[str, str]] = {
+    "Meta":    ("description", "Métadonnées"),
+    "Aut.":    ("people",      "Auteurs EPFL"),
+    "Signal.": ("flag",        "Doublon Infoscience"),
+    "Sync":    ("sync",        "Synchroniser avec Infoscience"),
+    "Suppr.":  ("delete",      "Supprimer"),
+}
 
 
 # ── Public rendering function ─────────────────────────────────────────────────
@@ -434,18 +443,31 @@ def render_pub_component(
     db=None,
 ) -> None:
     """Render publications as compact native Streamlit rows with per-row dialogs."""
-    has_run = "run_id" in cols
-    n_btns  = 4 if role == "admin" else 3
-    widths  = [_W_ACT, _W_MAIN] + [_W_BTN] * n_btns
+    has_run    = "run_id" in cols
+    can_sync   = role != "reporting"
+    can_delete = role == "admin"
+    n_btns     = 3 + int(can_sync) + int(can_delete)
+    widths     = [_W_ACT, _W_MAIN] + [_W_BTN] * n_btns
+
+    _sync_col = 5
+    _del_col  = 5 + int(can_sync)
 
     with st.container(border=True):
         # ── Header ────────────────────────────────────────────────────────────
         hdr = st.columns(widths)
         hdr[0].markdown('<div class="ptbl-hdr">Actions</div>', unsafe_allow_html=True)
         hdr[1].markdown('<div class="ptbl-hdr">Publication</div>', unsafe_allow_html=True)
-        for i, lbl in enumerate(["Meta", "Aut.", "Signal."] + (["Suppr."] if role == "admin" else [])):
+        btn_labels = ["Meta", "Aut.", "Signal."]
+        if can_sync:
+            btn_labels.append("Sync")
+        if can_delete:
+            btn_labels.append("Suppr.")
+        for i, lbl in enumerate(btn_labels):
+            icon, tooltip = _BTN_HEADER.get(lbl, (lbl, lbl))
             hdr[2 + i].markdown(
-                f'<div class="ptbl-hdr" style="text-align:center">{lbl}</div>',
+                f'<div class="ptbl-hdr" style="text-align:center">'
+                f'<span class="ms ms-neutral ptbl-hdr-icon" title="{tooltip}">{icon}</span>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
         st.markdown('<hr class="ptbl-sep">', unsafe_allow_html=True)
@@ -458,6 +480,20 @@ def render_pub_component(
             ws_raw   = row.get("workspace_id")
             wf_raw   = row.get("workflow_id")
             uuid_raw = row.get("dspace_item_uuid")
+
+            # Pre-compute string IDs once — reused by sync and delete buttons
+            ws_id: str | None = None
+            if _nn(ws_raw):
+                try:
+                    ws_id = str(int(float(str(ws_raw))))
+                except (ValueError, TypeError):
+                    ws_id = _s(ws_raw) or None
+            wf_id: str | None = None
+            if _nn(wf_raw):
+                try:
+                    wf_id = str(int(float(str(wf_raw))))
+                except (ValueError, TypeError):
+                    wf_id = _s(wf_raw) or None
 
             rc = st.columns(widths)
 
@@ -494,26 +530,33 @@ def render_pub_component(
                         ds_base,
                     )
 
-            # col 5 — delete (admin only, disabled once published)
-            if role == "admin":
-                ws_id: str | None = None
-                if _nn(ws_raw):
-                    try:
-                        ws_id = str(int(float(str(ws_raw))))
-                    except (ValueError, TypeError):
-                        ws_id = _s(ws_raw) or None
+            # col 5 — sync (admin + curator, disabled without DSpace identifiers)
+            if can_sync:
+                _ifs = _s(row.get("infoscience_status")).lower()
+                _has_ids = bool(_nn(uuid_raw) or ws_id or wf_id)
+                if rc[_sync_col].button(
+                    "", icon=":material/sync:", key=f"sync_{idx}",
+                    use_container_width=True,
+                    help="Synchroniser le statut et les contrôles qualité avec Infoscience",
+                    disabled=not _has_ids or _ifs == "deleted",
+                ):
+                    st.session_state["_pub_pending_sync"] = {
+                        "run_id":           _s(row.get("run_id")),
+                        "pub_id":           _s(row.get("pub_id")),
+                        "dspace_item_uuid": _s(uuid_raw) or None,
+                        "workspace_id":     ws_id,
+                        "workflow_id":      wf_id,
+                        "upw_license":      _s(row.get("upw_license")) or None,
+                    }
+                    st.rerun()
 
+            # col 5/6 — delete (admin only, disabled once published)
+            if can_delete:
                 _is_published = _s(row.get("infoscience_status")).lower() == "published"
-                if rc[5].button("", icon=":material/delete:", key=f"del_{idx}",
-                                 use_container_width=True, help="Supprimer",
-                                 disabled=not ws_id or _is_published):
+                if rc[_del_col].button("", icon=":material/delete:", key=f"del_{idx}",
+                                       use_container_width=True, help="Supprimer",
+                                       disabled=not ws_id or _is_published):
                     if ws_id:
-                        wf_id: str | None = None
-                        if _nn(wf_raw):
-                            try:
-                                wf_id = str(int(float(str(wf_raw))))
-                            except (ValueError, TypeError):
-                                wf_id = _s(wf_raw) or None
                         _delete_modal(ws_id, wf_id, _s(uuid_raw) or None, title, db)
 
             st.markdown('<hr class="ptbl-sep">', unsafe_allow_html=True)

@@ -1378,7 +1378,7 @@ class PipelineDB:
             quality_filter=quality_filter)
         params += [limit, offset]
         return self._query(
-            f"SELECT DISTINCT rp.run_id, rp.row_id, p.doi, p.title,"
+            f"SELECT DISTINCT rp.run_id, rp.pub_id, rp.row_id, p.doi, p.title,"
             f" p.source, p.dc_type, rp.status, rp.workspace_id,"
             f" rp.workflow_id, rp.dspace_item_uuid, rp.error_msg, rp.loaded_at,"
             f" p.pub_year, p.upw_is_oa, p.upw_valid_pdf,"

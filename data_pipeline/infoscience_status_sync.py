@@ -109,3 +109,61 @@ def run_sync(
         summary["checked"], summary["updated"], summary["errors"], summary["skipped"],
     )
     return summary
+
+
+def sync_single_pub(
+    run_id: str,
+    pub_id: str,
+    dspace_item_uuid: "str | None" = None,
+    workspace_id: "str | None" = None,
+    workflow_id: "str | None" = None,
+    upw_license: "str | None" = None,
+    db_path: "str | Path | None" = None,
+) -> dict:
+    """Sync Infoscience status and quality checks for a single publication.
+
+    Bypasses the run eligibility filter — intended for manual curator triggers.
+
+    Returns:
+        dict with keys: checked, updated, errors, status (resolved status string)
+    """
+    from db.pipeline_db import PipelineDB
+    from clients.dspace_client_wrapper import DSpaceClientWrapper
+
+    summary: dict = {"checked": 0, "updated": 0, "errors": 0, "status": None}
+    if not (dspace_item_uuid or workspace_id or workflow_id):
+        return summary
+
+    db = PipelineDB(db_path)
+    try:
+        client = DSpaceClientWrapper()
+    except Exception as exc:
+        logger.error("sync_single_pub: cannot connect to DSpace — %s", exc)
+        summary["errors"] = 1
+        return summary
+
+    _CC_PREFIXES = ("cc-", "public-domain", "pd")
+    license_val = str(upw_license or "").lower().strip()
+    is_cc = any(license_val.startswith(p) for p in _CC_PREFIXES)
+
+    summary["checked"] = 1
+    try:
+        status, handle, quality = client.check_item_infoscience_status(
+            dspace_item_uuid, workspace_id, workflow_id, check_quality=True,
+        )
+        db.update_infoscience_status(run_id, pub_id, status, handle)
+        summary["updated"] = 1
+        summary["status"] = status
+        logger.debug("sync_single_pub: pub=%s → %s", str(pub_id)[:40], status)
+        if status == "published" and quality is not None:
+            pdf_ok = quality["pdf_ok"] if is_cc else None
+            db.update_quality_checks(run_id, pub_id, quality["abstract_ok"], pdf_ok)
+            logger.debug(
+                "sync_single_pub quality: pub=%s abstract=%s pdf=%s",
+                str(pub_id)[:40], quality["abstract_ok"], pdf_ok,
+            )
+    except Exception as exc:
+        logger.error("sync_single_pub error pub=%s: %s", str(pub_id)[:40], exc)
+        summary["errors"] = 1
+
+    return summary

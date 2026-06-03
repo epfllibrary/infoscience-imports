@@ -117,10 +117,27 @@ def _render_filters(db: PipelineDB) -> None:
         with _r3[2]:
             st.selectbox(
                 "Signalement dedup",
-                ["Tous", "🚩 Flaggés", "supersedes_preprint", "cross_type_doi"],
+                [
+                    "Tous",
+                    "🚩 Flaggés",
+                    "supersedes_preprint",
+                    "cross_type_doi",
+                    "published_version_exists",
+                    "dataset_in_other_collection",
+                ],
+                format_func=lambda v: {
+                    "Tous":                       "Tous",
+                    "🚩 Flaggés":                 "🚩 Tous flaggés",
+                    "supersedes_preprint":         "Preprint existant",
+                    "cross_type_doi":              "DOI cross-type",
+                    "published_version_exists":    "Version publiée existante",
+                    "dataset_in_other_collection": "Dataset avec publication liée",
+                }.get(v, v),
                 help=(
                     "supersedes_preprint : version publiée importée, preprint déjà dans Infoscience.\n"
-                    "cross_type_doi : même DOI qu'un preprint existant."
+                    "cross_type_doi : même DOI qu'un preprint existant.\n"
+                    "published_version_exists : preprint importé, version publiée déjà dans Infoscience.\n"
+                    "dataset_in_other_collection : dataset importé, correspondance titre+année trouvée."
                 ),
                 key="pf_dedup_note",
             )
@@ -244,6 +261,17 @@ def _resolve_sciper(db: PipelineDB, sciper_q: str) -> str | None:
 def _render_table(db: PipelineDB, role: str = "reporting") -> None:
     if "_del_toast" in st.session_state:
         st.toast(st.session_state.pop("_del_toast"), icon="✅")
+
+    _sync_pub = st.session_state.pop("_pub_pending_sync", None)
+    if _sync_pub:
+        from data_pipeline.infoscience_status_sync import sync_single_pub as _pub_sync
+        with st.spinner("Synchronisation Infoscience…"):
+            _res = _pub_sync(db_path=db.db_path, **_sync_pub)
+        if _res["errors"]:
+            st.toast("Erreur lors de la synchronisation.", icon="⚠️")
+        else:
+            _status_label = _res.get("status") or "mis à jour"
+            st.toast(f"Synchronisation effectuée — statut : {_status_label}.", icon="✅")
 
     filter_kwargs, sel_run = _build_filter_kwargs(db)
 
