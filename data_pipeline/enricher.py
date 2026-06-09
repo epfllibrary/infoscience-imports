@@ -472,14 +472,15 @@ class AuthorProcessor:
 
         def make_cache_key(row):
             orcid = row.get("orcid_id")
-            if orcid and str(orcid).strip():
+            if pd.notna(orcid) and str(orcid).strip() and str(orcid).strip().lower() != "nan":
                 return f"orcid:{orcid}"
 
             internal_author_id = row.get("internal_author_id")
             source = row.get("source")
             if (
-                internal_author_id
+                pd.notna(internal_author_id)
                 and str(internal_author_id).strip()
+                and str(internal_author_id).strip().lower() != "nan"
                 and source in ["scopus", "wos"]
             ):
                 return f"{source}:{internal_author_id}"
