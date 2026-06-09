@@ -458,6 +458,36 @@ class DSpaceClientWrapper:
             "epfl_writtenat": None,
         }
 
+    @staticmethod
+    def _extract_person_lastnames(metadata: dict) -> list:
+        """Return all last-name candidates for a DSpace person item.
+
+        Collects: person.familyName (primary), dc.title parsed before the comma
+        (fallback), and the pre-comma token from every crisrp.name.variant entry.
+        Duplicates are removed while preserving order.
+        """
+        lastnames = []
+
+        def _add(raw):
+            name = (raw or "").strip()
+            if name and name not in lastnames:
+                lastnames.append(name)
+
+        family_meta = metadata.get("person.familyName", [])
+        if family_meta:
+            _add(family_meta[0]["value"])
+        else:
+            title_meta = metadata.get("dc.title", [])
+            if title_meta:
+                _add(title_meta[0]["value"].split(",")[0])
+
+        for entry in metadata.get("crisrp.name.variant", []):
+            raw = entry.get("value", "")
+            if "," in raw:
+                _add(raw.split(",")[0])
+
+        return lastnames
+
     def find_person(self, query):
         """
         param query: format (index:value), for example (title:Scolaro A.)
@@ -476,18 +506,11 @@ class DSpaceClientWrapper:
             sciper_id = (
                 sciper_metadata[0]["value"] if sciper_metadata and len(sciper_metadata) > 0 else ""
             )
-            # affiliation_metadata = dsos_persons[0].metadata.get("person.affiliation.name", "")
-
-            # self.logger.debug("affiliation_metadata: %s", affiliation_metadata)
-
-            # main_affiliation = (
-            #     affiliation_metadata[0]["value"]
-            #     if affiliation_metadata else ""
-            # )
+            matched_lastnames = self._extract_person_lastnames(dsos_persons[0].metadata)
             return {
                 "uuid": dsos_persons[0].uuid,
                 "sciper_id": sciper_id,
-                # "main_affiliation": main_affiliation,
+                "matched_lastnames": matched_lastnames,
             }
         elif num_items_persons == 0:
             self.logger.warning(

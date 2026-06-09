@@ -466,6 +466,39 @@ class AuthorProcessor:
 
         return None
 
+    @staticmethod
+    def _normalize_lastname(name: str) -> str:
+        """Lowercase + strip diacritics + collapse hyphens/spaces/apostrophes."""
+        if not name:
+            return ""
+        nfkd = unicodedata.normalize("NFKD", str(name))
+        ascii_str = nfkd.encode("ascii", "ignore").decode()
+        return re.sub(r"[\s\-']", "", ascii_str).lower()
+
+    @staticmethod
+    def _lastnames_compatible(source: str, matched: str) -> bool:
+        """Return True when source and matched last names are plausibly the same person.
+
+        Handles: diacritics, case, hyphens, spaces, apostrophes (via normalization)
+        and compound/double names where one form is a prefix of the other
+        (e.g. source="Smith" matches DSpace="Smith-Jones", or source="Garcia Lopez"
+        matches DSpace="Garcia").  A minimum prefix length of 4 prevents spurious
+        matches on very short names.
+        """
+        n_source = AuthorProcessor._normalize_lastname(source)
+        n_matched = AuthorProcessor._normalize_lastname(matched)
+        if not n_source or not n_matched:
+            return True
+        if n_source == n_matched:
+            return True
+        # Allow one to be a prefix of the other (compound / double names),
+        # only when the shorter candidate is at least 4 chars long.
+        shorter = n_source if len(n_source) <= len(n_matched) else n_matched
+        longer = n_matched if len(n_source) <= len(n_matched) else n_source
+        if len(shorter) >= 4 and longer.startswith(shorter):
+            return True
+        return False
+
     def reconcile_authors(self, return_df=False):
         self.df = self.df.copy()
         cache = {}
@@ -519,14 +552,31 @@ class AuthorProcessor:
                 clean_author = str(row["author"]).replace(",", "").strip()
                 queries.append(f'itemauthoritylookup:"{clean_author}"')
 
+            source_lastname = clean_value(row.get("nameparse_lastname", "")) or ""
+
             for query in queries:
                 self.logger.debug("DSpace person lookup: %s", query)
                 try:
                     result = self.dspace_wrapper.find_person(query=query)
-                    if isinstance(result, dict) and all(
+                    if not (isinstance(result, dict) and all(
                         k in result for k in ["uuid", "sciper_id"]
+                    )):
+                        continue
+                    matched_lastnames = result.get("matched_lastnames") or []
+                    if matched_lastnames and source_lastname and not any(
+                        self._lastnames_compatible(source_lastname, ln)
+                        for ln in matched_lastnames
                     ):
-                        return result["uuid"], result["sciper_id"]
+                        self.logger.warning(
+                            "DSpace name mismatch for '%s' (query=%s): "
+                            "matched lastnames %s, expected '%s' — skipping",
+                            row.get("author"),
+                            query,
+                            matched_lastnames,
+                            source_lastname,
+                        )
+                        continue
+                    return result["uuid"], result["sciper_id"]
                 except Exception as e:
                     self.logger.error(
                         "Error querying DSpace for query '%s': %s", query, str(e)
