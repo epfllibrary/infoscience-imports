@@ -17,6 +17,25 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
+# --- Bootstrap: load the correct .env.{env} file before project imports.
+# Several clients (api_epfl_client, etc.) are singletons that capture credentials
+# at import time.  env_loader.load_env() must run first so os.environ is populated.
+import env_loader as _bootstrap_env_loader
+
+
+def _get_bootstrap_env() -> str:
+    for i, arg in enumerate(sys.argv):
+        if arg == "--env" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if arg.startswith("--env="):
+            return arg.split("=", 1)[1]
+    return "dev"
+
+
+_bootstrap_env_loader.load_env(_get_bootstrap_env())
+del _get_bootstrap_env, _bootstrap_env_loader
+
+
 # --- Project imports
 import env_loader
 from config import default_queries
