@@ -451,106 +451,74 @@ class Loader:
             logger.debug("EPO item: skipping form_section lookup; using /sections/patent.")
 
         try:
-            # 1) REMOVE operations for pre-existing metadata
+            # 1) Build REMOVE/reset ops from the current workspace state.
             remove_operations = self._construct_remove_operations(
                 workspace_response, base, form_section=form_section
             )
-
             logger.debug("Remove operations (pre-sanitize): %s", remove_operations)
 
-            if remove_operations:
-                try:
-                    _resp = self.dspace_wrapper.update_workspace(
-                        workspace_id, _sanitize_ops(remove_operations)
-                    )
-                    updated_workspace = _normalize_ws_response(_resp, workspace_response)
-                except Exception as e:
-                    logger.error(f"Failed to execute remove operations: {e}")
-                    updated_workspace = workspace_response
-            else:
-                updated_workspace = workspace_response
+            # 2) Build ADD/REPLACE ops as if the workspace were already clean.
+            # remove_operations will clear pre-existing fields before the add ops run —
+            # JSON-PATCH applies operations sequentially within a single call, so remove
+            # precedes add. Using an empty workspace here ensures we always emit "add"
+            # ops, never "replace/0" against a field that was just removed.
+            effective_workspace = {"sections": {}} if remove_operations else workspace_response
 
-            # Collect DSpace validation errors for logging.
-            # TODO: pass required_paths to _construct_patch_operations to enable
-            # field-level targeted patching (currently all fields are patched regardless).
-            if isinstance(updated_workspace, dict) and "errors" in updated_workspace:
-                for error in updated_workspace.get("errors", []) or []:
-                    try:
-                        msg = error.get("message", "")
-                        paths = ", ".join(error.get("paths", [])) or "—"
-                        if msg in ("error.validation.required", "error.validation.license.required"):
-                            logger.debug("DSpace validation required: %s → %s", msg, paths)
-                    except Exception:
-                        pass
-
-            # 2) BUILD patch operations (ADD/REPLACE)
             patch_operations = self._construct_patch_operations(
-                row, units, base, form_section, updated_workspace
+                row, units, base, form_section, effective_workspace
             )
 
-            # Authors
             author_patch = self._process_and_replace_authors(
-                updated_workspace, row["row_id"], base, form_section=form_section
+                effective_workspace, row["row_id"], base, form_section=form_section
             )
             if author_patch:
                 patch_operations.extend(author_patch)
 
-            # Contributors
             contrib_patch = self._process_and_add_contributors(
-                updated_workspace, row["row_id"], base, form_section=form_section
+                effective_workspace, row["row_id"], base, form_section=form_section
             )
             if contrib_patch:
                 patch_operations.extend(contrib_patch)
 
-            logger.debug("Patch operations (pre-sanitize): %s", patch_operations)
+            # 3) Single PATCH: remove/reset ops first, then add ops, then dc.subject keywords.
+            if not is_epo:
+                keywords_raw = str(row.get("keywords", "") or "").strip()
+                keyword_list = [k.strip() for k in keywords_raw.split("||") if k.strip()]
+                subject_values = [v for v in (_build_metadata_value(kw) for kw in keyword_list) if v]
+                patch_operations.append({
+                    "op": "add",
+                    "path": f"{base}/dc.subject",
+                    "value": subject_values,
+                })
 
-            # Sanitize JSON payload to avoid NaN/Inf issues
-            patch_operations = _sanitize_ops(patch_operations)
+            all_ops = remove_operations + patch_operations
+            logger.debug("Merged patch operations (pre-sanitize): %s", all_ops)
 
-            # 3) APPLY patch operations
             try:
                 _resp = self.dspace_wrapper.update_workspace(
-                    workspace_id, patch_operations
+                    workspace_id, _sanitize_ops(all_ops)
                 )
                 response = _normalize_ws_response(_resp, {})
             except Exception as e:
-                logger.error("Failed to execute patch operations: %s", e)
+                logger.error("Failed to execute merged patch operations: %s", e)
                 return
 
-            # Handle any reported errors
             if not isinstance(response, dict):
                 logger.warning("Non-dict response after patch; cannot inspect errors.")
                 return
 
             for error in response.get("errors", []) or []:
-                error_message = error.get("message", "No message provided")
-                error_paths = ", ".join(error.get("paths", [])) or "No paths provided"
-                logger.error(f"Error message: {error_message}")
-                logger.error(f"Paths concerned: {error_paths}")
+                try:
+                    msg = error.get("message", "")
+                    paths = ", ".join(error.get("paths", [])) or "—"
+                    if msg in ("error.validation.required", "error.validation.license.required"):
+                        logger.debug("DSpace validation required: %s → %s", msg, paths)
+                    else:
+                        logger.error("DSpace error in merged patch: %s → %s", msg, paths)
+                except Exception:
+                    pass
 
             logger.debug("Metadata patched for workspace %s", workspace_id)
-
-            # 4) FINAL dc.subject patch — always last so GROBID cannot overwrite our values.
-            # Sets our keywords if present, or explicitly clears the field if there are none.
-            if not is_epo:
-                keywords_raw = str(row.get("keywords", "") or "").strip()
-                keyword_list = [k.strip() for k in keywords_raw.split("||") if k.strip()]
-                subject_values = [v for v in (_build_metadata_value(kw) for kw in keyword_list) if v]
-                try:
-                    self.dspace_wrapper.update_workspace(workspace_id, [{
-                        "op": "add",
-                        "path": f"{base}/dc.subject",
-                        "value": subject_values,
-                    }])
-                    logger.debug(
-                        "Final dc.subject patch: %d keyword(s) for workspace %s",
-                        len(subject_values), workspace_id,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to apply final dc.subject patch for workspace %s: %s",
-                        workspace_id, e,
-                    )
 
         except Exception as e:
             logger.error(f"An error occurred while patching additional metadata: {e}")
@@ -1050,15 +1018,6 @@ class Loader:
                 f"/sections/{alter_id_section}/dc.identifier.pmid",
                 [build_value(row.get("pmid"))],
                 False,
-            ),
-            (
-                f"/sections/{form_section}details/dc.subject",
-                [
-                    build_value(keyword)
-                    for keyword in str(row.get("keywords") or "").split("||")
-                    if keyword.strip()
-                ],
-                True,
             ),
             (
                 "/sections/journalcontainer_details/dc.relation.journal",
@@ -1574,10 +1533,12 @@ class Loader:
         return self.dspace_wrapper.upload_file_to_workspace(workspace_id, file_path)
 
     def _filter_publications_by_valid_affiliations(self):
-        """Filter publications with valid author affiliations."""
-        valid_author_ids = self.df_epfl_authors[
+        """Filter publications where at least one EPFL author has a non-blank final_mainunit."""
+        mask = (
             self.df_epfl_authors["final_mainunit"].notnull()
-        ]["row_id"].unique()
+            & (self.df_epfl_authors["final_mainunit"].str.strip() != "")
+        )
+        valid_author_ids = self.df_epfl_authors[mask]["row_id"].unique()
 
         if len(valid_author_ids) > 0:
             filtered_publications = self.df_metadata[
@@ -1587,7 +1548,7 @@ class Loader:
             return filtered_publications
         else:
             logger.warning("No valid authors found with 'final_mainunit'.")
-            return pd.DataFrame()  # Return an empty DataFrame if no valid authors found
+            return pd.DataFrame()
 
     def create_complete_publication(self):
         """Create complete publications including metadata and file uploads."""
@@ -1699,9 +1660,16 @@ class Loader:
                         logger.error(f"Unable to create workflow item for workspace item {workspace_id}")
                         df_items_imported.at[index, "workflow_id"] = None
                 else:
-                    logger.warning(
-                        f"No matching units found for row ID: {row['row_id']}."
+                    logger.error(
+                        "No valid units for row_id=%s; deleting orphaned workspace item %s.",
+                        row["row_id"], workspace_id,
                     )
+                    try:
+                        self.dspace_wrapper.delete_workspace(workspace_id)
+                    except Exception as del_err:
+                        logger.error(
+                            "Failed to delete orphaned workspace %s: %s", workspace_id, del_err
+                        )
             else:
                 logger.error(
                     f"Failed to push publication with source: {row.get('source')}, "
