@@ -20,7 +20,7 @@ from clients.api_epfl_client import ApiEpflClient
 from clients.unpaywall_client import UnpaywallClient
 from clients.openalex_client import OpenAlexClient
 from clients.dspace_client_wrapper import DSpaceClientWrapper
-from config import scopus_epfl_afids, unit_types, excluded_unit_types
+from config import scopus_epfl_afids, unit_types, secondary_unit_types, excluded_unit_types
 
 logger = get_pipeline_logger("enricher")
 
@@ -305,14 +305,18 @@ class AuthorProcessor:
             return self._accred_cache[sciper_id]
 
         if pd.notna(sciper_id):
-            records = ApiEpflClient.fetch_accred_by_unique_id(
-                sciper_id, format="digest"
-            )
+            try:
+                records = ApiEpflClient.fetch_accred_by_unique_id(
+                    sciper_id, format="digest"
+                )
+            except Exception:
+                records = None
             self.logger.debug("Person record: %s", records)
 
             if isinstance(records, list) and records:
                 prioritized_unit = None
                 allowed_units = []
+                secondary_units = []
                 fallback_unit = None
 
                 for record in records:
@@ -338,17 +342,16 @@ class AuthorProcessor:
                         re.IGNORECASE,
                     )
 
-                    if (
-                        unit_order == 1
-                        and (unit_type in unit_types or name_matches_laboratory)
-                        and not prioritized_unit
-                    ):
+                    is_primary = unit_type in unit_types or name_matches_laboratory
+                    is_secondary = not is_primary and unit_type in secondary_unit_types
+
+                    if unit_order == 1 and is_primary and not prioritized_unit:
                         prioritized_unit = (unit_id, unit_name, unit_type)
 
-                    if unit_type in unit_types or name_matches_laboratory:
-                        allowed_units.append(
-                            (unit_id, unit_name, unit_type, unit_order)
-                        )
+                    if is_primary:
+                        allowed_units.append((unit_id, unit_name, unit_type, unit_order))
+                    elif is_secondary:
+                        secondary_units.append((unit_id, unit_name, unit_type, unit_order))
 
                     if unit_order == 1 and not fallback_unit:
                         fallback_unit = (unit_id, unit_name, unit_type)
@@ -360,6 +363,9 @@ class AuthorProcessor:
                 elif allowed_units:
                     allowed_units.sort(key=lambda unit: unit[3])
                     main_unit = allowed_units[0][:3]
+                elif secondary_units:
+                    secondary_units.sort(key=lambda unit: unit[3])
+                    main_unit = secondary_units[0][:3]
                 elif fallback_unit:
                     main_unit = fallback_unit
 
@@ -576,9 +582,12 @@ class AuthorProcessor:
 
             # Step 2: Query EPFL API (by sciper if possible, fallback to name)
             if sciper_id:
-                person_info = ApiEpflClient.query_person(
-                    query=sciper_id, format="digest", use_firstname_lastname=False
-                )
+                try:
+                    person_info = ApiEpflClient.fetch_person_by_sciper(
+                        str(sciper_id), format="digest"
+                    )
+                except Exception:
+                    person_info = None
             else:
                 firstname = clean_value(row.get("nameparse_firstname", ""))
                 lastname = clean_value(row.get("nameparse_lastname", ""))
@@ -606,6 +615,16 @@ class AuthorProcessor:
                         "epfl_api_mainunit_name": uname,
                         "epfl_api_mainunit_type": utype,
                     })
+            elif sciper_id:
+                # People API failed but sciper is known from DSpace — still set sciper
+                # and attempt accred lookup so unit guessing (Step 4) can proceed.
+                result["sciper_id"] = sciper_id
+                uid, uname, utype = self._fetch_accred_info(sciper_id)
+                result.update({
+                    "epfl_api_mainunit_id": uid,
+                    "epfl_api_mainunit_name": uname,
+                    "epfl_api_mainunit_type": utype,
+                })
 
             # Step 4: Guess unit at publication date from DSpace facets
             year = row.get("year")
