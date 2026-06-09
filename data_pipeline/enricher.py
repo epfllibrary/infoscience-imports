@@ -501,19 +501,22 @@ class AuthorProcessor:
             def is_valid(value):
                 return pd.notna(value) and str(value).strip() != ""
 
+            # Unique identifiers first — name-based lookup is last resort because
+            # DSpace itemauthoritylookup indexes co-author names too, causing false
+            # positives (e.g. co-author lookup returns the principal investigator).
             if is_valid(row.get("sciper_id")):
                 queries.append(f"epfl.sciperId:({row['sciper_id']})")
             if is_valid(row.get("orcid_id")):
                 queries.append(f"person.identifier.orcid:({row['orcid_id']})")
-            if is_valid(row.get("author")):
-                clean_author = str(row["author"]).replace(",", "").strip()
-                queries.append(f'itemauthoritylookup:"{clean_author}"')
             if row.get("source") == "scopus" and is_valid(row.get("internal_author_id")):
                 queries.append(
                     f"person.identifier.scopus-author-id:({row['internal_author_id']})"
                 )
             if row.get("source") == "wos" and is_valid(row.get("internal_author_id")):
                 queries.append(f"person.identifier.rid:({row['internal_author_id']})")
+            if is_valid(row.get("author")):
+                clean_author = str(row["author"]).replace(",", "").strip()
+                queries.append(f'itemauthoritylookup:"{clean_author}"')
 
             for query in queries:
                 self.logger.debug("DSpace person lookup: %s", query)
