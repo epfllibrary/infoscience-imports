@@ -40,6 +40,7 @@ _pipeline = _load_yaml("pipeline.yaml")
 
 default_queries:    dict  = _pipeline["default_queries"]
 source_order:       list  = _pipeline["source_order"]
-unit_types:         list  = _pipeline["unit_types"]
-excluded_unit_types: list = _pipeline["excluded_unit_types"]
+unit_types:           list  = _pipeline["unit_types"]
+secondary_unit_types: list  = _pipeline["secondary_unit_types"]
+excluded_unit_types:  list  = _pipeline["excluded_unit_types"]
 scopus_epfl_afids:  list  = _pipeline["scopus_epfl_afids"]
