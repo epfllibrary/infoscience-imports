@@ -1,6 +1,8 @@
 """EPFL API client for Infoscience imports"""
 
 import os
+import re
+import string
 import tenacity
 from apiclient import (
     APIClient,
@@ -13,6 +15,7 @@ from apiclient.retrying import retry_if_api_request_error
 from apiclient.error_handlers import ErrorHandler
 from dotenv import load_dotenv
 from utils import get_pipeline_logger, clean_value
+from config import unit_types as DEFAULT_UNIT_TYPES, secondary_unit_types as DEFAULT_SECONDARY_UNIT_TYPES, excluded_unit_types as DEFAULT_EXCLUDED_UNIT_TYPES
 
 
 api_epfl_base_url = "https://api.epfl.ch/v1"
@@ -36,9 +39,11 @@ retry_decorator = tenacity.retry(
 @endpoint(base_url=api_epfl_base_url)
 class Endpoint:
     base = ""
+    personsId = "persons/{sciperID}"
     personsQuery = "persons?query={query}"
     personsFirstnameLastname = "persons?firstname={firstname}&lastname={lastname}"
     accredsId = "accreds?persid={sciperID}"
+    accredsByClassPosition = "accreds?classid={classID}&positionid={positionID}&statusid=1&state=active"
     unitsId = "units/{unitID}"
     unitsQuery = "units?query={query}" 
 
@@ -49,7 +54,10 @@ class Client(APIClient):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._unit_type_cache = {}  # Cache for unit types to minimize API calls
+        self._unit_type_cache = {}
+        self.unit_types = DEFAULT_UNIT_TYPES
+        self.secondary_unit_types = DEFAULT_SECONDARY_UNIT_TYPES
+        self.excluded_unit_types = DEFAULT_EXCLUDED_UNIT_TYPES
 
     @retry_decorator
     def query_person(
@@ -154,13 +162,13 @@ class Client(APIClient):
 
                     # Vérifie le nom *seulement* si `lastname` est défini (donc utilisé dans la requête)
                     if lastname:
-                        if clean_value(person_record["lastname"]) == clean_value(lastname):
+                        if self._clean_value(person_record["lastname"]) == self._clean_value(lastname):
                             return self._process_person_record(result, query, format)
                         else:
                             self.logger.warning(
-                                f"The single record {clean_value(person_record['lastname'])} found does not match the requested name: {lastname}."
+                                f"The single record {self._clean_value(person_record['lastname'])} found does not match the requested name: {lastname}."
                             )
-                            return None
+                            continue
                     else:
                         # Aucun lastname à vérifier, on accepte le résultat unique
                         return self._process_person_record(result, query, format)
@@ -199,6 +207,21 @@ class Client(APIClient):
 
         # If no records found
         self.logger.warning(f"No valid record found for {query}.")
+        return None
+
+    @retry_decorator
+    def fetch_person_by_sciper(self, sciper_id: str, format="epfl"):
+        self.logger.debug("EPFL API: person lookup for sciper %s", sciper_id)
+        result = self.get(Endpoint.personsId.format(sciperID=sciper_id))
+        self.logger.debug(f"Received response for {sciper_id}: {result}")
+        return self._process_person_record({"count": 1, "persons": [result]}, sciper_id, format)
+
+    @retry_decorator
+    def fetch_accred_by_class_position(self, class_id: str, position_id: str, format="digest"):
+        self.logger.debug("EPFL API: accreditation for class_id %s position_id %s", class_id, position_id)
+        result = self.get(Endpoint.accredsByClassPosition.format(classID=class_id, positionID=position_id))
+        self.logger.debug(f"Received response for class_id={class_id}, position_id={position_id}: {result}")
+        return self._process_accred_record(result, f"{class_id}_{position_id}", format)
 
     @retry_decorator
     def fetch_accred_by_unique_id(self, sciper_id: str, format="digest"):
@@ -255,6 +278,12 @@ class Client(APIClient):
                 self._extract_accred_units_info(accred, accred.get("order"))
                 for accred in record.get("accreds", [])
             ]  # to keep the order of units
+        elif format == "person":
+            self.logger.debug(f"Extracting person+unit information for {sciper_id}.")
+            return [
+                self._extract_accred_person_info(accred, accred.get("order"))
+                for accred in record.get("accreds", [])
+            ]
         elif format == "mainUnit":
             self.logger.debug(f"Extracting main unit information for {sciper_id}.")
             return self._extract_accred_units_info(
@@ -271,16 +300,6 @@ class Client(APIClient):
         return sciper_id
 
     def _extract_digest_person_info(self, x):
-        self.logger.info("Extracting digest person information from the record.")
-        record = {
-            "sciper_id": x["persons"][0]["id"],
-            # "unitsIds": "|".join([unit["unitid"] for unit in x["persons"][0]["rooms"]]),
-
-        }
-        self.logger.debug(f"Extracted digest record: {record}")
-        return record
-
-    def _extract_digest_person_info(self, x):
         self.logger.info("Extracting enriched digest person information from the record.")
 
         person = x["persons"][0]
@@ -290,10 +309,8 @@ class Client(APIClient):
         orcid_raw = person.get("orcid")
         orcid = None
         if isinstance(orcid_raw, str):
-            orcid = (
-                orcid_raw.replace("https://orcid.org/", "")
-                .strip()
-            )
+            stripped = orcid_raw.replace("https://orcid.org/", "").strip()
+            orcid = stripped if stripped else None
 
         record = {
             "sciper_id": person.get("id"),
@@ -304,6 +321,32 @@ class Client(APIClient):
 
         self.logger.debug(f"Extracted enriched digest record: {record}")
         return record
+
+    def _extract_accred_person_info(self, accred, parent_order=None):
+        person = accred.get("person") or accred.get("author") or {}
+        sciper = person.get("sciper") or accred.get("persid") or person.get("id")
+
+        status_labelen = (accred.get("status") or {}).get("labelen")
+        class_labelen = (accred.get("class") or {}).get("labelen")
+        position_labelen = (accred.get("position") or {}).get("labelen")
+        validfrom = accred.get("startdate") or accred.get("validfrom")
+
+        enriched = {
+            "sciper": str(sciper) if sciper is not None else None,
+            "firstname": person.get("firstname"),
+            "lastname": person.get("lastname"),
+            "firstnameuc": person.get("firstnameuc"),
+            "lastnameuc": person.get("lastnameuc"),
+            "display": person.get("display"),
+            "email": person.get("email"),
+            "status": status_labelen,
+            "class": class_labelen,
+            "position": position_labelen,
+            "validfrom": validfrom,
+        }
+        enriched.update(self._extract_accred_units_info(accred, parent_order))
+        self.logger.debug(f"Extracted accred person record: {enriched}")
+        return enriched
 
     def _extract_accred_units_info(self, x, parent_order=None):
         self.logger.debug("Extracting units information from the accred record.")
@@ -394,19 +437,6 @@ class Client(APIClient):
 
         return None
     
-    def _extract_acronym_levels_from_path(self, unit_path):
-        """
-        Level rules:
-          - position 0 = institution (EPFL)
-          - position 1 = unit_level_2
-          - position 2 = unit_level_3
-        """
-        toks = self._split_unit_path(unit_path)
-        return {
-            "unit_level_2": toks[1] if len(toks) >= 2 else None,
-            "unit_level_3": toks[2] if len(toks) >= 3 else None,
-        }
-    
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -441,7 +471,147 @@ class Client(APIClient):
             "unit_level_3": toks[2] if len(toks) >= 3 else None,
         }
 
-    def _clean_value(self,formatted_name):
+    def dedupe_people_keep_allowed_affiliations(self, records, unit_types_override=None, excluded_unit_types_override=None):
+        if not isinstance(records, list) or not records:
+            return []
+
+        unit_types_local = unit_types_override if unit_types_override is not None else self.unit_types
+        secondary_local = self.secondary_unit_types
+        excluded_local = excluded_unit_types_override if excluded_unit_types_override is not None else self.excluded_unit_types
+
+        by_sciper = {}
+        for r in records:
+            sciper = r.get("sciper")
+            if sciper is None:
+                continue
+            by_sciper.setdefault(str(sciper), []).append(r)
+
+        kept = []
+        for sciper, recs in by_sciper.items():
+            allowed = []
+            secondary = []
+            fallback_order1 = []
+
+            for r in recs:
+                unit_type = r.get("unit_type")
+                unit_label = r.get("unit_label")
+                unit_order = r.get("unit_order")
+
+                if self._as_int_or_none(unit_order) == 1:
+                    fallback_order1.append(r)
+
+                if not unit_type or unit_type in (None, "", "null"):
+                    continue
+                if excluded_local and unit_type in excluded_local:
+                    continue
+
+                name_matches_laboratory = isinstance(unit_label, str) and re.search(
+                    r"\b(laboratoire|laboratory|lab|labo)\b", unit_label, re.IGNORECASE
+                )
+                if unit_type in unit_types_local or name_matches_laboratory:
+                    allowed.append(r)
+                elif unit_type in secondary_local:
+                    secondary.append(r)
+
+            if allowed:
+                kept.extend(allowed)
+            elif secondary:
+                secondary.sort(key=lambda x: (x.get("unit_order") is None, x.get("unit_order")))
+                kept.append(secondary[0])
+            elif fallback_order1:
+                fallback_order1.sort(key=lambda x: (x.get("unit_order") is None, x.get("unit_order")))
+                kept.append(fallback_order1[0])
+            else:
+                kept.append(recs[0])
+
+        return kept
+
+    def _join_unique(self, values, sep="||"):
+        out = []
+        seen = set()
+        for v in values:
+            if v is None:
+                continue
+            s = str(v).strip()
+            if not s or s.lower() == "null":
+                continue
+            if s not in seen:
+                seen.add(s)
+                out.append(s)
+        return sep.join(out) if out else None
+
+    def merge_records_by_sciper_with_preferred_unit(self, records, sep="||", prefer_lowest_unit_order=True):
+        if not isinstance(records, list) or not records:
+            return []
+
+        multi_fields = [
+            "unit_id", "unit_name", "unit_label", "unit_cf", "unit_path",
+            "unit_level_2", "unit_level_3", "unit_type", "unit_order",
+            "status", "class", "position",
+        ]
+        single_fields = ["sciper", "firstname", "lastname", "firstnameuc", "lastnameuc", "display", "email"]
+
+        groups = {}
+        for r in records:
+            sciper = r.get("sciper")
+            if sciper is None:
+                continue
+            groups.setdefault(str(sciper), []).append(r)
+
+        merged_rows = []
+        for sciper, recs in groups.items():
+            if prefer_lowest_unit_order:
+                sorted_recs = sorted(
+                    recs,
+                    key=lambda x: (self._as_int_or_none(x.get("unit_order")) is None, self._as_int_or_none(x.get("unit_order"))),
+                )
+            else:
+                sorted_recs = recs
+
+            preferred = sorted_recs[0] if sorted_recs else None
+            merged = {}
+
+            for f in single_fields:
+                val = None
+                for r in recs:
+                    v = r.get(f)
+                    if v is None:
+                        continue
+                    s = str(v).strip()
+                    if s and s.lower() != "null":
+                        val = v
+                        break
+                merged[f] = val
+
+            for f in multi_fields:
+                merged[f] = self._join_unique((r.get(f) for r in sorted_recs), sep=sep)
+
+            if preferred:
+                merged.update({
+                    "preferred_unit_id": preferred.get("unit_id"),
+                    "preferred_unit_name": preferred.get("unit_name"),
+                    "preferred_unit_label": preferred.get("unit_label"),
+                    "preferred_unit_cf": preferred.get("unit_cf"),
+                    "preferred_unit_path": preferred.get("unit_path"),
+                    "preferred_unit_type": preferred.get("unit_type"),
+                    "preferred_unit_order": preferred.get("unit_order"),
+                    "preferred_unit_level_2": preferred.get("unit_level_2"),
+                    "preferred_unit_level_3": preferred.get("unit_level_3"),
+                    "preferred_validfrom": preferred.get("validfrom"),
+                })
+            else:
+                merged.update({k: None for k in [
+                    "preferred_unit_id", "preferred_unit_name", "preferred_unit_label",
+                    "preferred_unit_cf", "preferred_unit_path", "preferred_unit_type",
+                    "preferred_unit_order", "preferred_unit_level_2", "preferred_unit_level_3",
+                    "preferred_validfrom",
+                ]})
+
+            merged_rows.append(merged)
+
+        return merged_rows
+
+    def _clean_value(self, formatted_name):
         formatted_name = formatted_name.lower()
 
         # Replace dash-like characters between initials or names with space
