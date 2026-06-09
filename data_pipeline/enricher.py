@@ -591,13 +591,16 @@ class AuthorProcessor:
             else:
                 firstname = clean_value(row.get("nameparse_firstname", ""))
                 lastname = clean_value(row.get("nameparse_lastname", ""))
-                person_info = ApiEpflClient.query_person(
-                    query=row.get("author_cleaned"),
-                    firstname=firstname,
-                    lastname=lastname,
-                    format="digest",
-                    use_firstname_lastname=True,
-                )
+                try:
+                    person_info = ApiEpflClient.query_person(
+                        query=row.get("author_cleaned"),
+                        firstname=firstname,
+                        lastname=lastname,
+                        format="digest",
+                        use_firstname_lastname=True,
+                    )
+                except Exception:
+                    person_info = None
 
             # Step 3: Populate EPFL metadata if available
             if isinstance(person_info, dict):
