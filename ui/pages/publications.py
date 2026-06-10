@@ -245,6 +245,7 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
             "weak"   if sel_epfl == "⚠️ Statut faible" else
             "strong" if sel_epfl == "✅ Statut fort"   else None
         ),
+        former_only        = sel_epfl == "⏳ Anciens membres",
         dedup_note         = (
             None          if sel_dedup_note == "Tous"     else
             "__flagged__" if sel_dedup_note == "🚩 Flaggés" else
@@ -292,9 +293,8 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
             st.toast(f"Synchronisation effectuée — statut : {_status_label}.", icon="✅")
 
     filter_kwargs, sel_run = _build_filter_kwargs(db)
-    former_only = st.session_state.get("pf_epfl", "Tous") == "⏳ Anciens membres"
 
-    filter_sig = str(sorted(filter_kwargs.items())) + f"|former={former_only}"
+    filter_sig = str(sorted(filter_kwargs.items()))
     if "pub_page" not in st.session_state:
         st.session_state["pub_page"] = 1
     if st.session_state.get("_pub_filter_sig") != filter_sig:
@@ -368,19 +368,6 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
     _cols = [c for c in _cols if c in d.columns]
 
     authors_by_row = _build_authors_modal_dict(d, db, sel_run)
-
-    if former_only:
-        former_ids = {
-            key for key, auths in authors_by_row.items()
-            if auths and all(a.get("epfl_is_former", False) for a in auths)
-        }
-        d = d[d.apply(
-            lambda r: f"{_clean_str(r.get('run_id'))}:{_clean_str(r.get('row_id'))}" in former_ids,
-            axis=1,
-        )]
-        if d.empty:
-            st.info("Aucune publication avec uniquement des auteurs EPFL former dans cette page.")
-            return
 
     render_pub_component(d, _cols, authors_by_row, ds_base, role=role, db=db)
 
