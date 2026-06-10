@@ -262,8 +262,8 @@ class Loader:
                 continue
 
             for _, match in matching_epfl_author.iterrows():
-                sciper = match.get("sciper_id")
-                if pd.notna(sciper):
+                if match.get("dspace_link_valid"):
+                    sciper = match.get("sciper_id")
                     prefix = (
                         "will be referenced::"
                         if pd.notna(match.get("dspace_uuid"))
@@ -273,13 +273,12 @@ class Loader:
                         authority=f"{prefix}SCIPER-ID::{sciper}",
                         confidence=600,
                     )
-
-                if pd.notna(match.get("organizations")):
-                    affiliations_metadata[i] = create_metadata(
-                        "École Polytechnique Fédérale de Lausanne",
-                        authority="will be referenced::ROR-ID::https://ror.org/02s376052",
-                        confidence=600,
-                    )
+                    if pd.notna(match.get("organizations")):
+                        affiliations_metadata[i] = create_metadata(
+                            "École Polytechnique Fédérale de Lausanne",
+                            authority="will be referenced::ROR-ID::https://ror.org/02s376052",
+                            confidence=600,
+                        )
 
         patch_operations = [
             {
@@ -375,20 +374,19 @@ class Loader:
             ]
             if not matching_epfl.empty:
                 for _, m in matching_epfl.iterrows():
-                    sciper = m.get("sciper_id")
-                    if pd.notna(sciper):
+                    if m.get("dspace_link_valid"):
                         prefix = (
                             "will be referenced::"
                             if pd.notna(m.get("dspace_uuid"))
                             else "will be generated::"
                         )
-                        authority = f"{prefix}SCIPER-ID::{sciper}"
+                        authority = f"{prefix}SCIPER-ID::{m.get('sciper_id')}"
                         confidence = 600
                         break
 
-                # If EPFL affiliation is confirmed in match, override affiliation with EPFL + ROR authority
                 if any(
-                    pd.notna(m.get("organizations")) for _, m in matching_epfl.iterrows()
+                    m.get("dspace_link_valid") and pd.notna(m.get("organizations"))
+                    for _, m in matching_epfl.iterrows()
                 ):
                     affils_meta[-1] = {
                         "value": "École Polytechnique Fédérale de Lausanne",
