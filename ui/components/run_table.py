@@ -1,10 +1,12 @@
 """Runs table component — filterable, paginated, with review tracking.
 
-Layout: 9 columns per row
-  Run | Démarré | Terminé | Durée | Sources | Pipeline | DR | Suivi | Actions
+Layout: 11 columns per row
+  Run | Terminé | Durée | Sources | Pipeline | DR | Importés | Suivi | Actions | Voir | ⋯
 
-Suivi  — read-only HTML badge (status display)
-Actions — icon-only buttons (person_add / task_alt+lock_open / restart_alt)
+Suivi   — read-only HTML badge (status display)
+Actions — icon-only buttons (person_add / task_alt+lock_open / restart_alt / sync)
+Voir    — navigate to publications filtered by this run
+⋯       — run detail (all users) + duplicate/re-trigger (admin only)
 
 CSS (:has selector) scopes all padding reduction and button overrides to rows
 that contain a .rtbl-row element, leaving the rest of the app unaffected.
@@ -12,18 +14,24 @@ that contain a .rtbl-row element, leaving the rest of the app unaffected.
 
 from __future__ import annotations
 
+import datetime
+import json
 import math
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-
-import os
 
 from data_pipeline.infoscience_status_sync import run_sync as _infoscience_sync
 from db.pipeline_db import PipelineDB
 from ui.auth import current_user
 from ui.constants import RUN_STATUSES, SOURCES
-from ui.helpers import badge, fmt_dt, fmt_dur
+from ui.helpers import badge, fmt_dt, fmt_dur, _make_run_id
+from ui.run_state import try_acquire_run_lock
+
 _DS_BASE_URL = os.environ.get("DS_API_ENDPOINT", "").split("/server")[0]
 
 _REVIEW_STATUS_OPTIONS = ["unclaimed", "in_progress", "done"]
@@ -34,10 +42,11 @@ _REVIEW_STATUS_LABELS  = {
 }
 _PAGE_SIZE_OPTIONS = [10, 20, 50]
 
-# col layout: Run | Terminé | Durée | Sources | Pipeline | DR | Importés | Suivi | Actions | Voir
-_COLS = [2.6, 1.4, 0.9, 2.0, 1.2, 0.45, 1.2, 1.8, 0.9, 0.7]
+_COLS    = [2.4, 1.4, 0.9, 1.9, 1.1, 0.45, 1.1, 1.7, 0.9, 0.7, 0.9]
 _HEADERS = ["Run", "Terminé", "Durée", "Sources", "Pipeline",
-            "DR", "Importés", "Suivi", "Actions", "Voir"]
+            "DR", "Importés", "Suivi", "Actions", "Voir", "Dupliquer"]
+
+_SRC_CSS_KEYS = frozenset({"scopus", "wos", "crossref", "openalex", "zenodo", "epo", "datacite"})
 
 
 def _mi(icon: str, cls: str = "") -> str:
@@ -45,8 +54,334 @@ def _mi(icon: str, cls: str = "") -> str:
     return f'<span class="{c}">{icon}</span>'
 
 
-def render_run_table(db: PipelineDB) -> None:
+def _src_chips_html(sources_str: str) -> str:
+    if not sources_str or sources_str == "—":
+        return "—"
+    return "".join(
+        f'<span class="ptbl-badge ptbl-src-'
+        f'{s.strip().lower() if s.strip().lower() in _SRC_CSS_KEYS else "default"}">'
+        f'{s.strip()}</span>'
+        for s in sources_str.split(",") if s.strip()
+    )
+
+
+def _date_str(val) -> str:
+    if val is None:
+        return "?"
+    # pandas Timestamp / datetime objects: strftime avoids the " 00:00:00" suffix
+    if hasattr(val, "strftime"):
+        return val.strftime("%Y-%m-%d")
+    s = str(val)
+    # Trim any time component already present in stored strings
+    if len(s) > 10 and s[10] in (" ", "T"):
+        s = s[:10]
+    return "?" if s in ("None", "NaT", "", "nan") else s
+
+
+# ── Combined run detail + re-trigger dialog ───────────────────────────────────
+
+@st.dialog("Run", width="large")
+def _run_dialog(row: dict, role: str, root: Path, active_env: str) -> None:
+    from env_loader import ENVIRONMENTS
+    from ui.run_state import get_state_file
+
+    import html as _html
+    rid         = row.get("run_id", "—")
+    sources     = row.get("sources") or "—"
+    sources_str = "" if sources == "—" else sources
+    ws_s        = _date_str(row.get("window_start"))
+    we_s        = _date_str(row.get("window_end"))
+    dry         = bool(row.get("dry_run"))
+    status      = str(row.get("status") or "—")
+    imported    = int(row.get("imported_count") or 0)
+    published   = int(row.get("published_count") or 0)
+    synced      = int(row.get("synced_count") or 0)
+    no_abst     = int(row.get("quality_no_abstract_count") or 0)
+    no_pdf      = int(row.get("quality_no_pdf_count") or 0)
+    rev_st      = row.get("review_status") or None
+    claimed     = row.get("claimed_by") or None
+    if isinstance(rev_st, float):
+        rev_st = None
+    if isinstance(claimed, float):
+        claimed = None
+
+    # Parse stored overrides / author IDs
+    _qo_raw = row.get("query_overrides")
+    try:
+        query_overrides = json.loads(_qo_raw) if _qo_raw and not isinstance(_qo_raw, float) else {}
+    except (ValueError, TypeError):
+        query_overrides = {}
+
+    def _split_ids(key):
+        v = row.get(key)
+        if not v or (isinstance(v, float)):
+            return []
+        return [x.strip() for x in str(v).split(",") if x.strip()]
+
+    sc_ids = _split_ids("scopus_ids")
+    wo_ids = _split_ids("wos_ids")
+    or_ids = _split_ids("orcid_ids")
+    oa_ids = _split_ids("openalex_ids")
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="run-detail-header">'
+        f'<span class="run-detail-id">{rid}</span>'
+        f'<span class="badge badge-{status}">{status}</span>'
+        + (
+            '<span style="font-size:11px;color:#92400E;background:#FEF3C7;'
+            'padding:2px 8px;border-radius:999px;font-weight:600;">dry-run</span>'
+            if dry else ""
+        )
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Metrics ───────────────────────────────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Durée", fmt_dur(row.get("duration_s")))
+    c2.metric("Importés", imported)
+    c3.metric("Publiés (sync)", published if synced > 0 else "—")
+
+    st.divider()
+
+    # ── Detail grid ───────────────────────────────────────────────────────────
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.markdown(
+            f'<div class="modal-grid">'
+            f'<span class="modal-sec" style="grid-column:1/-1">Exécution</span>'
+            f'<span class="modal-key">Démarré</span>'
+            f'<span class="modal-val">{fmt_dt(row.get("started_at"))}</span>'
+            f'<span class="modal-key">Terminé</span>'
+            f'<span class="modal-val">{fmt_dt(row.get("ended_at"))}</span>'
+            f'<span class="modal-key">Fenêtre</span>'
+            f'<span class="modal-val">{ws_s} → {we_s}</span>'
+            + (
+                f'<span class="modal-key">Suivi</span>'
+                f'<span class="modal-val">{rev_st}'
+                + (f' — <em>{claimed}</em>' if claimed else "")
+                + '</span>'
+                if rev_st else ""
+            )
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+    with col_r:
+        st.markdown(
+            f'<div class="modal-grid">'
+            f'<span class="modal-sec" style="grid-column:1/-1">Sources</span>'
+            f'<span class="modal-key" style="align-self:start;padding-top:6px">Sources</span>'
+            f'<span class="modal-val">'
+            f'<div class="modal-chips" style="flex-wrap:wrap;gap:3px;">'
+            f'{_src_chips_html(sources)}'
+            f'</div></span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    if no_abst or no_pdf:
+        st.markdown(
+            '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">'
+            + (
+                f'<span class="pub-quality-warn">'
+                f'⚑ {no_abst} résumé{"s" if no_abst > 1 else ""} manquant{"s" if no_abst > 1 else ""}</span>'
+                if no_abst else ""
+            )
+            + (
+                f'<span class="pub-quality-warn">'
+                f'⚑ {no_pdf} PDF OA manquant{"s" if no_pdf > 1 else ""}</span>'
+                if no_pdf else ""
+            )
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Query overrides + author IDs ──────────────────────────────────────────
+    _author_id_rows = [
+        ("--scopus-ids",   sc_ids),
+        ("--wos-ids",      wo_ids),
+        ("--orcid-ids",    or_ids),
+        ("--openalex-ids", oa_ids),
+    ]
+    _has_overrides = bool(query_overrides)
+    _has_ids       = any(lst for _, lst in _author_id_rows)
+
+    if _has_overrides or _has_ids:
+        st.divider()
+        ov_col, id_col = st.columns(2)
+        with ov_col:
+            if _has_overrides:
+                rows_html = "".join(
+                    f'<span class="modal-key">--query-{_html.escape(src)}</span>'
+                    f'<span class="modal-val modal-long">'
+                    f'<details><summary>{_html.escape(q[:60])}{"…" if len(q) > 60 else ""}</summary>'
+                    f'<span class="modal-val-long">{_html.escape(q)}</span></details></span>'
+                    for src, q in sorted(query_overrides.items())
+                )
+                st.markdown(
+                    f'<div class="modal-grid">'
+                    f'<span class="modal-sec" style="grid-column:1/-1">Requêtes personnalisées</span>'
+                    f'{rows_html}</div>',
+                    unsafe_allow_html=True,
+                )
+        with id_col:
+            if _has_ids:
+                id_rows_html = "".join(
+                    f'<span class="modal-key">{flag}</span>'
+                    f'<span class="modal-val">'
+                    + "".join(
+                        f'<span class="modal-chip modal-chip-sciper">{_html.escape(i)}</span> '
+                        for i in ids
+                    )
+                    + '</span>'
+                    for flag, ids in _author_id_rows if ids
+                )
+                st.markdown(
+                    f'<div class="modal-grid">'
+                    f'<span class="modal-sec" style="grid-column:1/-1">Identifiants auteurs</span>'
+                    f'{id_rows_html}</div>',
+                    unsafe_allow_html=True,
+                )
+
+    st.divider()
+
+    # ── CLI command ───────────────────────────────────────────────────────────
+    parts = ["python3 data_pipeline/main.py"]
+    if ws_s != "?" and we_s != "?":
+        parts += [f"--start-date {ws_s}", f"--end-date {we_s}"]
+    if sources and sources != "—":
+        parts.append(f"--sources {sources}")
+    for src, q in sorted((query_overrides or {}).items()):
+        parts.append(f'--query-{src} "{q}"')
+    if sc_ids:
+        parts.append(f'--scopus-ids {",".join(sc_ids)}')
+    if wo_ids:
+        parts.append(f'--wos-ids {",".join(wo_ids)}')
+    if or_ids:
+        parts.append(f'--orcid-ids {",".join(or_ids)}')
+    if oa_ids:
+        parts.append(f'--openalex-ids {",".join(oa_ids)}')
+    if dry:
+        parts.append("--dry-run")
+    parts.append(f"--run-id {rid}")
+    st.code(" \\\n  ".join(parts), language="bash")
+
+    # ── Re-trigger section (admin only) ───────────────────────────────────────
+    if role != "admin":
+        return
+
+    st.divider()
+    st.markdown(
+        '<div class="modal-sec" style="margin-bottom:10px;">Re-déclencher</div>',
+        unsafe_allow_html=True,
+    )
+
+    env_choice = st.radio(
+        "Environnement cible",
+        list(ENVIRONMENTS),
+        index=list(ENVIRONMENTS).index(active_env) if active_env in ENVIRONMENTS else 0,
+        horizontal=True,
+        format_func=lambda e: {"dev": "🟢 Dev", "test": "🟡 Test", "prod": "🔴 Prod"}.get(e, e),
+        key=f"dup_env_{rid}",
+    )
+    col_o1, col_o2 = st.columns(2)
+    with col_o1:
+        dry_run = st.checkbox(
+            "Dry-run (sans import DSpace)", value=dry, key=f"dup_dry_{rid}",
+        )
+    with col_o2:
+        no_email = st.checkbox(
+            "Désactiver l'envoi d'e-mail", value=True, key=f"dup_mail_{rid}",
+        )
+
+    if env_choice == "prod" and not dry_run:
+        st.warning(
+            "⚠️ Lancement en **production** sans dry-run — "
+            "les items seront importés dans Infoscience."
+        )
+
+    if st.button("▶ Re-déclencher ce run", type="primary", use_container_width=True,
+                 key=f"dup_launch_{rid}"):
+        new_run_id = _make_run_id()
+        log_file   = root / "logs" / f"run_{new_run_id}.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        selected_sources = (
+            [s.strip() for s in sources_str.split(",") if s.strip()]
+            if sources_str else SOURCES
+        )
+
+        cmd = [sys.executable, str(root / "data_pipeline" / "main.py")]
+        if ws_s != "?" and we_s != "?":
+            cmd += ["--start-date", ws_s, "--end-date", we_s]
+        if sources_str:
+            cmd += ["--sources", sources_str]
+        for _src, _q in sorted((query_overrides or {}).items()):
+            cmd += [f"--query-{_src}", _q]
+        if sc_ids:
+            cmd += ["--scopus-ids", ",".join(sc_ids)]
+        if wo_ids:
+            cmd += ["--wos-ids", ",".join(wo_ids)]
+        if or_ids:
+            cmd += ["--orcid-ids", ",".join(or_ids)]
+        if oa_ids:
+            cmd += ["--openalex-ids", ",".join(oa_ids)]
+        cmd += ["--env", env_choice, "--run-id", new_run_id]
+        if dry_run:
+            cmd.append("--dry-run")
+        if no_email:
+            cmd.append("--no-email")
+
+        log_fh   = open(log_file, "w", encoding="utf-8")
+        acquired = try_acquire_run_lock(
+            run_id=new_run_id, pid=0,
+            sources=selected_sources,
+            dry_run=dry_run,
+            log_file=str(log_file),
+            cmd=cmd,
+        )
+        if not acquired:
+            log_fh.close()
+            log_file.unlink(missing_ok=True)
+            st.error("⛔ Un run est déjà en cours. Attendez sa fin avant de re-déclencher.")
+            return
+
+        proc = subprocess.Popen(
+            cmd, stdout=log_fh, stderr=subprocess.STDOUT,
+            cwd=str(root), env={**os.environ},
+        )
+        get_state_file().write_text(
+            json.dumps({
+                "run_id":     new_run_id,
+                "pid":        proc.pid,
+                "env":        env_choice,
+                "started_at": datetime.datetime.now().isoformat(),
+                "sources":    selected_sources,
+                "dry_run":    dry_run,
+                "log_file":   str(log_file),
+                "cmd":        " ".join(cmd),
+            }, indent=2),
+            encoding="utf-8",
+        )
+        log_fh.close()
+        st.session_state["_redirect_page"] = "Lancer un run"
+        st.rerun()
+
+
+# ── Main render ────────────────────────────────────────────────────────────────
+
+def render_run_table(
+    db: PipelineDB,
+    root: Path | None = None,
+    active_env: str | None = None,
+) -> None:
     """Render the filterable, paginated runs table with review tracking."""
+    if root is None:
+        root = Path(__file__).resolve().parent.parent.parent
+    if active_env is None:
+        active_env = os.environ.get("APP_ENV", "dev")
+
     _username, _display_name, _role = current_user()
 
     # ── Execute any pending mutation BEFORE fetching table data ───────────────
@@ -309,3 +644,11 @@ def render_run_table(db: PipelineDB) -> None:
                 st.session_state["_jump_to_run"] = _rid
                 st.query_params["page"] = "Publications"
                 st.rerun()
+
+        # col 10: detail + re-trigger (single dialog, re-trigger section admin only)
+        with _c[10]:
+            _icon = ":material/content_copy:" if _role == "admin" else ":material/info:"
+            _help = "Détail + re-déclencher" if _role == "admin" else "Voir le détail du run"
+            if st.button("", icon=_icon, key=f"detail_{_rid}",
+                         use_container_width=True, help=_help):
+                _run_dialog(_row.to_dict(), _role, root, active_env)

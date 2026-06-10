@@ -117,6 +117,11 @@ with st.sidebar:
         st.warning("Connecté à la **production** — les actions sont réelles.")
 
     st.markdown("---")
+    # Consume session-state redirects set by dialogs (which can't write query_params reliably)
+    _redirect = st.session_state.pop("_redirect_page", None)
+    if _redirect:
+        st.query_params["page"] = _redirect
+
     _allowed = get_allowed_pages(_role)
     _qp      = st.query_params.get("page", _allowed[0] if _allowed else "")
     page     = _qp if _qp in _allowed else (_allowed[0] if _allowed else "")

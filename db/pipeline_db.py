@@ -278,14 +278,14 @@ class PipelineDB:
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_abstract_ok BOOLEAN",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_pdf_ok BOOLEAN",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_checked_at TIMESTAMP",
-                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS epfl_affiliation_valid BOOLEAN DEFAULT TRUE",
-                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS epfl_is_former BOOLEAN DEFAULT FALSE",
-                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS dspace_link_valid BOOLEAN DEFAULT TRUE",
-                # Former members that existed before this column was added got DEFAULT TRUE.
-                # Set them conservatively to FALSE: they are not linkable unless the enricher
-                # explicitly sets dspace_link_valid=TRUE (tolerated former members).
-                "UPDATE pub_authors SET dspace_link_valid = FALSE"
-                " WHERE epfl_is_former = TRUE AND dspace_link_valid = TRUE",
+                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS epfl_affiliation_valid BOOLEAN",
+                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS epfl_is_former BOOLEAN",
+                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS dspace_link_valid BOOLEAN",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS query_overrides TEXT",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS scopus_ids TEXT",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS wos_ids TEXT",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS orcid_ids TEXT",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS openalex_ids TEXT",
             ]:
                 con.execute(_migration)
         finally:
@@ -504,15 +504,28 @@ class PipelineDB:
 
     # ── run lifecycle ────────────────────────────────────────────────────
 
-    def start_run(self, run_id, window_start, window_end, sources, dry_run=False):
+    def start_run(self, run_id, window_start, window_end, sources, dry_run=False,
+                  query_overrides=None, scopus_ids=None, wos_ids=None,
+                  orcid_ids=None, openalex_ids=None):
         try:
             started_at = datetime.strptime(run_id[:19], "%Y-%m-%d_%H-%M-%S")
         except (ValueError, TypeError):
             started_at = datetime.now()
+
+        def _ids(lst):
+            return ",".join(lst) if lst else None
+
         self._exec(
-            "INSERT INTO runs (run_id,started_at,window_start,window_end,sources,dry_run,status)"
-            " VALUES (?,?,?,?,?,?,'running')",
-            [run_id, started_at, window_start, window_end, ",".join(sources), dry_run])
+            "INSERT INTO runs"
+            " (run_id,started_at,window_start,window_end,sources,dry_run,status,"
+            "  query_overrides,scopus_ids,wos_ids,orcid_ids,openalex_ids)"
+            " VALUES (?,?,?,?,?,?,'running',?,?,?,?,?)",
+            [
+                run_id, started_at, window_start, window_end,
+                ",".join(sources), dry_run,
+                json.dumps(query_overrides, ensure_ascii=False) if query_overrides else None,
+                _ids(scopus_ids), _ids(wos_ids), _ids(orcid_ids), _ids(openalex_ids),
+            ])
 
     def finish_run(self, run_id, status="completed"):
         self._exec("UPDATE runs SET ended_at=NOW(), status=? WHERE run_id=?",
@@ -702,28 +715,61 @@ class PipelineDB:
         logger.info("DB: %d units upserted", len(seen))
 
     # ── pub links ────────────────────────────────────────────────────────
-
     def record_pub_author_links(self, run_id, df):
         if df is None or df.empty:
             return
+
         s = self._safe
+        logger.debug("record_pub_author_links: columns=%s", list(df.columns))
         rows = []
+
+        # Fonction utilitaire locale pour une conversion booléenne stricte
+        def _parse_bool(val, default=False):
+            if pd.isna(val):  # Gère None, np.nan, pd.NA, NaT
+                return default
+            if isinstance(val, str):
+                # Évaluation stricte des chaînes de caractères
+                return val.strip().lower() in ('true', '1', 'yes', 't', 'y')
+            return bool(val)
+
         for _, r in df.iterrows():
-            if not (s(r.get("sciper_id")) and s(r.get("row_id"))):
+            # Extraction et nettoyage des identifiants clés
+            sciper = s(r.get("sciper_id"))
+            row_id = s(r.get("row_id"))
+
+            if not (sciper and row_id):
                 continue
+
+            # Nettoyage sécurisé des booléens
             fmr_raw = r.get("epfl_is_former")
-            dl_raw  = r.get("dspace_link_valid")
-            fmr_val = bool(fmr_raw) if fmr_raw is not None else False
-            dl_val  = bool(dl_raw)  if dl_raw  is not None else bool(s(r.get("sciper_id")))
-            rows.append((run_id, s(r.get("row_id")), s(r.get("sciper_id")), s(r.get("role")),
-                         fmr_val, dl_val))
+            fmr_val = _parse_bool(fmr_raw, default=False)
+
+            dl_raw = r.get("dspace_link_valid")
+            # Si dl_raw est vide, la valeur par défaut dépend de la présence du SCIPER
+            # (qui est toujours True à ce stade grâce à la condition du 'if not' ci-dessus)
+            dl_val = _parse_bool(dl_raw, default=bool(sciper))
+
+            logger.debug("record_pub_author_links: sciper=%s fmr_val=%s dl_val=%s", 
+                         sciper, fmr_val, dl_val)
+
+            rows.append((
+                run_id, 
+                row_id, 
+                sciper, 
+                s(r.get("role")),
+                fmr_val, 
+                dl_val
+            ))
+
+        # Exécution de l'insertion en lot
         self._executemany(
-            "INSERT INTO pub_authors (run_id,row_id,sciper,role,epfl_is_former,dspace_link_valid)"
-            " VALUES (?,?,?,?,?,?)"
-            " ON CONFLICT (run_id,row_id,sciper) DO UPDATE SET"
-            " epfl_is_former=excluded.epfl_is_former,"
-            " dspace_link_valid=excluded.dspace_link_valid",
-            rows)
+            "INSERT INTO pub_authors (run_id, row_id, sciper, role, epfl_is_former, dspace_link_valid)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (run_id, row_id, sciper) DO UPDATE SET"
+            " epfl_is_former = excluded.epfl_is_former,"
+            " dspace_link_valid = excluded.dspace_link_valid",
+            rows
+        )
 
     def record_pub_unit_links(self, run_id, df):
         if df is None or df.empty:
@@ -861,7 +907,8 @@ class PipelineDB:
             f" (SELECT COUNT(*) FROM run_publications rp"
             f"  WHERE rp.run_id = runs.run_id"
             f"  AND rp.quality_pdf_ok = FALSE) AS quality_no_pdf_count,"
-            f" claimed_by, claimed_at, review_status, review_updated_at"
+            f" claimed_by, claimed_at, review_status, review_updated_at,"
+            f" query_overrides, scopus_ids, wos_ids, orcid_ids, openalex_ids"
             f" FROM runs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
             params)
 
@@ -1206,11 +1253,21 @@ class PipelineDB:
 
     # Weak-status SQL fragments — hardcoded, never user-supplied.
     _WEAK_ST_SQL  = "','".join(["hôte", "hors epfl", "étudiant"])
-    _WEAK_POS_SQL = "','".join([
-        "academic guest", "consultant", "engineer", "external employee",
-        "external student", "guest", "guest phd student", "lecturer",
-        "postdoctoral researcher", "visiting professor",
-    ])
+    _WEAK_POS_SQL = "','".join(
+        [
+            "academic guest",
+            "consultant",
+            "doctoral assistant",
+            "engineer",
+            "external employee",
+            "external student",
+            "guest",
+            "guest phd student",
+            "lecturer",
+            "postdoctoral researcher",
+            "visiting professor",
+        ]
+    )
 
     @staticmethod
     def _as_filter_list(v):

@@ -265,6 +265,11 @@ def run_pipeline(
     sources: Optional[List[str]] = None,
     run_id: Optional[str] = None,
     env: Optional[str] = None,
+    query_overrides: Optional[Dict[str, str]] = None,
+    scopus_ids: Optional[List[str]] = None,
+    wos_ids: Optional[List[str]] = None,
+    orcid_ids: Optional[List[str]] = None,
+    openalex_ids: Optional[List[str]] = None,
 ) -> Dict[str, pd.DataFrame | str | None]:
     """
     Harvest, deduplicate, enrich, and (optionally) load data into DSpace.
@@ -286,8 +291,13 @@ def run_pipeline(
     export_dir.mkdir(parents=True, exist_ok=True)
 
     db = PipelineDB()
-    db.start_run(run_id=execution_timestamp, window_start=start_date, window_end=end_date,
-                 sources=active_sources, dry_run=dry_run)
+    db.start_run(
+        run_id=execution_timestamp, window_start=start_date, window_end=end_date,
+        sources=active_sources, dry_run=dry_run,
+        query_overrides=query_overrides,
+        scopus_ids=scopus_ids, wos_ids=wos_ids,
+        orcid_ids=orcid_ids, openalex_ids=openalex_ids,
+    )
 
     # -------------------- Harvest
     def safe_harvest(name: str, fn) -> pd.DataFrame:
@@ -767,6 +777,10 @@ def main():
         if v is not None
     }
 
+    # Freeze the explicit --query-{src} overrides before the ID-based queries
+    # are merged in; stored separately so the UI can display them distinctly.
+    explicit_query_overrides = dict(override)
+
     # Si des IDs sont fournis, on fabrique des queries par identifiant.
     # Priority: explicit --query-{src} > ID-based query > default from config.py.
     if scopus_ids or wos_ids or orcid_ids or openalex_ids:
@@ -829,6 +843,11 @@ def main():
             sources=selected_sources,
             run_id=effective_run_id,
             env=active_env,
+            query_overrides=explicit_query_overrides or None,
+            scopus_ids=scopus_ids or None,
+            wos_ids=wos_ids or None,
+            orcid_ids=orcid_ids or None,
+            openalex_ids=openalex_ids or None,
         )
         sys.exit(0)
     except Exception as e:
