@@ -496,8 +496,8 @@ def _build_authors_modal_dict(d: pd.DataFrame, db: PipelineDB, sel_run: list) ->
             "epfl_position":    pos,
             "main_unit":        _clean_str(ar.get("main_unit")),
             "weak":             is_weak(st_val, pos),
-            "dspace_link_valid": bool(_dl) if _dl is not None else True,
-            "epfl_is_former":   bool(ar.get("epfl_is_former", False)),
+            "dspace_link_valid": bool(_dl) if _dl is not None and not pd.isna(_dl) else True,
+            "epfl_is_former":   bool(ar.get("epfl_is_former")) if ar.get("epfl_is_former") is not None and not pd.isna(ar.get("epfl_is_former")) else False,
         })
 
     for _, dr in det_df.iterrows():
