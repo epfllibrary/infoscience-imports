@@ -47,6 +47,7 @@ class AuthorProcessor:
         self.df = df
         self.logger = logger
         self._accred_cache = {}
+        self._no_accreds_scipers: set = set()
         # Allow injection for testing; create lazily if not provided.
         self._dspace_wrapper = dspace_client
 
@@ -313,6 +314,9 @@ class AuthorProcessor:
                 records = None
             self.logger.debug("Person record: %s", records)
 
+            if not (isinstance(records, list) and records):
+                self._no_accreds_scipers.add(str(sciper_id))
+
             if isinstance(records, list) and records:
                 prioritized_unit = None
                 allowed_units = []
@@ -445,6 +449,65 @@ class AuthorProcessor:
                     return unit_label
 
         return None
+
+    def _check_former_member_validity(self, dspace_uuid: str, pub_year: int) -> tuple:
+        """Return (is_valid, is_former) for a DSpace person item.
+
+        is_former: True when epfl.sciper.active = false (confirmed former member).
+        is_valid:  True when the member was still affiliated within 1 year of the
+                   publication, or when the member is current, or on any fetch error
+                   (permissive fallback so valid members are never accidentally rejected).
+
+        Possible combinations:
+          (True,  False) — current member or fallback
+          (True,  True)  — former, end date within 1-year window (tolerated)
+          (False, True)  — former, end date outside window (rejected)
+        """
+        try:
+            item = self.dspace_wrapper._get_item(dspace_uuid)
+            if item is None:
+                self.logger.debug("DSpace item not found for UUID %s", dspace_uuid)
+                return True, False
+
+            metadata = getattr(item, "metadata", {}) or {}
+
+            active_entries = metadata.get("epfl.sciper.active", [])
+            if active_entries and str(active_entries[0].get("value", "")).lower() == "true":
+                self.logger.debug("UUID %s is marked active in DSpace", dspace_uuid)
+                return True, False
+
+            end_date_entries = metadata.get("oairecerif.affiliation.endDate", [])
+            if not end_date_entries:
+                self.logger.debug(
+                    "No oairecerif.affiliation.endDate for UUID %s — treating as invalid",
+                    dspace_uuid,
+                )
+                return False, True
+
+            parsed_years = []
+            for entry in end_date_entries:
+                raw = str(entry.get("value", "") or "").strip()
+                if raw:
+                    try:
+                        parsed_years.append(int(raw[:4]))
+                    except (ValueError, TypeError):
+                        pass
+
+            if not parsed_years:
+                return False, True
+
+            most_recent_year = max(parsed_years)
+            is_valid = (pub_year - most_recent_year) <= 1
+            self.logger.debug(
+                "Former member UUID %s: most_recent_end_year=%d pub_year=%d valid=%s",
+                dspace_uuid, most_recent_year, pub_year, is_valid,
+            )
+            return is_valid, True
+        except Exception as exc:
+            self.logger.warning(
+                "Error checking former member status for UUID %s: %s", dspace_uuid, exc
+            )
+            return True, False
 
     def _query_dspace_authority(self, query):
         """
@@ -627,6 +690,9 @@ class AuthorProcessor:
                 "guessing_mainunit": None,
                 "mainunit_match": None,
                 "final_mainunit": None,
+                "epfl_affiliation_valid": True,
+                "epfl_is_former": False,
+                "dspace_link_valid": None,
             }
 
             # Step 1: Query DSpace for sciper and uuid
@@ -715,6 +781,49 @@ class AuthorProcessor:
                 result["final_mainunit"] = (
                     result["guessing_mainunit"] or result["epfl_api_mainunit_name"]
                 )
+
+            # Step 6: Former member validity check — when EPFL API has no accreds,
+            # the person left EPFL. Two sub-cases:
+            #   a) DSpace profile exists → use affiliation end date to decide
+            #      tolerated (within 1-year window) vs. rejected.
+            #   b) No DSpace profile → no end date available; reject conservatively.
+            sciper_set = result.get("sciper_id")
+            if sciper_set and str(sciper_set) in self._no_accreds_scipers:
+                if result.get("dspace_uuid") and publication_year:
+                    try:
+                        is_valid, is_former = self._check_former_member_validity(
+                            result["dspace_uuid"], publication_year
+                        )
+                        result["epfl_is_former"] = is_former
+                        if not is_valid:
+                            self.logger.warning(
+                                "Rejected former EPFL member sciper=%s: affiliation end date "
+                                "outside 1-year window of pub_year %d",
+                                sciper_set,
+                                publication_year,
+                            )
+                            result["dspace_link_valid"] = False
+                            result["final_mainunit"] = None
+                    except Exception as exc:
+                        self.logger.warning(
+                            "Former member check failed for sciper=%s: %s", sciper_set, exc
+                        )
+                else:
+                    # No DSpace profile — cannot check affiliation window; reject.
+                    self.logger.warning(
+                        "Rejected former EPFL member sciper=%s: no accreditation and no "
+                        "DSpace profile",
+                        sciper_set,
+                    )
+                    result["epfl_is_former"] = True
+                    result["dspace_link_valid"] = False
+                    result["final_mainunit"] = None
+
+            # True only when a SCIPER was found AND not a former-rejected member.
+            # Unreconciled authors (no SCIPER) and former-rejected members both yield False.
+            # Former-tolerated members (is_valid=True, is_former=True) keep the default True.
+            if result.get("dspace_link_valid") is None:
+                result["dspace_link_valid"] = bool(result.get("sciper_id"))
 
             cache[key] = result
             return result
