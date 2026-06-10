@@ -278,6 +278,14 @@ class PipelineDB:
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_abstract_ok BOOLEAN",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_pdf_ok BOOLEAN",
                 "ALTER TABLE run_publications ADD COLUMN IF NOT EXISTS quality_checked_at TIMESTAMP",
+                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS epfl_affiliation_valid BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS epfl_is_former BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE pub_authors ADD COLUMN IF NOT EXISTS dspace_link_valid BOOLEAN DEFAULT TRUE",
+                # Former members that existed before this column was added got DEFAULT TRUE.
+                # Set them conservatively to FALSE: they are not linkable unless the enricher
+                # explicitly sets dspace_link_valid=TRUE (tolerated former members).
+                "UPDATE pub_authors SET dspace_link_valid = FALSE"
+                " WHERE epfl_is_former = TRUE AND dspace_link_valid = TRUE",
             ]:
                 con.execute(_migration)
         finally:
@@ -699,11 +707,22 @@ class PipelineDB:
         if df is None or df.empty:
             return
         s = self._safe
-        rows = [(run_id, s(r.get("row_id")), s(r.get("sciper_id")), s(r.get("role")))
-                for _, r in df.iterrows()
-                if s(r.get("sciper_id")) and s(r.get("row_id"))]
+        rows = []
+        for _, r in df.iterrows():
+            if not (s(r.get("sciper_id")) and s(r.get("row_id"))):
+                continue
+            fmr_raw = r.get("epfl_is_former")
+            dl_raw  = r.get("dspace_link_valid")
+            fmr_val = bool(fmr_raw) if fmr_raw is not None else False
+            dl_val  = bool(dl_raw)  if dl_raw  is not None else bool(s(r.get("sciper_id")))
+            rows.append((run_id, s(r.get("row_id")), s(r.get("sciper_id")), s(r.get("role")),
+                         fmr_val, dl_val))
         self._executemany(
-            "INSERT OR IGNORE INTO pub_authors (run_id,row_id,sciper,role) VALUES (?,?,?,?)",
+            "INSERT INTO pub_authors (run_id,row_id,sciper,role,epfl_is_former,dspace_link_valid)"
+            " VALUES (?,?,?,?,?,?)"
+            " ON CONFLICT (run_id,row_id,sciper) DO UPDATE SET"
+            " epfl_is_former=excluded.epfl_is_former,"
+            " dspace_link_valid=excluded.dspace_link_valid",
             rows)
 
     def record_pub_unit_links(self, run_id, df):
@@ -1440,7 +1459,8 @@ class PipelineDB:
             " rp.workspace_id, rp.workflow_id,"
             " a.sciper, a.full_name, a.first_name, a.last_name,"
             " a.orcid, a.epfl_status, a.epfl_position, a.main_unit,"
-            " a.dspace_uuid AS author_dspace_uuid, pa.role"
+            " a.dspace_uuid AS author_dspace_uuid, pa.role,"
+            " pa.epfl_is_former, pa.dspace_link_valid"
             " FROM run_publications rp"
             " JOIN publications p ON p.pub_id = rp.pub_id"
             " INNER JOIN pub_authors pa ON pa.run_id=rp.run_id AND pa.row_id=rp.row_id"
@@ -1479,7 +1499,8 @@ class PipelineDB:
             " rp.status, rp.workspace_id, rp.workflow_id,"
             " a.sciper, a.full_name, a.first_name, a.last_name,"
             " a.orcid, a.epfl_status, a.epfl_position, a.main_unit,"
-            " a.dspace_uuid AS author_dspace_uuid, pa.role"
+            " a.dspace_uuid AS author_dspace_uuid, pa.role,"
+            " pa.epfl_is_former, pa.dspace_link_valid"
             " FROM run_publications rp"
             " JOIN publications p ON p.pub_id = rp.pub_id"
             " INNER JOIN _pairs       ON _pairs.run_id = rp.run_id"
