@@ -8,7 +8,7 @@ import pandas as pd
 
 _WEAK_STATUSES: frozenset[str] = frozenset({"hôte", "hors epfl", "étudiant"})
 _WEAK_PERSONNEL_POSITIONS: frozenset[str] = frozenset({
-    "academic guest", "consultant", "engineer", "external employee",
+    "academic guest", "consultant", "doctoral assistant", "engineer", "external employee",
     "external student", "guest", "guest phd student", "lecturer",
     "postdoctoral researcher", "visiting professor",
 })
