@@ -121,10 +121,12 @@ def _render_filters(db: PipelineDB) -> None:
         with _r3[1]:
             st.selectbox(
                 "Statut auteurs EPFL",
-                ["Tous", "⚠️ Statut faible", "✅ Statut fort"],
+                ["Tous", "⚠️ Statut faible", "✅ Statut fort", "⏳ Anciens membres"],
                 help=(
                     "Faible : tous les auteurs sont hôtes, externes ou étudiants.\n"
-                    "Fort : au moins un auteur permanent."
+                    "Fort : au moins un auteur permanent.\n"
+                    "⏳ Anciens membres : tous les auteurs EPFL sont d'anciens membres "
+                    "dont la date de fin est hors fenêtre d'un an."
                 ),
                 key="pf_epfl",
             )
@@ -290,8 +292,9 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
             st.toast(f"Synchronisation effectuée — statut : {_status_label}.", icon="✅")
 
     filter_kwargs, sel_run = _build_filter_kwargs(db)
+    former_only = st.session_state.get("pf_epfl", "Tous") == "⏳ Anciens membres"
 
-    filter_sig = str(sorted(filter_kwargs.items()))
+    filter_sig = str(sorted(filter_kwargs.items())) + f"|former={former_only}"
     if "pub_page" not in st.session_state:
         st.session_state["pub_page"] = 1
     if st.session_state.get("_pub_filter_sig") != filter_sig:
@@ -365,6 +368,20 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
     _cols = [c for c in _cols if c in d.columns]
 
     authors_by_row = _build_authors_modal_dict(d, db, sel_run)
+
+    if former_only:
+        former_ids = {
+            key for key, auths in authors_by_row.items()
+            if auths and all(a.get("epfl_is_former", False) for a in auths)
+        }
+        d = d[d.apply(
+            lambda r: f"{_clean_str(r.get('run_id'))}:{_clean_str(r.get('row_id'))}" in former_ids,
+            axis=1,
+        )]
+        if d.empty:
+            st.info("Aucune publication avec uniquement des auteurs EPFL former dans cette page.")
+            return
+
     render_pub_component(d, _cols, authors_by_row, ds_base, role=role, db=db)
 
     _render_downloads(db, filter_kwargs, sel_run)
@@ -450,28 +467,57 @@ def _enrich_dataframe(pub_df: pd.DataFrame, db: PipelineDB, sel_run: list, ds_ba
 
 def _build_authors_modal_dict(d: pd.DataFrame, db: PipelineDB, sel_run: list) -> dict:
     if len(sel_run) == 1:
-        auth_df = db.get_pub_authors_for_run(sel_run[0])
+        auth_df = db.get_pub_authors_for_run(sel_run[0]).copy()
+        auth_df["run_id"] = sel_run[0]
+        det_df = db.get_detected_authors_for_run(sel_run[0]).copy()
+        if not det_df.empty:
+            det_df["run_id"] = sel_run[0]
     else:
         pairs   = list(zip(d["run_id"], d["row_id"]))
         auth_df = db.get_pub_authors_for_rows(pairs)
+        det_df  = db.get_detected_authors_for_rows(pairs)
 
     out: dict[str, list] = {}
+
     for _, ar in auth_df.iterrows():
-        rk = _clean_str(ar.get("row_id"))
+        rk    = _clean_str(ar.get("row_id"))
+        run_k = _clean_str(ar.get("run_id"))
         if not rk:
             continue
         st_val = _clean_str(ar.get("epfl_status"))
         pos    = _clean_str(ar.get("epfl_position"))
-        out.setdefault(rk, []).append({
-            "name":          _clean_str(ar.get("full_name")) or _clean_str(ar.get("sciper")) or "?",
-            "sciper":        _clean_str(ar.get("sciper")),
-            "dspace_uuid":   _clean_str(ar.get("author_dspace_uuid")),
-            "orcid":         _clean_str(ar.get("orcid")),
-            "epfl_status":   st_val,
-            "epfl_position": pos,
-            "main_unit":     _clean_str(ar.get("main_unit")),
-            "weak":          is_weak(st_val, pos),
+        _dl  = ar.get("dspace_link_valid")
+        out.setdefault(f"{run_k}:{rk}", []).append({
+            "name":             _clean_str(ar.get("full_name")) or _clean_str(ar.get("sciper")) or "?",
+            "sciper":           _clean_str(ar.get("sciper")),
+            "dspace_uuid":      _clean_str(ar.get("author_dspace_uuid")),
+            "orcid":            _clean_str(ar.get("orcid")),
+            "epfl_status":      st_val,
+            "epfl_position":    pos,
+            "main_unit":        _clean_str(ar.get("main_unit")),
+            "weak":             is_weak(st_val, pos),
+            "dspace_link_valid": bool(_dl) if _dl is not None else True,
+            "epfl_is_former":   bool(ar.get("epfl_is_former", False)),
         })
+
+    for _, dr in det_df.iterrows():
+        rk    = _clean_str(dr.get("row_id"))
+        run_k = _clean_str(dr.get("run_id"))
+        if not rk:
+            continue
+        out.setdefault(f"{run_k}:{rk}", []).append({
+            "name":             _clean_str(dr.get("author_name")) or "?",
+            "sciper":           "",
+            "dspace_uuid":      "",
+            "orcid":            "",
+            "epfl_status":      "",
+            "epfl_position":    "",
+            "main_unit":        "",
+            "weak":             False,
+            "dspace_link_valid": False,
+            "epfl_is_former":   False,
+        })
+
     return out
 
 

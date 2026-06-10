@@ -630,6 +630,7 @@ hr.ptbl-sep {
 .ptbl-st-rejected     { background: #FFF5F5; color: #B91C1C; border-color: #FECACA; border-radius: 4px; }
 .ptbl-st-error        { background: #FFF5F5; color: #B91C1C; border-color: #FECACA; border-radius: 4px; }
 .ptbl-st-deleted      { background: #F8FAFC; color: #f49f0c; border-color: #de670b; border-radius: 4px; }
+.ptbl-former-epfl     { background: #FAF5FF; color: #7E22CE; border-color: #E9D5FF; border-radius: 4px; }
 
 /* Type tag */
 .ptbl-type {
@@ -869,10 +870,10 @@ hr.ptbl-sep {
     border-radius: 6px;
     background: #FAFFFE;
 }
-.modal-author-weak {
-    border-left-color: #F59E0B;
-    background: #FFFDF5;
-}
+.modal-author-weak            { border-left-color: #F59E0B; background: #FFFDF5; }
+.modal-author-former          { border-left-color: #9333EA; background: #FAF5FF; }
+.modal-author-former-rejected { border-left-color: #DC2626; background: #FFF5F5; }
+.modal-author-unreconciled    { border-left-color: #94A3B8; background: #F8FAFC; }
 .modal-author-hd {
     display: flex;
     align-items: center;
@@ -891,6 +892,28 @@ hr.ptbl-sep {
     font-weight: 600;
     color: #92400E;
     background: #FEF3C7;
+    padding: 1px 6px;
+    border-radius: 100px;
+    white-space: nowrap;
+}
+.modal-badge-former {
+    font-size: 10px;
+    font-weight: 600;
+    color: #7E22CE;
+    background: #FAF5FF;
+    padding: 1px 6px;
+    border-radius: 100px;
+    white-space: nowrap;
+}
+.modal-badge-former--rejected {
+    color: #B91C1C;
+    background: #FFF5F5;
+}
+.modal-badge-unreconciled {
+    font-size: 10px;
+    font-weight: 600;
+    color: #475569;
+    background: #F1F5F9;
     padding: 1px 6px;
     border-radius: 100px;
     white-space: nowrap;
@@ -942,14 +965,33 @@ hr.ptbl-sep {
     background: #F3F4F6;
     border-color: #D1D5DB;
 }
-/* ORCID — vert émeraude, monospace */
+/* ORCID — vert émeraude, monospace; rendered as <a> link */
 .modal-chip-orcid {
     font-family: 'Roboto Mono', monospace;
     font-size: 10px;
     color: #059669;
     background: #ECFDF5;
     border-color: #A7F3D0;
+    text-decoration: none;
+    display: inline-block;
 }
+a.modal-chip-orcid:hover {
+    background: #D1FAE5;
+    border-color: #34D399;
+    color: #047857;
+    text-decoration: none;
+}
+
+/* Material Symbol status icon in author modal header */
+.modal-ms-icon {
+    font-size: 16px !important;
+    margin-right: 2px !important;
+    flex-shrink: 0;
+}
+.modal-ms-active           { color: #16A34A; }
+.modal-ms-former-tolerated { color: #D97706; }
+.modal-ms-former-rejected  { color: #DC2626; }
+.modal-ms-unreconciled     { color: #64748B; }
 
 /* Flagged duplicate cards */
 .modal-dup-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }

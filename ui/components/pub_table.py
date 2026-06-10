@@ -166,6 +166,8 @@ def _main_content(row: dict, title: str, has_run: bool, idx: int) -> str:
         meta += '<span class="ms ptbl-no-abst ptbl-no-abst--missing" title="Résumé manquant">hide_source</span>'
     else:
         meta += '<span class="ms ptbl-no-abst ptbl-no-abst--present" title="Résumé présent">subject</span>'
+    if row.get("_all_former_epfl"):
+        meta += '<span class="ptbl-badge ptbl-former-epfl" title="Tous les auteurs EPFL sont d\'anciens membres rejetés">Former EPFL</span>'
     if has_run:
         meta += f'<span class="ptbl-run-chip">{_s(row.get("run_id"))}</span>'
 
@@ -284,15 +286,53 @@ def _authors_modal(title: str, authors: list, ds_base: str = "") -> None:
         unit       = _esc(a.get("main_unit") or "")
         orcid      = _esc(a.get("orcid") or "")
 
-        card_cls   = "modal-author-card modal-author-weak" if weak else "modal-author-card"
-        weak_badge = '<span class="modal-badge-weak">⚠ Statut faible</span>' if weak else ""
+        is_former       = a.get("epfl_is_former", False)
+        is_rejected     = is_former and not a.get("dspace_link_valid", True)
+        is_active       = bool(sciper) and not is_former
+        is_unreconciled = not bool(sciper)
+
+        if is_rejected:
+            card_cls = "modal-author-card modal-author-former-rejected"
+        elif is_former:
+            card_cls = "modal-author-card modal-author-former"
+        elif is_unreconciled:
+            card_cls = "modal-author-card modal-author-unreconciled"
+        elif weak:
+            card_cls = "modal-author-card modal-author-weak"
+        else:
+            card_cls = "modal-author-card"
+
+        weak_badge   = '<span class="modal-badge-weak">⚠ Statut faible</span>' if weak and not is_unreconciled else ""
+        former_badge = (
+            '<span class="modal-badge-former modal-badge-former--rejected">Former EPFL (rejeté)</span>'
+            if is_rejected else
+            '<span class="modal-badge-former">Former EPFL (toléré)</span>'
+            if is_former else ""
+        )
+        unreconciled_badge = '<span class="modal-badge-unreconciled">Non réconcilié</span>' if is_unreconciled else ""
+
+        if is_rejected:
+            ms_icon = '<span class="ms modal-ms-icon modal-ms-former-rejected" title="Ancien membre EPFL — affiliation hors fenêtre (rejetée)">person_off</span>'
+        elif is_former:
+            ms_icon = '<span class="ms modal-ms-icon modal-ms-former-tolerated" title="Ancien membre EPFL — affiliation tolérée">schedule</span>'
+        elif is_active:
+            ms_icon = '<span class="ms modal-ms-icon modal-ms-active" title="Membre EPFL actif">verified</span>'
+        elif is_unreconciled:
+            ms_icon = '<span class="ms modal-ms-icon modal-ms-unreconciled" title="Affiliation EPFL détectée — non réconcilié (SCIPER introuvable)">person_search</span>'
+        else:
+            ms_icon = ""
+
         people     = (f'<a href="https://people.epfl.ch/{sciper}" target="_blank" class="modal-author-link">People →</a>'
                       if sciper else "")
         infoscience = (f'<a href="{ds_base}/entities/person/{dspace_uuid}" target="_blank" class="modal-author-link">Infoscience →</a>'
                        if dspace_uuid and ds_base else "")
 
         sciper_chip = f'<span class="modal-chip modal-chip-sciper">SCIPER {_esc(sciper)}</span>' if sciper else ""
-        orcid_chip  = f'<span class="modal-chip modal-chip-orcid">ORCID {_esc(orcid)}</span>' if orcid else ""
+        orcid_chip  = (
+            f'<a href="https://orcid.org/{orcid}" target="_blank" class="modal-chip modal-chip-orcid">'
+            f'ORCID {orcid}</a>'
+            if orcid else ""
+        )
         status_chip = f'<span class="modal-chip modal-chip-status">{status}</span>' if status else ""
         pos_chip    = f'<span class="modal-chip modal-chip-pos">{pos}</span>' if pos else ""
         unit_chip   = f'<span class="modal-chip modal-chip-unit">{unit}</span>' if unit else ""
@@ -301,8 +341,9 @@ def _authors_modal(title: str, authors: list, ds_base: str = "") -> None:
         parts.append(
             f'<div class="{card_cls}">'
             f'<div class="modal-author-hd">'
+            f'{ms_icon}'
             f'<span class="modal-author-name">{name}</span>'
-            f'{weak_badge}{people}{infoscience}'
+            f'{weak_badge}{former_badge}{unreconciled_badge}{people}{infoscience}'
             f'</div>'
             f'<div class="modal-chips">{chips}{sciper_chip}{orcid_chip}</div>'
             f'</div>'
@@ -474,9 +515,11 @@ def render_pub_component(
 
         # ── Rows ──────────────────────────────────────────────────────────────
         for idx, row in enumerate(d.to_dict("records")):
-            auths    = authors_by_row.get(_s(row.get("row_id")), [])
-            has_flag = _nn(row.get("flagged_publication"))
-            title    = _s(row.get("title"), "—")
+            auths      = authors_by_row.get(f"{_s(row.get('run_id'))}:{_s(row.get('row_id'))}", [])
+            all_former = bool(auths) and all(a.get("epfl_is_former", False) for a in auths)
+            row        = {**row, "_all_former_epfl": all_former}
+            has_flag   = _nn(row.get("flagged_publication"))
+            title      = _s(row.get("title"), "—")
             ws_raw   = row.get("workspace_id")
             wf_raw   = row.get("workflow_id")
             uuid_raw = row.get("dspace_item_uuid")
