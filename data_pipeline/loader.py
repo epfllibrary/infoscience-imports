@@ -1487,7 +1487,11 @@ class Loader:
         version_metadata = get_version_mapping(upw_version)
 
         if not license_metadata:
-            logger.error(f"License mapping for '{upw_license}' does not exist.")
+            logger.warning(
+                "No license mapping for '%s' — skipping file metadata patch for workspace %s",
+                upw_license, workspace_id,
+            )
+            return {}
 
         patch_operations = [
             {
