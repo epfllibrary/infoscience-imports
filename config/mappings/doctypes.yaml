@@ -26,21 +26,26 @@ source_wos:
   Data Paper:
     collection: "Journal articles"
     dc.type: "text::journal::journal article::data paper"
-  # "Book Review":
-  #   collection: "Books and Book parts"
-  #   dc.type: "text"
-  # "Letter":
-  #   collection: "Journal articles"
-  #   dc.type: "text"
-  # "Correction":
-  #   collection: "Journal articles"
-  #   dc.type: "text::journal::journal article"
-  # "Note":
-  #   collection: "Journal articles"
-  #   dc.type: "text"
-  # "News Item":
-  #   collection: "Journal articles"
-  #   dc.type: "text"
+  Book Review:
+    collection: "Books and Book parts"
+    dc.type: "text"
+    rejected: true
+  Letter:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
+  Correction:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+    rejected: true
+  Note:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
+  News Item:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
 
 source_scopus:
   Article:
@@ -76,23 +81,33 @@ source_scopus:
   Business Article:
     collection: "Journal articles"
     dc.type: "text::journal::journal article"
-  # "Erratum":
-  #   collection: "Journal articles"
-  #   dc.type: "text::journal::journal article"
-  # "Note":
-  #   collection: ""
-  #   dc.type: "text"
-  # "Short Survey":
-  #   collection: ""
-  #   dc.type: "text"
-  # "Press Release":
-  #   collection: ""
-  #   dc.type: "text"
-  # "Other":
-  #   collection: ""
-  #   dc.type: "text"
+  Erratum:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+    rejected: true
+  Note:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
+  Short Survey:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
+  Press Release:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
+  Other:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
 
 source_openalex:
+  # Native OpenAlex work types (x["type"]) — authoritative field since 2024;
+  # type_crossref is deprecated and often absent.
+  #
+  # rejected: true  →  type is known but not compatible for Infoscience imports;
+  #                    records with this type are filtered out during harvesting.
   article:
     collection: "Journal articles"
     dc.type: "text::journal::journal article::research article"
@@ -107,43 +122,215 @@ source_openalex:
     dc.type: "text::journal::editorial"
   letter:
     collection: "Journal articles"
-    dc.type: "text"
-  review:
-    collection: "Journal articles"
-    dc.type: "text::journal::journal article::review article"
+    dc.type: "text::journal::journal article"
+    rejected: true
   preprint:
     collection: "Preprints and Working Papers"
     dc.type: "text::preprint"
-  # "dataset":
-  #   collection: "Datasets and Code"
-  #   dc.type: "dataset"
-  # "dissertation":
-  #   collection: "EPFL thesis"
-  #   dc.type: "text::thesis::doctoral thesis"
-  # "report":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::report"
-  # "standard":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::technical documentation or standard"
-  # "erratum":
-  #   collection: "Journal articles"
-  #   dc.type: "text"
-  # "grant":
-  #   collection: ""
-  #   dc.type: "text"
-  # "other":
-  #   collection: ""
-  #   dc.type: "text"
-  # "paratext":
-  #   collection: ""
-  #   dc.type: "text"
-  # "peer-review":
-  #   collection: ""
-  #   dc.type: ""
-  # "reference-entry":
-  #   collection: ""
-  #   dc.type: "text"
+  review:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::review article"
+  dataset:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+    rejected: true
+  dissertation:
+    collection: "EPFL thesis"
+    dc.type: "text::thesis::doctoral thesis"
+    rejected: true
+  erratum:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
+  grant:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  libguides:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  other:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  paratext:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  peer-review:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::review article"
+    rejected: true
+  reference-entry:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  report:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report"
+  standard:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::technical documentation or standard"
+
+source_orcid:
+  # ORCID work-type enum values (uppercase) mapped to pipeline dc_type strings.
+  JOURNAL_ARTICLE:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+  REVIEW:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::review article"
+  BOOK:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  EDITED_BOOK:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  BOOK_CHAPTER:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  BOOK_REVIEW:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::review article"
+    rejected: true
+  CONFERENCE_PAPER:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  CONFERENCE_ABSTRACT:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output"
+  CONFERENCE_POSTER:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference poster"
+  DISSERTATION_THESIS:
+    collection: "EPFL thesis"
+    dc.type: "text::thesis::doctoral thesis"
+    rejected: true
+  PREPRINT:
+    collection: "Preprints and Working Papers"
+    dc.type: "text::preprint"
+  WORKING_PAPER:
+    collection: "Preprints and Working Papers"
+    dc.type: "text::preprint"
+  DATA_SET:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+    rejected: true
+  SOFTWARE:
+    collection: "Datasets and Code"
+    dc.type: "software"
+    rejected: true
+  REPORT:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report"
+  PATENT:
+    collection: "Patents"
+    dc.type: "text::patent"
+    rejected: true
+  TECHNICAL_STANDARD:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::technical documentation or standard"
+  STANDARDS_AND_POLICY:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::technical documentation or standard"
+  ENCYCLOPEDIA_ENTRY:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  DICTIONARY_ENTRY:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  LECTURE_SPEECH:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  MAGAZINE_ARTICLE:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  NEWSPAPER_ARTICLE:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  NEWSLETTER_ARTICLE:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  TRANSLATION:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  MANUAL:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  OTHER:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  # Rejected — no meaningful Infoscience mapping
+  SUPERVISED_STUDENT_PUBLICATION:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  RESEARCH_TECHNIQUE:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  RESEARCH_TOOL:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  SPIN_OFF_COMPANY:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  LICENSE:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  REGISTERED_COPYRIGHT:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  INVENTION:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  PHYSICAL_OBJECT:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  ONLINE_RESOURCE:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  DATA_MANAGEMENT_PLAN:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  JOURNAL_ISSUE:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  ARTISTIC_PERFORMANCE:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  TEST:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  WEBSITE:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
+  UNDEFINED:
+    collection: "Other"
+    dc.type: ~
+    rejected: true
 
 source_crossref:
   book:
@@ -179,54 +366,70 @@ source_crossref:
   proceedings-article:
     collection: "Conferences, Workshops, Symposiums, and Seminars"
     dc.type: "text::conference output::conference proceedings::conference paper"
-  # "book-set":
-  #   collection: "Books and Book parts"
-  #   dc.type: "text::book/monograph"
-  # "book-track":
-  #   collection: "Books and Book parts"
-  #   dc.type: "text::book/monograph"
-  # "component":
-  #   collection: "Other"
-  #   dc.type: "text"
-  # "dataset":
-  #   collection: "Datasets and Code"
-  #   dc.type: "dataset"
-  # "dissertation":
-  #   collection: "EPFL thesis"
-  #   dc.type: "text::thesis::doctoral thesis"
-  # "journal":
-  #   collection: "Journal articles"
-  #   dc.type: "text::journal::journal article"
-  # "journal-issue":
-  #   collection: "Journal articles"
-  #   dc.type: ""
-  # "journal-volume":
-  #   collection: "Journal articles"
-  #   dc.type: "text::journal::journal article"
-  # "peer-review":
-  #   collection: "Journal articles"
-  #   dc.type: "text::journal::journal article::research article"
-  # "reference-book":
-  #   collection: "Books and Book parts"
-  #   dc.type: "text::book/monograph"
-  # "reference-entry":
-  #   collection: ""
-  #   dc.type: "text"
-  # "report":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::report"
-  # "report-series":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::report"
-  # "standard":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::technical documentation or standard"
-  # "standard-series":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::technical documentation or standard"
-  # "other":
-  #   collection: "Other"
-  #   dc.type: "text"
+  book-set:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+    rejected: true
+  book-track:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+    rejected: true
+  component:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  dataset:
+    collection: "Datasets and Code"
+    dc.type: "dataset"
+    rejected: true
+  dissertation:
+    collection: "EPFL thesis"
+    dc.type: "text::thesis::doctoral thesis"
+    rejected: true
+  journal:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+    rejected: true
+  journal-issue:
+    collection: "Journal articles"
+    dc.type: "text"
+    rejected: true
+  journal-volume:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+    rejected: true
+  peer-review:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::research article"
+    rejected: true
+  reference-book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+    rejected: true
+  reference-entry:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
+  report:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report"
+    rejected: true
+  report-series:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report"
+    rejected: true
+  standard:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::technical documentation or standard"
+    rejected: true
+  standard-series:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::technical documentation or standard"
+    rejected: true
+  other:
+    collection: "Other"
+    dc.type: "text"
+    rejected: true
 
 # Mapping of DataCite resource types to IFS3 collections and Dublin Core types
 source_datacite:
@@ -243,17 +446,20 @@ source_datacite:
     collection: "Conferences, Workshops, Symposiums, and Seminars"
     dc.type: "text::conference output::conference proceedings"
   datapaper:
-    collection: "Datasets and Code"
-    dc.type: "text::dataset"
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article::data paper"
   dataset:
     collection: "Datasets and Code"
     dc.type: "dataset"
+    rejected: true
   collection:
     collection: "Datasets and Code"
     dc.type: "dataset"
+    rejected: true
   model:
     collection: "Datasets and Code"
     dc.type: "dataset"
+    rejected: true
   journalarticle:
     collection: "Journal articles"
     dc.type: "text::journal::journal article::research article"
@@ -269,12 +475,15 @@ source_datacite:
   text:
     collection: "Other"
     dc.type: "other"
+    rejected: true
   software:
     collection: "Datasets and Code"
     dc.type: "software"
+    rejected: true
   computationalnotebook:
     collection: "Datasets and Code"
     dc.type: "software"
+    rejected: true
   outputmanagementplan:
     collection: "Reports, Documentation, and Standards"
     dc.type: "text::report::data management plan"
@@ -288,25 +497,31 @@ source_zenodo:
     dc.type: "text::conference output::conference presentation"
   poster:
     collection: "Conferences, Workshops, Symposiums, and Seminars"
-    dc.type: "text::conference output::conference proceedings"
+    dc.type: "text::conference output::conference proceedings::conference poster"
   image/diagram:
-    collection: "Datasets and Code"
-    dc.type: "dataset::recorded data"
+    collection: "Images, Videos, Interactive resources, and Design"
+    dc.type: "image"
+    rejected: true
   image/drawing:
-    collection: "Datasets and Code"
-    dc.type: "dataset::recorded data"
+    collection: "Images, Videos, Interactive resources, and Design"
+    dc.type: "image"
+    rejected: true
   image/figure:
-    collection: "Datasets and Code"
-    dc.type: "dataset::recorded data"
+    collection: "Images, Videos, Interactive resources, and Design"
+    dc.type: "image"
+    rejected: true
   image/photo:
-    collection: "Datasets and Code"
-    dc.type: "dataset::recorded data"
+    collection: "Images, Videos, Interactive resources, and Design"
+    dc.type: "image"
+    rejected: true
   image/plot:
-    collection: "Datasets and Code"
-    dc.type: "dataset::recorded data"
+    collection: "Images, Videos, Interactive resources, and Design"
+    dc.type: "image"
+    rejected: true
   image/other:
-    collection: "Datasets and Code"
-    dc.type: "dataset::recorded data"
+    collection: "Images, Videos, Interactive resources, and Design"
+    dc.type: "image"
+    rejected: true
   software:
     collection: "Datasets and Code"
     dc.type: "software"
@@ -316,39 +531,43 @@ source_zenodo:
   model:
     collection: "Datasets and Code"
     dc.type: "dataset"
-  # "lesson":
-  #   collection: "Teaching Materials"
-  #   dc.type: "text"
-  # "physicalobject":
-  #   collection: ""
-  #   dc.type: "text"
-  # "publication/article":
-  #   collection: "Journal articles"
-  #   dc.type: "text::journal::journal article"
-  # "publication/book":
-  #   collection: "Books and Book parts"
-  #   dc.type: "text::book/monograph"
-  # "publication/conferencepaper":
-  #   collection: "Conferences, Workshops, Symposiums, and Seminars"
-  #   dc.type: "text::conference output::conference proceedings::conference paper"
-  # "publication/deliverable":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::report"
-  # "publication/journal":
-  #   collection: "Journal articles"
-  #   dc.type: "text::journal::journal article"
-  # "publication/report":
-  #   collection: "Reports, Documentation, and Standards"
-  #   dc.type: "text::report"
-  # "publication/section":
-  #   collection: "Books and Book parts"
-  #   dc.type: "text::book/monograph::book part or chapter"
-  # "publication/thesis":
-  #   collection: "Student works"
-  #   dc.type: "text::thesis::doctoral thesis"
-  # "other":
-  #   collection: "Datasets and Code"
-  #   dc.type: "dataset"
+  lesson:
+    collection: "Teaching Materials"
+    dc.type: "text"
+    rejected: true
+  physicalobject:
+    collection: "Images, Videos, Interactive resources, and Design"
+    dc.type: "image"
+    rejected: true
+  publication/article:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+  publication/book:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph"
+  publication/conferencepaper:
+    collection: "Conferences, Workshops, Symposiums, and Seminars"
+    dc.type: "text::conference output::conference proceedings::conference paper"
+  publication/deliverable:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report"
+  publication/journal:
+    collection: "Journal articles"
+    dc.type: "text::journal::journal article"
+  publication/report:
+    collection: "Reports, Documentation, and Standards"
+    dc.type: "text::report"
+  publication/section:
+    collection: "Books and Book parts"
+    dc.type: "text::book/monograph::book part or chapter"
+  publication/thesis:
+    collection: "Student works"
+    dc.type: "text::thesis::doctoral thesis"
+    rejected: true
+  other:
+    collection: "Other"
+    dc.type: "other"
+    rejected: true
 
 source_epo:
   patent:
