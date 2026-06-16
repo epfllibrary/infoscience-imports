@@ -21,7 +21,8 @@ DEFAULT_PAGE_SIZE = 50
 
 # List of accepted document types (using the same mapping as for OpenAlex to ensure compatibility)
 accepted_doctypes = [
-    key for key in mappings.doctypes_mapping_dict["source_datacite"].keys()
+    key for key, val in mappings.doctypes_mapping_dict["source_datacite"].items()
+    if not val.get("rejected", False)
 ]
 
 load_dotenv(os.path.join(os.getcwd(), ".env"))
@@ -219,7 +220,10 @@ class Client(APIClient):
         """
         Retrieve a single record by DOI.
         """
-        response = self.get(DataCiteEndpoint.doi.format(doi=doi), params={})
+        response = self.get(
+            DataCiteEndpoint.doi.format(doi=doi),
+            params={"affiliation": "true", "publisher": "true"},
+        )
         data = response.get("data") if response else None
         return self._process_record(data, format) if data else None
 
@@ -303,9 +307,11 @@ class Client(APIClient):
             "doctype": doctype,
             "pubyear": pubyear,
             "publisher": self._extract_publisher(x),
+            "language": attrs.get("language", "") or "",
             "editors": editors,
             "pmid": self._extract_alternate_identifier(x, "pmid"),
             "arxiv": self._extract_alternate_identifier(x, "arxiv"),
+            "isbn": self._extract_isbn(x),
             "artno": "",
             "contributors": contributors,
             "corporateAuthor": self._extract_corporate_authors(x),
@@ -313,8 +319,8 @@ class Client(APIClient):
             "version": version,
             "license": license_id,
             "client": self._extract_client(x),
-            **related_items_info,  # Add the related items info here
             **container_info,
+            **related_items_info,
         }
 
     def _extract_publisher(self, x: Dict) -> str:
@@ -338,62 +344,113 @@ class Client(APIClient):
         """
         Extracts related item metadata from the 'relatedItems' field.
         This includes information about books, journals, conference proceedings, etc.
+
+        Priority order when multiple relatedItems exist for the same field:
+        ConferenceProceeding > Book > Collection > Journal
         """
         related_items = attrs.get("relatedItems", [])
         related_info = {}
 
         for item in related_items:
             related_item_type = item.get("relatedItemType", "").lower()
-            # Extracting identifiers based on the relatedItemIdentifierType
-            related_item_identifier = item.get("relatedItemIdentifier", {}).get(
+            relation_type = item.get("relationType", "")
+            related_item_identifier_obj = item.get("relatedItemIdentifier") or {}
+            related_item_identifier = related_item_identifier_obj.get(
                 "relatedItemIdentifier", ""
             )
             related_item_identifier_type = (
-                item.get("relatedItemIdentifier", {})
-                .get("relatedItemIdentifierType", "")
-                .lower()
+                related_item_identifier_obj.get("relatedItemIdentifierType", "").lower()
             )
 
-            # Handle different related item types
-            if related_item_type in ["book", "journal", "conferenceproceedings"]:
-                # For Book or BookChapter
-                if (
-                    related_item_type in ["book", "conferenceproceedings"]
-                    and item.get("relationType") == "IsPublishedIn"
-                ):
-                    related_info.update(
-                        {
-                            "bookTitle": item.get("titles", [{}])[0].get("title", ""),
-                            "bookVolume": item.get("volume", ""),
-                            "bookEdition": item.get("edition", ""),
-                            "bookPart": item.get("number", ""),
-                            "startingPage": item.get("firstPage", ""),
-                            "endingPage": item.get("lastPage", ""),
-                        }
-                    )
-                    if related_item_identifier_type == "isbn":
-                        related_info["bookISBN"] = related_item_identifier
-                    elif related_item_identifier_type == "doi":
-                        related_info["bookDOI"] = related_item_identifier
+            if relation_type != "IsPublishedIn":
+                continue
 
-                # For Journal (Article)
-                elif (
-                    related_item_type == "journal"
-                    and item.get("relationType") == "IsPublishedIn"
-                ):
-                    related_info.update(
-                        {
-                            "journalTitle": item.get("titles", [{}])[0].get("title", ""),
-                            "journalVolume": item.get("volume", ""),
-                            "journalIssue": item.get("issue", ""),
-                            "startingPage": item.get("firstPage", ""),
-                            "endingPage": item.get("lastPage", ""),
-                        }
-                    )
-                    if related_item_identifier_type == "issn":
-                        related_info["journalISSN"] = related_item_identifier
+            if related_item_type in ("book", "conferenceproceeding"):
+                titles = item.get("titles") or []
+                main_title = next(
+                    (t.get("title", "") for t in titles if not t.get("titleType")), ""
+                )
+                subtitle = next(
+                    (t.get("title", "") for t in titles if t.get("titleType") == "Subtitle"), ""
+                )
+                # Use subtitle as book title when it better reflects the proceedings name
+                book_title = subtitle or main_title
+                related_info.update(
+                    {
+                        "bookTitle": book_title,
+                        "bookVolume": str(item.get("volume", "") or ""),
+                        "bookEdition": str(item.get("edition", "") or ""),
+                        "bookPart": str(item.get("number", "") or ""),
+                        "startingPage": str(item.get("firstPage", "") or ""),
+                        "endingPage": str(item.get("lastPage", "") or ""),
+                    }
+                )
+                if related_item_identifier_type == "isbn":
+                    related_info["bookISBN"] = related_item_identifier
+                elif related_item_identifier_type == "doi":
+                    related_info["bookDOI"] = related_item_identifier
+
+            elif related_item_type == "collection":
+                titles = item.get("titles") or []
+                series_name = titles[0].get("title", "") if titles else ""
+                if series_name and not related_info.get("seriesTitle"):
+                    related_info["seriesTitle"] = series_name
+                if item.get("volume") and not related_info.get("seriesVolume"):
+                    related_info["seriesVolume"] = str(item.get("volume", "") or "")
+
+            elif related_item_type == "journal":
+                titles = item.get("titles") or []
+                journal_title = titles[0].get("title", "") if titles else ""
+                related_info.update(
+                    {
+                        "journalTitle": journal_title,
+                        "journalVolume": str(item.get("volume", "") or ""),
+                        "journalIssue": str(item.get("issue", "") or ""),
+                        "startingPage": str(item.get("firstPage", "") or ""),
+                        "endingPage": str(item.get("lastPage", "") or ""),
+                    }
+                )
+                if related_item_identifier_type == "issn":
+                    related_info["journalISSN"] = related_item_identifier
+
+        # Fallback: parse SeriesInformation description when no structured journal data found
+        if not related_info.get("journalTitle") and not related_info.get("bookTitle"):
+            series_info = self._extract_series_information(attrs)
+            if series_info:
+                related_info.update(series_info)
 
         return related_info
+
+    @staticmethod
+    def _extract_series_information(attrs: Dict) -> Dict:
+        """
+        Parse DataCite's SeriesInformation description as a last-resort fallback.
+        Expected format: 'Series Title, volume(issue), firstPage-lastPage'
+        Example: 'Journal of Metadata Examples, 3(4), 20-35'
+        """
+        for d in (attrs.get("descriptions") or []):
+            if (d.get("descriptionType") or "").strip() == "SeriesInformation":
+                text = (d.get("description") or "").strip()
+                if not text:
+                    continue
+                # Pattern: "Title, vol(issue), pp-pp" or "Title, Vol. vol, ..., pages pp-pp"
+                import re
+                m = re.match(
+                    r"^(.+?),\s*(?:Vol\.?\s*)?(\d+)\s*(?:\((\d+)\))?,\s*(?:pages?\s*)?(.+)$",
+                    text,
+                    re.IGNORECASE,
+                )
+                if m:
+                    return {
+                        "journalTitle": m.group(1).strip(),
+                        "journalVolume": m.group(2).strip(),
+                        "journalIssue": (m.group(3) or "").strip(),
+                        "startingPage": m.group(4).strip().split("-")[0].strip(),
+                        "endingPage": m.group(4).strip().split("-")[-1].strip()
+                        if "-" in m.group(4)
+                        else "",
+                    }
+        return {}
 
     def _extract_ifs3_digest_record_info(self, x):
         """
@@ -433,7 +490,7 @@ class Client(APIClient):
         rec["abstract"] = self._extract_description(x, "Abstract")
         rec["notes"] = self._extract_description(x, "Other")
         rec["authors"] = self._extract_authors_info(x)
-        rec["conference_info"] = ""
+        rec["conference_info"] = self._extract_conference_info(x)
         rec["fundings_info"] = self._extract_funding(x)
         rec["related_works"] = self._extract_related_identifiers(x)
         rec["HasVersion"] = self._extract_version_info(x, "HasVersion")
@@ -466,24 +523,32 @@ class Client(APIClient):
 
     def _extract_description(self, x: Dict, description_type: str) -> str:
         """
-        Extract descriptions from the data record based on the description type.
+        Extract descriptions of the given type, English first then other languages.
+        Ordering: explicit English → no-lang (unknown) → all other languages.
+        Multiple values are joined by '||' (the field is repeatable in IFS3).
         """
         descs = x.get("attributes", {}).get("descriptions", []) or []
-        matches = []
-        for d in descs:
-            if (
-                d.get("descriptionType", "").strip().lower()
-                == description_type.strip().lower()
-            ):
-                text = d.get("description", "")
-                cleaned = re.sub(r"\s+", " ", text).strip()
-                if cleaned:
-                    matches.append(cleaned)
+        target = description_type.strip().lower()
 
-        if not matches:
-            return ""
-        # join toutes les descriptions par '||'
-        return "||".join(matches)
+        english: list[str] = []
+        unknown: list[str] = []
+        others: list[str] = []
+
+        for d in descs:
+            if (d.get("descriptionType") or "").strip().lower() != target:
+                continue
+            text = re.sub(r"\s+", " ", (d.get("description") or "")).strip()
+            if not text:
+                continue
+            lang = (d.get("lang") or "").strip().lower()
+            if lang in ("en", "eng", "english"):
+                english.append(text)
+            elif lang == "":
+                unknown.append(text)
+            else:
+                others.append(text)
+
+        return "||".join(english + unknown + others)
 
     def _extract_funding(self, x: Dict) -> str:
         """
@@ -771,6 +836,133 @@ class Client(APIClient):
                 return lic
         return ""
 
+    def _extract_conference_info(self, x: Dict) -> str:
+        """
+        Extract conference metadata in the format expected by the loader:
+            confName::place::start_date::end_date::acronym
+
+        Sources tried in priority order:
+        1. relatedItems where relatedItemType=ConferenceProceeding and relationType=IsPublishedIn
+           — main title → name; subtitle → may contain 'City, date' freetext
+        2. container where type contains 'conference' or 'series'
+        3. geoLocations for place when no better source
+
+        Multiple conferences are joined by '||'.
+        Missing fields are left empty (::) so the loader can use placeholder logic.
+        """
+        attrs = x.get("attributes", {}) or {}
+        entries: list[str] = []
+
+        # --- 1. relatedItems -------------------------------------------------
+        for item in attrs.get("relatedItems", []) or []:
+            if (
+                (item.get("relatedItemType") or "").lower() == "conferenceproceeding"
+                and item.get("relationType") == "IsPublishedIn"
+            ):
+                titles = item.get("titles") or []
+                main_title = next(
+                    (t.get("title", "") for t in titles if not t.get("titleType")),
+                    "",
+                ).strip()
+                subtitle = next(
+                    (t.get("title", "") for t in titles if t.get("titleType") == "Subtitle"),
+                    "",
+                ).strip()
+
+                # Subtitle is either a location/date string OR the real conference name.
+                # Heuristic: if it contains a date pattern it's a location → parse it;
+                # otherwise it IS the conference name (proceedings series in main title).
+                if self._subtitle_is_location_date(subtitle):
+                    name = main_title
+                    place, start_date, end_date = self._parse_conference_subtitle(subtitle)
+                    acronym = self._extract_acronym(name)
+                else:
+                    # subtitle holds the full conference name (with possible acronym)
+                    name = subtitle or main_title
+                    place, start_date, end_date = "", "", ""
+                    acronym = self._extract_acronym(name)
+
+                entries.append(f"{name}::{place}::{start_date}::{end_date}::{acronym}")
+
+        # --- 2. container (fallback) -----------------------------------------
+        if not entries:
+            container = attrs.get("container", {}) or {}
+            ctype = (container.get("type") or "").lower()
+            if "conference" in ctype or "series" in ctype or "proceeding" in ctype:
+                name = (container.get("title") or "").strip()
+                if name:
+                    acronym = self._extract_acronym(name)
+                    entries.append("::".join([name, "", "", "", acronym]))
+
+        return "||".join(entries)
+
+    @staticmethod
+    def _subtitle_is_location_date(subtitle: str) -> bool:
+        """Return True if the subtitle looks like 'City, DD.-DD.MM.YYYY' rather than a conference name."""
+        import re
+        if not subtitle:
+            return False
+        return bool(re.search(r"\d{1,2}\.\d{2}\.\d{4}", subtitle))
+
+    @staticmethod
+    def _extract_acronym(name: str) -> str:
+        """Extract acronym from parentheses at the end of a conference name, e.g. 'STACS 2026' from '...  (STACS 2026)'."""
+        import re
+        m = re.search(r"\(([^)]+)\)\s*$", name)
+        if m:
+            candidate = m.group(1).strip()
+            # Keep only if it looks like an acronym (uppercase letters, digits, spaces)
+            if re.match(r"^[A-Z0-9][A-Z0-9 '\-\.]{0,30}$", candidate):
+                return candidate
+        return ""
+
+    @staticmethod
+    def _parse_conference_subtitle(subtitle: str):
+        """
+        Best-effort parse of subtitles like 'Koblenz, 10.-13.06.2026'.
+        Returns (place, start_date, end_date) as strings, empty when not parseable.
+        """
+        import re
+        if not subtitle:
+            return "", "", ""
+
+        # Pattern: "City, DD.-DD.MM.YYYY" or "City, DD.MM.-DD.MM.YYYY"
+        m = re.match(
+            r"^(.+?),\s*(\d{1,2})\.(?:(\d{1,2})\.)?-(\d{1,2})\.(\d{1,2})\.(\d{4})",
+            subtitle,
+        )
+        if m:
+            place = m.group(1).strip()
+            year = m.group(6)
+            end_day = m.group(4)
+            end_month = m.group(5)
+            start_month = m.group(3) if m.group(3) else end_month
+            start_day = m.group(2)
+            start_date = f"{year}-{start_month.zfill(2)}-{start_day.zfill(2)}"
+            end_date = f"{year}-{end_month.zfill(2)}-{end_day.zfill(2)}"
+            return place, start_date, end_date
+
+        # Pattern: just a city before a comma
+        m2 = re.match(r"^([^,\d]+),", subtitle)
+        if m2:
+            return m2.group(1).strip(), "", ""
+
+        return "", "", ""
+
+    def _extract_isbn(self, x: Dict) -> str:
+        """
+        Collect all ISBN and EAN13 identifiers (both encode ISBN-13) joined by '||'.
+        EAN13 values are included as-is since they are numerically equivalent to ISBN-13.
+        """
+        alternates = x.get("attributes", {}).get("identifiers", []) or []
+        values = [
+            alt.get("identifier", "").strip()
+            for alt in alternates
+            if alt.get("identifierType", "").strip().upper() in ("ISBN", "EAN13")
+            and alt.get("identifier")
+        ]
+        return "||".join(values)
+
     def _extract_alternate_identifier(self, x: Dict, alt_type: str) -> str:
         """
         Extracts all alternateIdentifiers of a given type from a DataCite record.
@@ -834,23 +1026,48 @@ class Client(APIClient):
         """
         Extracts the container metadata from a DataCite record.
 
-        Args:
-            x (Dict): The raw DataCite record.
-
-        Returns:
-            dict: {
-                "container_type": str,
-                "container_identifier": str,
-                "container_identifier_type": str
-            }
-            All values sont des chaînes, vides si non présentes.
+        Covers both journal articles (title/volume/issue/pages/ISSN) and
+        book chapters (bookTitle/ISBN).
         """
         container = x.get("attributes", {}).get("container", {}) or {}
-        return {
+        container_type = (container.get("type", "") or "").strip().lower()
+
+        base = {
             "container_type": container.get("type", "") or "",
             "container_identifier": container.get("identifier", "") or "",
             "container_identifier_type": container.get("identifierType", "") or "",
         }
+
+        if container_type == "journal":
+            issn_raw = container.get("identifier", "") if container.get("identifierType", "").upper() == "ISSN" else ""
+            base.update({
+                "journalTitle": container.get("title", "") or "",
+                "journalVolume": str(container.get("volume", "") or ""),
+                "journalIssue": str(container.get("issue", "") or ""),
+                "startingPage": str(container.get("firstPage", "") or ""),
+                "endingPage": str(container.get("lastPage", "") or ""),
+                "journalISSN": self._normalize_issn(issn_raw) if issn_raw else "",
+            })
+        elif container_type == "series":
+            base.update({
+                "seriesTitle": container.get("title", "") or "",
+                "seriesVolume": str(container.get("volume", "") or ""),
+                "seriesNumber": str(container.get("number", "") or ""),
+                "startingPage": str(container.get("firstPage", "") or ""),
+                "endingPage": str(container.get("lastPage", "") or ""),
+            })
+        elif container_type in ("book", "bookchapter", "edited book"):
+            isbn_raw = container.get("identifier", "") if container.get("identifierType", "").upper() == "ISBN" else ""
+            base.update({
+                "bookTitle": container.get("title", "") or "",
+                "bookVolume": str(container.get("volume", "") or ""),
+                "bookEdition": str(container.get("edition", "") or ""),
+                "startingPage": str(container.get("firstPage", "") or ""),
+                "endingPage": str(container.get("lastPage", "") or ""),
+                "bookISBN": isbn_raw,
+            })
+
+        return base
 
     def _extract_registered(self, x: Dict) -> str:
         """

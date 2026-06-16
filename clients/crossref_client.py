@@ -29,7 +29,8 @@ crossref_email = os.environ.get("CONTACT_API_EMAIL")
 
 # List of accepted document types (using the same mapping as for OpenAlex to ensure compatibility)
 accepted_doctypes = [
-    key for key in mappings.doctypes_mapping_dict["source_crossref"].keys()
+    key for key, val in mappings.doctypes_mapping_dict["source_crossref"].items()
+    if not val.get("rejected", False)
 ]
 
 # Retry decorator to handle errors (e.g., too many requests, HTTP status code 429)

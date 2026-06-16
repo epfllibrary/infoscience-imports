@@ -25,7 +25,10 @@ load_dotenv(os.path.join(os.getcwd(), ".env"))
 zenodo_api_key = os.environ.get("ZENODO_API_KEY")
 user_agent = os.environ.get("USER_AGENT", "EPFL-Institutional-Repository - Infoscience-imports/1.0 (https://github.com/epfllibrary/infoscience-imports)")
 
-accepted_doctypes = mappings.doctypes_mapping_dict["source_zenodo"].keys()
+accepted_doctypes = [
+    key for key, val in mappings.doctypes_mapping_dict["source_zenodo"].items()
+    if not val.get("rejected", False)
+]
 
 zenodo_authentication_method = HeaderAuthentication(token=zenodo_api_key, scheme=None)
 
@@ -249,9 +252,7 @@ class Client(APIClient):
         record = self._extract_digest_record_info(x)
         record["ifs3_collection"] = self._extract_ifs3_collection(x)
         record["ifs3_collection_id"] = self._extract_ifs3_collection_id(x)
-        # Get dc.type and dc.type_authority for the document type
         dc_type_info = self.get_dc_type_info(x)
-        # Add dc.type and dc.type_authority to the record
         record["dc.type"] = dc_type_info["dc.type"]
         record["dc.type_authority"] = dc_type_info["dc.type_authority"]
         record["publisher"] = self._extract_publisher(x)
@@ -260,6 +261,7 @@ class Client(APIClient):
         record["access_conditions"] = self._extract_access_right(x)
         record["language"], record["version"] = self._extract_language_and_version(x)
         record["conference_info"] = self._extract_conference_info(x)
+        record.update(self._extract_venue_info(x))
 
         return record
 
@@ -629,6 +631,66 @@ class Client(APIClient):
         )
         return lang_iso2, version_str
 
+    def _extract_venue_info(self, x: dict) -> dict:
+        """
+        Extract publication venue metadata from Zenodo-specific fields.
+
+        Sources:
+        - metadata.journal   → journal articles (title, volume, issue, pages)
+        - metadata.part_of   → book chapters (title, pages)
+        - metadata.imprint   → isbn, place, publisher override
+
+        Returns a flat dict of IFS3 venue fields (only non-empty values).
+        """
+        md = x.get("metadata", {}) or {}
+        result: dict = {}
+
+        # --- journal ---
+        journal = md.get("journal") or {}
+        if journal.get("title"):
+            result["journalTitle"] = journal["title"].strip()
+        if journal.get("volume"):
+            result["journalVolume"] = str(journal["volume"]).strip()
+        if journal.get("issue"):
+            result["journalIssue"] = str(journal["issue"]).strip()
+        if journal.get("pages"):
+            start, end = self._parse_pages(str(journal["pages"]))
+            if start:
+                result["startingPage"] = start
+            if end:
+                result["endingPage"] = end
+
+        # --- part_of (book chapters) ---
+        part_of = md.get("part_of") or {}
+        if part_of.get("title"):
+            result["bookTitle"] = part_of["title"].strip()
+        if part_of.get("pages") and not result.get("startingPage"):
+            start, end = self._parse_pages(str(part_of["pages"]))
+            if start:
+                result["startingPage"] = start
+            if end:
+                result["endingPage"] = end
+
+        # --- imprint (isbn, place for books/book chapters) ---
+        imprint = md.get("imprint") or {}
+        if imprint.get("isbn"):
+            result["isbn"] = str(imprint["isbn"]).strip()
+
+        return result
+
+    @staticmethod
+    def _parse_pages(pages: str) -> tuple[str, str]:
+        """
+        Parse a pages string into (startingPage, endingPage).
+        Handles: '390-396', '390–396', 'e3001667', '28:1-28:18'.
+        """
+        pages = pages.strip()
+        for sep in ("-", "–", "—"):
+            if sep in pages:
+                parts = pages.split(sep, 1)
+                return parts[0].strip(), parts[1].strip()
+        return pages, ""
+
     def _extract_conference_info(self, x: dict) -> str:
         """
         Extract conference information from a Zenodo record and format it as:
@@ -663,7 +725,6 @@ class Client(APIClient):
         title = (meeting.get("title") or "").strip()
         acronym = (meeting.get("acronym") or "").strip()
         dates_raw = (meeting.get("dates") or "").strip()
-        # Take 'place' if provided (e.g., "Virtual Conference", "Lausanne, Switzerland")
         location = (meeting.get("place") or "").strip()
 
         start_date, end_date = self._parse_zenodo_meeting_dates(dates_raw)
@@ -672,7 +733,10 @@ class Client(APIClient):
         if not any([title, location, start_date, end_date, acronym]):
             return ""
 
-        return f"{title}::{location}::{start_date}::{end_date}::{acronym}"
+        # Use acronym as name fallback when title is absent
+        name = title or acronym
+
+        return f"{name}::{location}::{start_date}::{end_date}::{acronym}"
 
     # def _parse_zenodo_meeting_dates(self, s: str) -> tuple[str, str]:
     #     if not s:
@@ -792,6 +856,17 @@ class Client(APIClient):
             d, M, y = m.groups()
             mm = m2num(M)
             return iso(y, mm or "", d), iso(y, mm or "", d)
+
+        # Pattern F: DD.MM.YYYY[-DD.MM.YYYY] or DD.MM.YYYY
+        m = re.search(
+            r"(\d{1,2})\.(\d{1,2})\.(\d{4})\s*(?:[-–—]\s*(\d{1,2})\.(\d{1,2})\.(\d{4}))?",
+            s_norm,
+        )
+        if m:
+            d1, mo1, y1, d2, mo2, y2 = m.groups()
+            start = iso(y1, mo1, d1)
+            end = iso(y2 or y1, mo2 or mo1, d2 or d1)
+            return start, (end if d2 else start)
 
         return "", ""
 

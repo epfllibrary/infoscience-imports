@@ -523,6 +523,59 @@ class DSpaceClientWrapper:
             )
             return None
 
+    def fetch_person_profile(self, sciper: str) -> dict | None:
+        """Fetch the Infoscience person profile for a SCIPER.
+
+        Returns a dict with dspace_uuid, infoscience_profile_url, openalex_id,
+        scopus_author_id, and researcher_id extracted from the DSpace item
+        metadata.  Returns None when no profile is found for the SCIPER.
+        """
+        items = self._search_objects(
+            query=f"epfl.sciperId:{sciper}",
+            page=0,
+            size=1,
+            sort="dc.date.accessioned,DESC",
+            configuration="person",
+        )
+        if not items:
+            return None
+
+        item = items[0]
+        md = item.metadata
+
+        def _first_value(key: str) -> str | None:
+            arr = md.get(key)
+            if not isinstance(arr, list) or not arr:
+                return None
+            v = (arr[0] or {}).get("value")
+            return str(v).strip() if v else None
+
+        def _all_values(key: str) -> list[str]:
+            arr = md.get(key)
+            if not isinstance(arr, list):
+                return []
+            return [str(e["value"]).strip() for e in arr if e and e.get("value")]
+
+        handle = getattr(item, "handle", None)
+        url = (
+            f"https://infoscience.epfl.ch/handle/{handle}"
+            if handle
+            else _first_value("dc.identifier.uri")
+        )
+
+        import json as _json
+        raw_variants = _all_values("crisrp.name.variant")
+        name_variants = _json.dumps(raw_variants) if raw_variants else None
+
+        return {
+            "dspace_uuid": item.uuid,
+            "infoscience_profile_url": url,
+            "openalex_id": _first_value("person.identifier.openalex"),
+            "scopus_author_id": _first_value("person.identifier.scopus-author-id"),
+            "researcher_id": _first_value("person.identifier.rid"),
+            "name_variants": name_variants,
+        }
+
     def push_publication(self, source, wos_id, collection_id):
         try:
             # Attempt to create a workspace item from the external source
@@ -850,6 +903,59 @@ class DSpaceClientWrapper:
 
         # No identifiers at all — cannot determine status
         return "still_pending", None, None
+
+    def fetch_person_publications(
+        self,
+        person_uuid: str,
+        page_size: int = 100,
+    ) -> list[dict]:
+        """Return all Infoscience publications linked to a person UUID.
+
+        Uses the ``RELATION.Person.researchoutputs`` discovery configuration
+        with ``scope={person_uuid}`` — follows the explicit CRIS authorship
+        link rather than matching free-text metadata, so it captures all
+        linked records including those without a stored DOI or author-authority
+        field value.  (Per the Infoscience REST API documentation.)
+
+        Each returned dict has: uuid, doi, title, pub_year, dc_type, handle.
+        """
+        dsos = self._search_objects(
+            query=None,
+            page=0,
+            size=page_size,
+            dso_type="item",
+            configuration="RELATION.Person.researchoutputs",
+            scope=person_uuid,
+            max_pages=200,
+        )
+
+        results: list[dict] = []
+        for dso in dsos:
+            md = dso.metadata
+            doi_entries = md.get("dc.identifier.doi", [])
+            doi = doi_entries[0].get("value", "").strip() if doi_entries else None
+            title_entries = md.get("dc.title", [])
+            title = title_entries[0].get("value", "").strip() if title_entries else None
+            year_entries = md.get("dc.date.issued", [])
+            pub_year = None
+            if year_entries:
+                raw_year = year_entries[0].get("value", "")
+                pub_year = raw_year[:4] if raw_year else None
+            handle_entries = md.get("dc.identifier.uri", [])
+            handle = handle_entries[0].get("value", "").strip() if handle_entries else None
+            type_entries = md.get("dc.type", [])
+            dc_type = type_entries[0].get("value", "").strip() if type_entries else None
+            results.append(
+                {
+                    "uuid": dso.uuid,
+                    "doi": doi or None,
+                    "title": title,
+                    "pub_year": pub_year,
+                    "dc_type": dc_type,
+                    "handle": handle,
+                }
+            )
+        return results
 
     def search_authority(
         self,

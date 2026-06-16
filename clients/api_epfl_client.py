@@ -3,6 +3,7 @@
 import os
 import re
 import string
+import requests
 import tenacity
 from apiclient import (
     APIClient,
@@ -40,10 +41,11 @@ retry_decorator = tenacity.retry(
 class Endpoint:
     base = ""
     personsId = "persons/{sciperID}"
+    personsIds = "persons?ids={sciperIDs}"
     personsQuery = "persons?query={query}"
     personsFirstnameLastname = "persons?firstname={firstname}&lastname={lastname}"
     accredsId = "accreds?persid={sciperID}"
-    accredsByClassPosition = "accreds?classid={classID}&positionid={positionID}&statusid=1&state=active"
+    accredsByClassPosition = "accreds?classid={classID}&positionid={positionID}&state=active"
     unitsId = "units/{unitID}"
     unitsQuery = "units?query={query}" 
 
@@ -212,15 +214,53 @@ class Client(APIClient):
     @retry_decorator
     def fetch_person_by_sciper(self, sciper_id: str, format="epfl"):
         self.logger.debug("EPFL API: person lookup for sciper %s", sciper_id)
-        result = self.get(Endpoint.personsId.format(sciperID=sciper_id))
+        result = self.get(Endpoint.personsIds.format(sciperIDs=sciper_id))
         self.logger.debug(f"Received response for {sciper_id}: {result}")
-        return self._process_person_record({"count": 1, "persons": [result]}, sciper_id, format)
+        return self._process_person_record(result, sciper_id, format)
+
+    def fetch_persons_orcid_batch(self, scipers: list[str], batch_size: int = 100) -> dict[str, str]:
+        """Fetch ORCID iDs for multiple scipers via persons?ids= in batches.
+
+        Returns {sciper: bare_orcid_id}. Scipers without an ORCID are omitted.
+        Silently skips failed batches and logs a warning.
+        """
+        result: dict[str, str] = {}
+        for i in range(0, len(scipers), batch_size):
+            batch = scipers[i:i + batch_size]
+            ids_param = ",".join(str(s) for s in batch)
+            try:
+                response = self.get(Endpoint.personsIds.format(sciperIDs=ids_param))
+                for person in response.get("persons", []):
+                    sciper = str(person.get("id") or "").strip()
+                    orcid_raw = (person.get("orcid") or "").strip()
+                    if orcid_raw:
+                        bare = orcid_raw.replace("https://orcid.org/", "").strip()
+                        if bare:
+                            result[sciper] = bare
+            except Exception as exc:
+                self.logger.warning(
+                    "persons batch fetch failed (offset %d, %d scipers): %s",
+                    i, len(batch), exc,
+                )
+        return result
 
     @retry_decorator
-    def fetch_accred_by_class_position(self, class_id: str, position_id: str, format="digest"):
-        self.logger.debug("EPFL API: accreditation for class_id %s position_id %s", class_id, position_id)
-        result = self.get(Endpoint.accredsByClassPosition.format(classID=class_id, positionID=position_id))
-        self.logger.debug(f"Received response for class_id={class_id}, position_id={position_id}: {result}")
+    def fetch_accred_by_class_position(
+        self,
+        class_id: str,
+        position_id: str,
+        status_id: str | None = None,
+        format: str = "digest",
+    ):
+        self.logger.debug(
+            "EPFL API: accreditation for class_id=%s position_id=%s status_id=%s",
+            class_id, position_id, status_id,
+        )
+        url = Endpoint.accredsByClassPosition.format(classID=class_id, positionID=position_id)
+        if status_id is not None:
+            url += f"&statusid={status_id}"
+        result = self.get(url)
+        self.logger.debug("Received response for class_id=%s position_id=%s: %s", class_id, position_id, result)
         return self._process_accred_record(result, f"{class_id}_{position_id}", format)
 
     @retry_decorator
@@ -330,6 +370,7 @@ class Client(APIClient):
         class_labelen = (accred.get("class") or {}).get("labelen")
         position_labelen = (accred.get("position") or {}).get("labelen")
         validfrom = accred.get("startdate") or accred.get("validfrom")
+        validto = accred.get("enddate") or accred.get("validto")
 
         enriched = {
             "sciper": str(sciper) if sciper is not None else None,
@@ -343,6 +384,7 @@ class Client(APIClient):
             "class": class_labelen,
             "position": position_labelen,
             "validfrom": validfrom,
+            "validto": validto,
         }
         enriched.update(self._extract_accred_units_info(accred, parent_order))
         self.logger.debug(f"Extracted accred person record: {enriched}")
@@ -500,6 +542,14 @@ class Client(APIClient):
                 if self._as_int_or_none(unit_order) == 1:
                     fallback_order1.append(r)
 
+                # Always include Professor Emeritus and PH-* unit members
+                # regardless of unit type, as they are excluded by normal filters.
+                is_emeritus = str(r.get("position") or "").strip().lower() == "professor emeritus"
+                is_ph_unit = str(r.get("unit_name") or "").upper().startswith("PH-")
+                if is_emeritus or is_ph_unit:
+                    allowed.append(r)
+                    continue
+
                 if not unit_type or unit_type in (None, "", "null"):
                     continue
                 if excluded_local and unit_type in excluded_local:
@@ -598,13 +648,15 @@ class Client(APIClient):
                     "preferred_unit_level_2": preferred.get("unit_level_2"),
                     "preferred_unit_level_3": preferred.get("unit_level_3"),
                     "preferred_validfrom": preferred.get("validfrom"),
+                    "preferred_position": preferred.get("position"),
+                    "preferred_class": preferred.get("class"),
                 })
             else:
                 merged.update({k: None for k in [
                     "preferred_unit_id", "preferred_unit_name", "preferred_unit_label",
                     "preferred_unit_cf", "preferred_unit_path", "preferred_unit_type",
                     "preferred_unit_order", "preferred_unit_level_2", "preferred_unit_level_3",
-                    "preferred_validfrom",
+                    "preferred_validfrom", "preferred_position", "preferred_class",
                 ]})
 
             merged_rows.append(merged)
@@ -636,3 +688,4 @@ ApiEpflClient = Client(
     response_handler=JsonResponseHandler,
     error_handler=ErrorHandler,
 )
+
