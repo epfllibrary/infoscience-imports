@@ -53,7 +53,7 @@ def _serialize_raw_metadata(row) -> str | None:
 
 logger = logging.getLogger("pipeline.db")
 
-_SCHEMA_VERSION = 3   # bump when schema changes
+_SCHEMA_VERSION = 6   # bump when schema changes
 
 
 def _default_db_path() -> Path:
@@ -87,8 +87,14 @@ class PipelineDB:
     # Always short-lived: open → execute → close.
     # Never kept open between calls → no persistent file lock.
 
-    def _connect(self, retries: int = 5, base_delay: float = 0.2):
-        """Open a short-lived DuckDB connection with retry + exponential backoff."""
+    def _connect(self, retries: int = 12, base_delay: float = 0.3):
+        """Open a short-lived DuckDB connection with retry + exponential backoff.
+
+        When a write lock is held by another process (e.g. a running harvest
+        subprocess), retries with capped exponential backoff before raising.
+        Callers that only read should open the DB with read_only=True so they
+        do not compete with writers unnecessarily.
+        """
         last_err = None
         for attempt in range(retries):
             try:
@@ -96,7 +102,7 @@ class PipelineDB:
             except Exception as e:
                 last_err = e
                 if attempt < retries - 1:
-                    wait = base_delay * (2 ** attempt)
+                    wait = min(base_delay * (2 ** attempt), 5.0)
                     logger.debug("DuckDB connect retry %d/%d in %.1fs: %s",
                                  attempt + 1, retries, wait, e)
                     time.sleep(wait)
@@ -245,6 +251,100 @@ class PipelineDB:
                     changed_by VARCHAR NOT NULL,
                     from_status VARCHAR,
                     to_status VARCHAR)""",
+                # ── researcher_monitor tables (schema v4) ─────────────────
+                """CREATE TABLE IF NOT EXISTS researcher_registry (
+                    sciper              VARCHAR PRIMARY KEY,
+                    last_name           VARCHAR,
+                    first_name          VARCHAR,
+                    full_name           VARCHAR,
+                    email               VARCHAR,
+                    epfl_status         VARCHAR,
+                    epfl_position       VARCHAR,
+                    epfl_class          VARCHAR,
+                    is_active           BOOLEAN DEFAULT TRUE,
+                    enrollment_date     DATE,
+                    offboarding_date    DATE,
+                    main_unit           VARCHAR,
+                    all_units           VARCHAR,
+                    orcid               VARCHAR,
+                    orcid_epfl_linked   BOOLEAN DEFAULT FALSE,
+                    scopus_author_id    VARCHAR,
+                    researcher_id       VARCHAR,
+                    openalex_id         VARCHAR,
+                    openalex_in_infoscience BOOLEAN DEFAULT FALSE,
+                    dspace_uuid         VARCHAR,
+                    infoscience_profile_url VARCHAR,
+                    epfl_directory_url  VARCHAR,
+                    name_variants       VARCHAR,
+                    last_people_sync    TIMESTAMP,
+                    last_harvest_at     TIMESTAMP,
+                    last_gap_analysis_at TIMESTAMP,
+                    created_at          TIMESTAMP DEFAULT NOW(),
+                    updated_at          TIMESTAMP DEFAULT NOW())""",
+                """CREATE TABLE IF NOT EXISTS researcher_units (
+                    sciper              VARCHAR NOT NULL,
+                    unit_id             VARCHAR NOT NULL,
+                    unit_name           VARCHAR,
+                    unit_label          VARCHAR,
+                    unit_type           VARCHAR,
+                    unit_path           VARCHAR,
+                    unit_cf             VARCHAR,
+                    unit_level_2        VARCHAR,
+                    unit_level_3        VARCHAR,
+                    unit_order          INTEGER,
+                    is_primary          BOOLEAN DEFAULT FALSE,
+                    valid_from          DATE,
+                    valid_to            DATE,
+                    PRIMARY KEY (sciper, unit_id))""",
+                """CREATE TABLE IF NOT EXISTS person_publications (
+                    sciper              VARCHAR NOT NULL,
+                    pub_id              VARCHAR NOT NULL,
+                    doi                 VARCHAR,
+                    title               VARCHAR,
+                    pub_year            VARCHAR,
+                    dc_type             VARCHAR,
+                    journal_title       VARCHAR,
+                    sources_found       VARCHAR,
+                    primary_source      VARCHAR,
+                    metadata_quality    VARCHAR,
+                    needs_manual_review BOOLEAN DEFAULT FALSE,
+                    harvested_at        TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (sciper, pub_id))""",
+                """CREATE TABLE IF NOT EXISTS person_infoscience_outputs (
+                    sciper              VARCHAR NOT NULL,
+                    infoscience_uuid    VARCHAR NOT NULL,
+                    doi                 VARCHAR,
+                    title               VARCHAR,
+                    pub_year            VARCHAR,
+                    dc_type             VARCHAR,
+                    handle              VARCHAR,
+                    fetched_at          TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (sciper, infoscience_uuid))""",
+                """CREATE TABLE IF NOT EXISTS person_gaps (
+                    sciper              VARCHAR NOT NULL,
+                    pub_id              VARCHAR NOT NULL,
+                    doi                 VARCHAR,
+                    title               VARCHAR,
+                    pub_year            VARCHAR,
+                    dc_type             VARCHAR,
+                    gap_status          VARCHAR NOT NULL,
+                    import_run_id       VARCHAR,
+                    import_status       VARCHAR,
+                    computed_at         TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (sciper, pub_id))""",
+                """CREATE TABLE IF NOT EXISTS researcher_harvest_runs (
+                    harvest_run_id  VARCHAR PRIMARY KEY,
+                    sciper          VARCHAR,
+                    scipers_batch   VARCHAR,
+                    sources         VARCHAR,
+                    start_year      INTEGER,
+                    end_year        INTEGER,
+                    status          VARCHAR,
+                    pubs_found      INTEGER DEFAULT 0,
+                    pubs_new        INTEGER DEFAULT 0,
+                    gaps_found      INTEGER DEFAULT 0,
+                    started_at      TIMESTAMP DEFAULT NOW(),
+                    ended_at        TIMESTAMP)""",
             ]:
                 con.execute(stmt)
 
@@ -257,6 +357,20 @@ class PipelineDB:
                 "CREATE INDEX IF NOT EXISTS idx_pa_sciper   ON pub_authors(sciper)",
                 "CREATE INDEX IF NOT EXISTS idx_pa_run      ON pub_authors(run_id)",
                 "CREATE INDEX IF NOT EXISTS idx_pu_acronym  ON pub_units(acronym)",
+                # researcher_monitor indexes
+                "CREATE INDEX IF NOT EXISTS idx_rr_orcid      ON researcher_registry(orcid)",
+                "CREATE INDEX IF NOT EXISTS idx_rr_openalex   ON researcher_registry(openalex_id)",
+                "CREATE INDEX IF NOT EXISTS idx_rr_unit       ON researcher_registry(main_unit)",
+                "CREATE INDEX IF NOT EXISTS idx_rr_active     ON researcher_registry(is_active)",
+                "CREATE INDEX IF NOT EXISTS idx_ru_sciper     ON researcher_units(sciper)",
+                "CREATE INDEX IF NOT EXISTS idx_ru_primary    ON researcher_units(is_primary)",
+                "CREATE INDEX IF NOT EXISTS idx_pp_sciper     ON person_publications(sciper)",
+                "CREATE INDEX IF NOT EXISTS idx_pp_doi        ON person_publications(doi)",
+                "CREATE INDEX IF NOT EXISTS idx_pio_sciper    ON person_infoscience_outputs(sciper)",
+                "CREATE INDEX IF NOT EXISTS idx_pio_doi       ON person_infoscience_outputs(doi)",
+                "CREATE INDEX IF NOT EXISTS idx_pg_sciper     ON person_gaps(sciper)",
+                "CREATE INDEX IF NOT EXISTS idx_pg_status     ON person_gaps(gap_status)",
+                "CREATE INDEX IF NOT EXISTS idx_pg_import     ON person_gaps(import_status)",
             ]:
                 con.execute(idx)
 
@@ -286,6 +400,30 @@ class PipelineDB:
                 "ALTER TABLE runs ADD COLUMN IF NOT EXISTS wos_ids TEXT",
                 "ALTER TABLE runs ADD COLUMN IF NOT EXISTS orcid_ids TEXT",
                 "ALTER TABLE runs ADD COLUMN IF NOT EXISTS openalex_ids TEXT",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS name_variants VARCHAR",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS email VARCHAR",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS openalex_in_infoscience BOOLEAN DEFAULT FALSE",
+                # Backfill: researchers with both openalex_id and dspace_uuid had their
+                # OpenAlex ID sourced from IS during a previous sync — mark them accordingly.
+                # Only touches NULL rows; explicit FALSE values (inference-sourced) are preserved.
+                "UPDATE researcher_registry SET openalex_in_infoscience = TRUE "
+                "WHERE openalex_id IS NOT NULL AND dspace_uuid IS NOT NULL "
+                "AND openalex_in_infoscience IS NULL",
+                "ALTER TABLE person_publications ADD COLUMN IF NOT EXISTS orcid_infoscience_synced BOOLEAN DEFAULT FALSE",
+                # doi_canonical: base DOI with version suffix stripped (e.g. 10.7554/eLife.X
+                # instead of 10.7554/eLife.X.2). Used by gap_analyzer for IS matching so
+                # both forms are checked against Infoscience.
+                "ALTER TABLE person_publications ADD COLUMN IF NOT EXISTS doi_canonical VARCHAR",
+                # has_preprint_version: True when a preprint was collapsed into this record
+                # during harvest dedup (published version survives, preprint is suppressed).
+                "ALTER TABLE person_publications ADD COLUMN IF NOT EXISTS has_preprint_version BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS unit_path VARCHAR",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS unit_cf VARCHAR",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS unit_level_2 VARCHAR",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS unit_level_3 VARCHAR",
+                "ALTER TABLE researcher_units ADD COLUMN IF NOT EXISTS position VARCHAR",
+                "ALTER TABLE researcher_units ADD COLUMN IF NOT EXISTS epfl_class VARCHAR",
+                "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS openalex_name_variants VARCHAR",
             ]:
                 con.execute(_migration)
         finally:
@@ -627,6 +765,8 @@ class PipelineDB:
             "  last_seen_at = NOW(),"
             "  infoscience_dedup_count ="
             "    infoscience_dedup_count + excluded.infoscience_dedup_count,"
+            "  dc_type       = COALESCE(excluded.dc_type,       dc_type),"
+            "  title         = COALESCE(excluded.title,         title),"
             "  upw_is_oa     = COALESCE(excluded.upw_is_oa,     upw_is_oa),"
             "  upw_valid_pdf = COALESCE(excluded.upw_valid_pdf, upw_valid_pdf),"
             "  upw_oa_status = COALESCE(excluded.upw_oa_status, upw_oa_status),"
@@ -1700,3 +1840,781 @@ class PipelineDB:
     def close(self) -> None:
         """No-op: connections are closed immediately after each operation."""
         pass
+
+    # ── researcher_monitor persistence ──────────────────────────────────
+
+    def upsert_researcher(
+        self,
+        sciper: str,
+        last_name: str | None = None,
+        first_name: str | None = None,
+        full_name: str | None = None,
+        email: str | None = None,
+        is_active: bool = True,
+        epfl_status: str | None = None,
+        epfl_position: str | None = None,
+        epfl_class: str | None = None,
+        enrollment_date=None,
+        offboarding_date=None,
+        main_unit: str | None = None,
+        all_units: str | None = None,
+        orcid: str | None = None,
+        orcid_epfl_linked: bool | None = None,
+        scopus_author_id: str | None = None,
+        researcher_id: str | None = None,
+        openalex_id: str | None = None,
+        openalex_in_infoscience: bool | None = None,
+        dspace_uuid: str | None = None,
+        infoscience_profile_url: str | None = None,
+        epfl_directory_url: str | None = None,
+        name_variants: str | None = None,
+        last_people_sync=None,
+    ) -> None:
+        """Insert or update a researcher in researcher_registry.
+
+        Uses INSERT OR REPLACE so that updated_at is refreshed on every call.
+        Preserves created_at by reading the existing value first when the row exists.
+        name_variants: JSON array of known name variants from ORCID other-names
+                       and DSpace authority records.
+        """
+        now = datetime.now()
+        con = self._connect()
+        try:
+            existing = con.execute(
+                "SELECT created_at FROM researcher_registry WHERE sciper = ?", [sciper]
+            ).fetchone()
+            created_at = existing[0] if existing else now
+
+            con.execute(
+                """
+                INSERT OR REPLACE INTO researcher_registry (
+                    sciper, last_name, first_name, full_name, email,
+                    epfl_status, epfl_position, epfl_class,
+                    is_active, enrollment_date, offboarding_date,
+                    main_unit, all_units,
+                    orcid, orcid_epfl_linked,
+                    scopus_author_id, researcher_id, openalex_id, openalex_in_infoscience,
+                    dspace_uuid, infoscience_profile_url, epfl_directory_url,
+                    name_variants, last_people_sync, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                [
+                    sciper, last_name, first_name, full_name, email,
+                    epfl_status, epfl_position, epfl_class,
+                    is_active, enrollment_date, offboarding_date,
+                    main_unit, all_units,
+                    orcid, orcid_epfl_linked,
+                    scopus_author_id, researcher_id, openalex_id, openalex_in_infoscience,
+                    dspace_uuid, infoscience_profile_url, epfl_directory_url,
+                    name_variants, last_people_sync, created_at, now,
+                ],
+            )
+        finally:
+            con.close()
+
+    def patch_researcher(self, sciper: str, **fields) -> None:
+        """Update only the specified fields for an existing researcher row.
+
+        Unlike upsert_researcher, this never NULLs out columns that are not
+        provided.  Use this for partial enrichment updates (DSpace, OpenAlex…).
+        No-op when fields is empty or the sciper does not exist yet.
+        """
+        if not fields:
+            return
+        allowed = {
+            "last_name", "first_name", "full_name", "email",
+            "epfl_status", "epfl_position", "epfl_class",
+            "is_active", "enrollment_date", "offboarding_date",
+            "main_unit", "all_units",
+            "orcid", "orcid_epfl_linked",
+            "scopus_author_id", "researcher_id", "openalex_id", "openalex_in_infoscience",
+            "dspace_uuid", "infoscience_profile_url", "epfl_directory_url",
+            "name_variants", "last_people_sync",
+        }
+        safe = {k: v for k, v in fields.items() if k in allowed}
+        if not safe:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in safe)
+        values = list(safe.values()) + [datetime.now(), sciper]
+        con = self._connect()
+        try:
+            con.execute(
+                f"UPDATE researcher_registry SET {set_clause}, updated_at = ? WHERE sciper = ?",
+                values,
+            )
+        finally:
+            con.close()
+
+    def patch_researcher_if_null(self, sciper: str, **fields) -> None:
+        """Like patch_researcher but only updates fields that are currently NULL.
+
+        Uses COALESCE so that already-populated columns are never overwritten.
+        Useful for supplementing identifiers from lower-priority sources (e.g.
+        OpenAlex author profile) without clobbering EPFL People / ORCID data.
+        """
+        if not fields:
+            return
+        allowed = {"orcid", "scopus_author_id", "researcher_id", "openalex_id", "openalex_name_variants"}
+        safe = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not safe:
+            return
+        set_clause = ", ".join(f"{k} = COALESCE({k}, ?)" for k in safe)
+        values = list(safe.values()) + [datetime.now(), sciper]
+        con = self._connect()
+        try:
+            con.execute(
+                f"UPDATE researcher_registry SET {set_clause}, updated_at = ? WHERE sciper = ?",
+                values,
+            )
+        finally:
+            con.close()
+
+    def upsert_researcher_units(self, sciper: str, units: list[dict]) -> None:
+        """Replace all unit rows for a researcher (delete + insert)."""
+        con = self._connect()
+        try:
+            con.execute("DELETE FROM researcher_units WHERE sciper = ?", [sciper])
+            for u in units:
+                con.execute(
+                    """
+                    INSERT INTO researcher_units (
+                        sciper, unit_id, unit_name, unit_label, unit_type,
+                        unit_path, unit_cf, unit_level_2, unit_level_3,
+                        unit_order, is_primary, position, epfl_class, valid_from, valid_to
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        sciper,
+                        u.get("unit_id"),
+                        u.get("unit_name"),
+                        u.get("unit_label"),
+                        u.get("unit_type"),
+                        u.get("unit_path"),
+                        u.get("unit_cf"),
+                        u.get("unit_level_2"),
+                        u.get("unit_level_3"),
+                        u.get("unit_order"),
+                        u.get("is_primary", False),
+                        u.get("position"),
+                        u.get("epfl_class"),
+                        u.get("valid_from"),
+                        u.get("valid_to"),
+                    ],
+                )
+        finally:
+            con.close()
+
+    def get_researcher_units(self, sciper: str) -> list[dict]:
+        """Return all unit rows for a researcher, ordered by unit_order."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                """
+                SELECT unit_id, unit_name, unit_label, unit_type, unit_path,
+                       unit_cf, unit_level_2, unit_level_3, unit_order, is_primary,
+                       position, epfl_class, valid_from, valid_to
+                FROM researcher_units
+                WHERE sciper = ?
+                ORDER BY unit_order NULLS LAST
+                """,
+                [sciper],
+            ).fetchdf()
+            return rows.to_dict(orient="records")
+        finally:
+            con.close()
+
+    def upsert_person_publication(
+        self,
+        sciper: str,
+        pub_id: str,
+        doi: str | None = None,
+        doi_canonical: str | None = None,
+        title: str | None = None,
+        pub_year: str | None = None,
+        dc_type: str | None = None,
+        journal_title: str | None = None,
+        sources_found: str | None = None,
+        primary_source: str | None = None,
+        metadata_quality: str | None = None,
+        needs_manual_review: bool = False,
+        orcid_infoscience_synced: bool = False,
+        has_preprint_version: bool = False,
+    ) -> None:
+        """Insert or update a harvested publication for a researcher.
+
+        When the record has a DOI-based pub_id, any stale source-prefixed rows
+        (orcid:… or openalex:…) for the same sciper+DOI are deleted first.
+        doi_canonical stores the base DOI with version suffix stripped (used by
+        gap_analyzer to match both DOI forms against Infoscience).
+        """
+        con = self._connect()
+        try:
+            if doi and pub_id == doi:
+                con.execute(
+                    "DELETE FROM person_publications "
+                    "WHERE sciper = ? AND doi = ? AND pub_id != ?",
+                    [sciper, doi, pub_id],
+                )
+            con.execute(
+                """
+                INSERT OR REPLACE INTO person_publications (
+                    sciper, pub_id, doi, doi_canonical, title, pub_year, dc_type,
+                    journal_title, sources_found, primary_source,
+                    metadata_quality, needs_manual_review,
+                    orcid_infoscience_synced, has_preprint_version, harvested_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
+                """,
+                [
+                    sciper, pub_id, doi, doi_canonical, title, pub_year, dc_type,
+                    journal_title, sources_found, primary_source,
+                    metadata_quality, needs_manual_review,
+                    bool(orcid_infoscience_synced),
+                    bool(has_preprint_version),
+                ],
+            )
+        finally:
+            con.close()
+
+    def upsert_person_infoscience_output(
+        self,
+        sciper: str,
+        infoscience_uuid: str,
+        doi: str | None = None,
+        title: str | None = None,
+        pub_year: str | None = None,
+        dc_type: str | None = None,
+        handle: str | None = None,
+    ) -> None:
+        """Insert or update an Infoscience output linked to a researcher."""
+        con = self._connect()
+        try:
+            con.execute(
+                """
+                INSERT OR REPLACE INTO person_infoscience_outputs (
+                    sciper, infoscience_uuid, doi, title,
+                    pub_year, dc_type, handle, fetched_at
+                ) VALUES (?,?,?,?,?,?,?,NOW())
+                """,
+                [sciper, infoscience_uuid, doi, title, pub_year, dc_type, handle],
+            )
+        finally:
+            con.close()
+
+    def upsert_person_gap(
+        self,
+        sciper: str,
+        pub_id: str,
+        gap_status: str,
+        doi: str | None = None,
+        title: str | None = None,
+        pub_year: str | None = None,
+        dc_type: str | None = None,
+        import_run_id: str | None = None,
+        import_status: str | None = None,
+    ) -> None:
+        """Insert or update a gap analysis result for a researcher publication."""
+        con = self._connect()
+        try:
+            con.execute(
+                """
+                INSERT OR REPLACE INTO person_gaps (
+                    sciper, pub_id, doi, title, pub_year, dc_type,
+                    gap_status, import_run_id, import_status, computed_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,NOW())
+                """,
+                [
+                    sciper, pub_id, doi, title, pub_year, dc_type,
+                    gap_status, import_run_id, import_status,
+                ],
+            )
+        finally:
+            con.close()
+
+    def insert_researcher_harvest_run(
+        self,
+        harvest_run_id: str,
+        sources: str,
+        start_year: int,
+        end_year: int,
+        status: str,
+        sciper: str | None = None,
+        scipers_batch: str | None = None,
+    ) -> None:
+        """Create a researcher harvest run record (status = 'running' on start)."""
+        con = self._connect()
+        try:
+            con.execute(
+                """
+                INSERT INTO researcher_harvest_runs (
+                    harvest_run_id, sciper, scipers_batch,
+                    sources, start_year, end_year, status, started_at
+                ) VALUES (?,?,?,?,?,?,?,NOW())
+                """,
+                [harvest_run_id, sciper, scipers_batch, sources,
+                 start_year, end_year, status],
+            )
+        finally:
+            con.close()
+
+    def update_researcher_harvest_run(
+        self,
+        harvest_run_id: str,
+        status: str,
+        pubs_found: int = 0,
+        pubs_new: int = 0,
+        gaps_found: int = 0,
+    ) -> None:
+        """Update status and counters on run completion or failure."""
+        con = self._connect()
+        try:
+            con.execute(
+                """
+                UPDATE researcher_harvest_runs
+                SET status = ?, pubs_found = ?, pubs_new = ?,
+                    gaps_found = ?, ended_at = NOW()
+                WHERE harvest_run_id = ?
+                """,
+                [status, pubs_found, pubs_new, gaps_found, harvest_run_id],
+            )
+        finally:
+            con.close()
+
+    def get_active_scipers(self) -> list[str]:
+        """Return all SCIPERs currently marked is_active=True in researcher_registry."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT sciper FROM researcher_registry WHERE is_active = TRUE"
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def mark_researcher_inactive(
+        self,
+        sciper: str,
+        offboarding_date=None,
+    ) -> None:
+        """Mark a researcher as inactive and optionally set offboarding_date."""
+        con = self._connect()
+        try:
+            con.execute(
+                """
+                UPDATE researcher_registry
+                SET is_active = FALSE,
+                    offboarding_date = COALESCE(?, offboarding_date),
+                    updated_at = NOW()
+                WHERE sciper = ?
+                """,
+                [offboarding_date, sciper],
+            )
+        finally:
+            con.close()
+
+    def get_person_infoscience_dois(self, sciper: str) -> list[str]:
+        """Return distinct non-null DOIs from person_infoscience_outputs (gap analysis)."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT DISTINCT doi FROM person_infoscience_outputs "
+                "WHERE sciper = ? AND doi IS NOT NULL",
+                [sciper],
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def get_person_infoscience_dois_for_inference(self, sciper: str) -> list[str]:
+        """Return IS DOIs optimised for OpenAlex author ID inference.
+
+        Prefers journal articles from the last 5 years (best OpenAlex coverage
+        and most reliable authorship attribution). Falls back to all IS DOIs when
+        no such records exist.
+        """
+        from datetime import date
+        min_year = date.today().year - 5
+        con = self._connect()
+        try:
+            rows = con.execute(
+                """
+                SELECT DISTINCT doi FROM person_infoscience_outputs
+                WHERE sciper = ?
+                  AND doi IS NOT NULL
+                  AND dc_type LIKE 'text::journal%'
+                  AND TRY_CAST(pub_year AS INTEGER) >= ?
+                ORDER BY TRY_CAST(pub_year AS INTEGER) DESC
+                """,
+                [sciper, min_year],
+            ).fetchall()
+            if rows:
+                return [r[0] for r in rows]
+            rows = con.execute(
+                "SELECT DISTINCT doi FROM person_infoscience_outputs "
+                "WHERE sciper = ? AND doi IS NOT NULL",
+                [sciper],
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def get_person_publication_dois(self, sciper: str) -> list[str]:
+        """Return distinct non-null DOIs for a researcher from all known sources.
+
+        Unions three sources:
+        - person_publications: researcher-monitor harvest (OpenAlex/ORCID)
+        - person_infoscience_outputs: publications linked in Infoscience (gap analysis)
+        - pub_authors + publications: main pipeline runs where researcher was co-author
+        """
+        con = self._connect()
+        try:
+            rows = con.execute(
+                """
+                SELECT DISTINCT doi FROM person_publications
+                WHERE sciper = ? AND doi IS NOT NULL
+                UNION
+                SELECT DISTINCT doi FROM person_infoscience_outputs
+                WHERE sciper = ? AND doi IS NOT NULL
+                UNION
+                SELECT DISTINCT p.doi
+                FROM pub_authors pa
+                JOIN run_publications rp ON rp.run_id = pa.run_id AND rp.row_id = pa.row_id
+                JOIN publications p ON p.pub_id = rp.pub_id
+                WHERE pa.sciper = ? AND p.doi IS NOT NULL
+                """,
+                [sciper, sciper, sciper],
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def get_researcher_openalex_id(self, sciper: str) -> str | None:
+        """Return the current openalex_id for a researcher, or None."""
+        return self.get_researcher_openalex_data(sciper)[0]
+
+    def get_researcher_openalex_data(self, sciper: str) -> tuple[str | None, bool | None]:
+        """Return (openalex_id, openalex_in_infoscience) for a researcher.
+
+        Both values are None when the researcher does not exist in the registry.
+        openalex_in_infoscience is None when the column has never been written.
+        """
+        con = self._connect()
+        try:
+            row = con.execute(
+                "SELECT openalex_id, openalex_in_infoscience "
+                "FROM researcher_registry WHERE sciper = ?",
+                [sciper],
+            ).fetchone()
+            if row is None:
+                return None, None
+            return row[0], row[1]
+        finally:
+            con.close()
+
+    def get_person_publications(
+        self,
+        sciper: str,
+        start_year: int | None = None,
+        end_year: int | None = None,
+    ) -> list[dict]:
+        """Return harvested publications for a researcher, optionally filtered by year range."""
+        con = self._connect()
+        try:
+            clauses = ["sciper = ?"]
+            params: list = [sciper]
+            if start_year is not None:
+                clauses.append("CAST(pub_year AS INTEGER) >= ?")
+                params.append(start_year)
+            if end_year is not None:
+                clauses.append("CAST(pub_year AS INTEGER) <= ?")
+                params.append(end_year)
+            where = " AND ".join(clauses)
+            rows = con.execute(
+                f"SELECT pub_id, doi, doi_canonical, title, pub_year, dc_type, journal_title, "
+                f"sources_found, primary_source, orcid_infoscience_synced, has_preprint_version "
+                f"FROM person_publications WHERE {where} ORDER BY pub_year DESC",
+                params,
+            ).fetchall()
+            cols = [
+                "pub_id", "doi", "doi_canonical", "title", "pub_year", "dc_type",
+                "journal_title", "sources_found", "primary_source",
+                "orcid_infoscience_synced", "has_preprint_version",
+            ]
+            return [dict(zip(cols, r)) for r in rows]
+        finally:
+            con.close()
+
+    def get_person_infoscience_outputs(self, sciper: str) -> list[dict]:
+        """Return cached Infoscience outputs for a researcher."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT infoscience_uuid, doi, title, pub_year, dc_type, handle "
+                "FROM person_infoscience_outputs WHERE sciper = ? ORDER BY pub_year DESC",
+                [sciper],
+            ).fetchall()
+            cols = ["infoscience_uuid", "doi", "title", "pub_year", "dc_type", "handle"]
+            return [dict(zip(cols, r)) for r in rows]
+        finally:
+            con.close()
+
+    def get_person_gaps(self, sciper: str) -> list[dict]:
+        """Return gap analysis results for a researcher."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT pub_id, doi, title, pub_year, dc_type, gap_status, import_run_id, import_status "
+                "FROM person_gaps WHERE sciper = ? ORDER BY pub_year DESC",
+                [sciper],
+            ).fetchall()
+            cols = ["pub_id", "doi", "title", "pub_year", "dc_type", "gap_status", "import_run_id", "import_status"]
+            return [dict(zip(cols, r)) for r in rows]
+        finally:
+            con.close()
+
+    def update_researcher_last_gap_analysis(self, sciper: str) -> None:
+        """Set last_gap_analysis_at = NOW() for a researcher."""
+        con = self._connect()
+        try:
+            con.execute(
+                "UPDATE researcher_registry SET last_gap_analysis_at = NOW(), updated_at = NOW() "
+                "WHERE sciper = ?",
+                [sciper],
+            )
+        finally:
+            con.close()
+
+    def get_researcher_registry_df(
+        self,
+        active_only: bool = True,
+        unit: str | None = None,
+    ):
+        """Return researcher_registry as a DataFrame, optionally enriched with gap counts."""
+        import pandas as pd
+
+        con = self._connect()
+        try:
+            clauses = []
+            params: list = []
+            if active_only:
+                clauses.append("r.is_active = TRUE")
+            if unit:
+                clauses.append("r.main_unit = ?")
+                params.append(unit)
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            df = con.execute(
+                f"""
+                SELECT
+                    r.sciper,
+                    r.last_name,
+                    r.first_name,
+                    r.full_name,
+                    r.email,
+                    r.main_unit,
+                    r.epfl_position,
+                    r.epfl_class,
+                    r.orcid,
+                    r.orcid_epfl_linked,
+                    r.scopus_author_id,
+                    r.researcher_id,
+                    r.openalex_id,
+                    r.openalex_in_infoscience,
+                    r.dspace_uuid,
+                    r.infoscience_profile_url,
+                    r.name_variants,
+                    r.openalex_name_variants,
+                    r.is_active,
+                    r.enrollment_date,
+                    r.offboarding_date,
+                    r.last_people_sync,
+                    r.last_harvest_at,
+                    r.last_gap_analysis_at,
+                    ru.unit_level_2,
+                    ru.unit_level_3,
+                    ru.unit_name,
+                    ru.unit_level_2_name,
+                    ru.unit_level_3_name,
+                    COALESCE(pp.total_pubs, 0)    AS harvested_pubs,
+                    COALESCE(pio.total_is_pubs, 0) AS infoscience_pubs,
+                    COALESCE(pg.missing, 0)        AS gaps_missing,
+                    COALESCE(pg.in_infoscience, 0) AS gaps_in_infoscience
+                FROM researcher_registry r
+                LEFT JOIN (
+                    SELECT ru.sciper,
+                           MIN(ru.unit_level_2)  AS unit_level_2,
+                           MIN(ru.unit_level_3)  AS unit_level_3,
+                           MIN(ru.unit_name)     AS unit_name,
+                           MIN(un2.unit_name)    AS unit_level_2_name,
+                           MIN(un3.unit_name)    AS unit_level_3_name
+                    FROM researcher_units ru
+                    LEFT JOIN (
+                        SELECT unit_id, MIN(unit_name) AS unit_name
+                        FROM researcher_units GROUP BY unit_id
+                    ) un2 ON un2.unit_id = ru.unit_level_2
+                    LEFT JOIN (
+                        SELECT unit_id, MIN(unit_name) AS unit_name
+                        FROM researcher_units GROUP BY unit_id
+                    ) un3 ON un3.unit_id = ru.unit_level_3
+                    WHERE ru.is_primary = TRUE
+                    GROUP BY ru.sciper
+                ) ru ON ru.sciper = r.sciper
+                LEFT JOIN (
+                    SELECT sciper, COUNT(*) AS total_pubs
+                    FROM person_publications GROUP BY sciper
+                ) pp ON pp.sciper = r.sciper
+                LEFT JOIN (
+                    SELECT sciper, COUNT(*) AS total_is_pubs
+                    FROM person_infoscience_outputs GROUP BY sciper
+                ) pio ON pio.sciper = r.sciper
+                LEFT JOIN (
+                    SELECT sciper,
+                           SUM(CASE WHEN gap_status='missing_in_infoscience' THEN 1 ELSE 0 END) AS missing,
+                           SUM(CASE WHEN gap_status='in_infoscience' THEN 1 ELSE 0 END) AS in_infoscience
+                    FROM person_gaps GROUP BY sciper
+                ) pg ON pg.sciper = r.sciper
+                {where}
+                ORDER BY r.last_name, r.first_name
+                """,
+                params,
+            ).df()
+            return df
+        finally:
+            con.close()
+
+    def get_person_gaps_df(
+        self,
+        sciper: str | None = None,
+        gap_status: list[str] | str | None = None,
+        start_year: int | None = None,
+        end_year: int | None = None,
+        dc_type: list[str] | str | None = None,
+        main_unit: list[str] | str | None = None,
+        unit_level_2: list[str] | str | None = None,
+    ):
+        """Return person_gaps joined with researcher name as a DataFrame."""
+        import pandas as pd
+
+        def _add_list_filter(col: str, val, clauses: list, params: list) -> None:
+            vals = [val] if isinstance(val, str) else [v for v in (val or []) if v]
+            if not vals:
+                return
+            if len(vals) == 1:
+                clauses.append(f"{col} = ?")
+                params.append(vals[0])
+            else:
+                clauses.append(f"{col} IN ({', '.join('?' * len(vals))})")
+                params.extend(vals)
+
+        con = self._connect()
+        try:
+            clauses = []
+            params: list = []
+            if sciper:
+                clauses.append("g.sciper = ?")
+                params.append(sciper)
+            _add_list_filter("g.gap_status", gap_status, clauses, params)
+            if start_year:
+                clauses.append("CAST(g.pub_year AS INTEGER) >= ?")
+                params.append(start_year)
+            if end_year:
+                clauses.append("CAST(g.pub_year AS INTEGER) <= ?")
+                params.append(end_year)
+            _add_list_filter("g.dc_type", dc_type, clauses, params)
+            _add_list_filter("r.main_unit", main_unit, clauses, params)
+            _add_list_filter("r.unit_level_2", unit_level_2, clauses, params)
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            return con.execute(
+                f"""
+                SELECT
+                    g.sciper,
+                    r.full_name,
+                    r.main_unit,
+                    r.unit_level_2,
+                    g.pub_year,
+                    g.title,
+                    g.doi,
+                    g.dc_type,
+                    g.gap_status,
+                    g.import_status,
+                    g.computed_at
+                FROM person_gaps g
+                LEFT JOIN researcher_registry r ON r.sciper = g.sciper
+                {where}
+                ORDER BY g.pub_year DESC, g.sciper
+                """,
+                params,
+            ).df()
+        finally:
+            con.close()
+
+    def get_researcher_registry_units(self) -> list[str]:
+        """Return distinct active units from researcher_registry, sorted."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT DISTINCT main_unit FROM researcher_registry "
+                "WHERE is_active = TRUE AND main_unit IS NOT NULL ORDER BY main_unit"
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def get_person_gaps_dc_types(self) -> list[str]:
+        """Return distinct non-null dc_type values from person_gaps, sorted."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT DISTINCT dc_type FROM person_gaps "
+                "WHERE dc_type IS NOT NULL ORDER BY dc_type"
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def get_person_gaps_units(self) -> list[str]:
+        """Return distinct main_unit values present in person_gaps (via registry join), sorted."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT DISTINCT r.main_unit FROM person_gaps g "
+                "LEFT JOIN researcher_registry r ON r.sciper = g.sciper "
+                "WHERE r.main_unit IS NOT NULL ORDER BY r.main_unit"
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def get_person_gaps_schools(self) -> list[str]:
+        """Return distinct unit_level_2 (school/faculty) values present in person_gaps, sorted."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT DISTINCT r.unit_level_2 FROM person_gaps g "
+                "LEFT JOIN researcher_registry r ON r.sciper = g.sciper "
+                "WHERE r.unit_level_2 IS NOT NULL ORDER BY r.unit_level_2"
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def get_researcher_gap_stats(self) -> dict:
+        """Return aggregate gap statistics across all researchers."""
+        con = self._connect()
+        try:
+            row = con.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT sciper)                                                   AS researchers_analyzed,
+                    SUM(CASE WHEN gap_status='missing_in_infoscience' THEN 1 ELSE 0 END)   AS total_missing,
+                    SUM(CASE WHEN gap_status='in_infoscience' THEN 1 ELSE 0 END)            AS total_in_infoscience,
+                    SUM(CASE WHEN gap_status='superseded_preprint' THEN 1 ELSE 0 END)       AS total_superseded_preprint,
+                    COUNT(*)                                                                 AS total_pubs
+                FROM person_gaps
+                """
+            ).fetchone()
+            cols = [
+                "researchers_analyzed", "total_missing", "total_in_infoscience",
+                "total_superseded_preprint", "total_pubs",
+            ]
+            return dict(zip(cols, row)) if row else {}
+        finally:
+            con.close()
