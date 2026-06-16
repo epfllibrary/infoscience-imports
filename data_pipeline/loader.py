@@ -17,10 +17,11 @@ logger = get_pipeline_logger("loader")
 # ---------------------------------------------------------------------------
 
 def _is_nan_like(x) -> bool:
-    """Return True if x behaves like a NaN (float('nan'), numpy.nan, pandas NA)."""
+    """Return True if x behaves like a NaN (float('nan'), numpy.nan, pd.NA, pd.NaT)."""
+    if x is pd.NA or x is pd.NaT:
+        return True
     try:
-        # NaN != NaN, while None == None
-        return x != x
+        return x != x  # NaN != NaN, while normal values equal themselves
     except Exception:
         return False
 
@@ -480,7 +481,8 @@ class Loader:
 
             # 3) Single PATCH: remove/reset ops first, then add ops, then dc.subject keywords.
             if not is_epo:
-                keywords_raw = str(row.get("keywords", "") or "").strip()
+                _kw = row.get("keywords", "")
+                keywords_raw = "" if (_kw is None or _is_nan_like(_kw)) else str(_kw).strip()
                 keyword_list = [k.strip() for k in keywords_raw.split("||") if k.strip()]
                 subject_values = [v for v in (_build_metadata_value(kw) for kw in keyword_list) if v]
                 patch_operations.append({
@@ -588,6 +590,16 @@ class Loader:
             "/sections/related_works/datacite.relatedIdentifier",
         ]
 
+        # Clear dc.type pre-populated by the external source importer so we can
+        # set the correct type for the target collection without conflicting values.
+        if form_section:
+            type_sect = (
+                f"{form_section}details"
+                if form_section in ("conference_", "book_", "dataset_")
+                else f"{form_section}type"
+            )
+            removable_metadata_paths.append(f"/sections/{type_sect}/dc.type")
+
         for path in removable_metadata_paths:
             if self._metadata_exists(path, workspace_response):
                 metadata_definitions.append({
@@ -603,8 +615,11 @@ class Loader:
         """Construct PATCH operations for metadata updates with optimized error handling."""
 
         def build_value(value, authority=None, language=None, confidence=-1, place=0):
-            """Helper to build a metadata value structure (skip blank strings/None)."""
-            if value is None or (isinstance(value, str) and not value.strip()):
+            """Helper to build a metadata value structure (skip blank strings/None/NaN)."""
+            if value is None or _is_nan_like(value):
+                logger.debug(f"Invalid value provided: {value}")
+                return None
+            if isinstance(value, str) and not value.strip():
                 logger.debug(f"Invalid value provided: {value}")
                 return None
 
@@ -616,6 +631,13 @@ class Loader:
                 "place": place,
             }
 
+        def safe_str(key, default=""):
+            """Return row[key] as a string, or default when the value is None/NaN."""
+            v = row.get(key, default)
+            if v is None or _is_nan_like(v):
+                return default
+            return str(v)
+
         def determine_operation(path, is_repeatable):
             """Return 'replace' for non-repeatable when exists, else 'add'."""
             if not is_repeatable and self._metadata_exists(path, workspace_response):
@@ -625,7 +647,7 @@ class Loader:
         def parse_conference_info(conference_info):
             """Parse 'confName::place::start::end::acronym[||...]' into structured metadata."""
             operations = []
-            if not conference_info:
+            if not isinstance(conference_info, str) or not conference_info.strip():
                 return operations
 
             # Choose section based on form_section
@@ -747,10 +769,10 @@ class Loader:
             - /sections/additional_fields/epfl.url.description → label
             """
             ops = []
-            if not additional_url:
+            if not isinstance(additional_url, str) or not additional_url.strip():
                 return ops
 
-            raw_entries = [e.strip() for e in str(additional_url).split("||") if e.strip()]
+            raw_entries = [e.strip() for e in additional_url.split("||") if e.strip()]
             if not raw_entries:
                 return ops
 
@@ -788,7 +810,7 @@ class Loader:
             """
             operations = []
             logger.debug("parse_related_works IN=%r", related_works)
-            if not related_works:
+            if not isinstance(related_works, str) or not related_works.strip():
                 return operations
 
             entries = [e.strip() for e in str(related_works).split("||") if e.strip()]
@@ -826,7 +848,7 @@ class Loader:
             """Parse 'Funder::GrantNo[||...]' into grants-related fields."""
             funders, funding_names, grant_nos, award_uris = [], [], [], []
 
-            if not funding_info:
+            if not isinstance(funding_info, str) or not funding_info.strip():
                 return []
 
             grants = funding_info.split("||")
@@ -856,7 +878,7 @@ class Loader:
 
         def parse_editors(editors):
             """Parse editors string 'A||B||...' into editor, affiliation, orcid placeholders."""
-            if not editors:
+            if not isinstance(editors, str) or not editors.strip():
                 return []
 
             editors_list, affiliations, orcids = [], [], []
@@ -972,12 +994,14 @@ class Loader:
             publisher_container = "dataset_details"
         elif dc_type in ["text::preprint"]:
             publisher_container = "preprint_details"
+        elif form_section == "article_":
+            publisher_container = "journalcontainer_details"
         else:
             publisher_container = "bookcontainer_details"
 
         metadata_definitions = []
 
-        journal_issn = str(row.get("journalISSN", ""))
+        journal_issn = safe_str("journalISSN")
         issn_list = [issn.strip() for issn in journal_issn.split("||") if issn.strip()]
         authority_journal = f"will be generated::ISSN::{issn_list[0]}" if issn_list else None
 
@@ -1023,7 +1047,7 @@ class Loader:
                     build_value(
                         row.get("journalTitle"),
                         authority=authority_journal,
-                        confidence=500,
+                        confidence=500 if authority_journal else -1,
                     )
                 ],
                 False,
@@ -1032,7 +1056,7 @@ class Loader:
                 "/sections/journalcontainer_details/dc.relation.issn",
                 [
                     build_value(issn)
-                    for issn in str(row.get("journalISSN", "")).split("||")
+                    for issn in safe_str("journalISSN").split("||")
                     if issn.strip()
                 ],
                 True,
@@ -1076,9 +1100,7 @@ class Loader:
                 "/sections/bookcontainer_details/dc.relation.ispartofseries",
                 [
                     build_value(
-                        f"{row.get('seriesTitle', '')}; {row.get('seriesVolume', '')}".strip(
-                            "; "
-                        ),
+                        f"{safe_str('seriesTitle')}; {safe_str('seriesVolume')}".strip("; "),
                     )
                 ],
                 True,
@@ -1087,7 +1109,7 @@ class Loader:
                 "/sections/bookcontainer_details/dc.relation.serieissn",
                 [
                     build_value(issn)
-                    for issn in str(row.get("seriesISSN", "")).split("||")
+                    for issn in safe_str("seriesISSN").split("||")
                     if issn.strip()
                 ],
                 True,
@@ -1106,7 +1128,7 @@ class Loader:
                 f"/sections/{isbn_section}/{isbn_metadata}",
                 [
                     build_value(isbn)
-                    for isbn in str(row.get("bookISBN", "")).split("||")
+                    for isbn in safe_str("bookISBN").split("||")
                     if isbn.strip()
                 ],
                 True,
@@ -1115,7 +1137,7 @@ class Loader:
                 f"/sections/{form_section}details/dc.contributor",
                 [
                     build_value(corp)
-                    for corp in str(row.get("corporateAuthor", "")).split("||")
+                    for corp in safe_str("corporateAuthor").split("||")
                     if corp.strip()
                 ],
                 True,
@@ -1567,6 +1589,12 @@ class Loader:
                 source_id = row.get("doi", source_id)
             if source == "openalex+crossref":
                 source = "crossref"
+            elif source == "openalex":
+                # Use the agency resolved via doi.org/ra during enrichment.
+                # Only the two main DSpace external sources are supported;
+                # unknown or missing agency falls back to crossref.
+                agency = row.get("doi_agency", "")
+                source = agency if agency in ("crossref", "datacite") else "crossref"
             elif source == "zenodo":
                 source = "datacite"
             if str(source).lower() == "epo":

@@ -48,8 +48,10 @@ from data_pipeline.harvester import (
     WosHarvester,
     ScopusHarvester,
     CrossrefHarvester,
+    OpenAlexHarvester,
     OpenAlexCrossrefHarvester,
     ZenodoHarvester,
+    DataCiteHarvester,
     EPOHarvester,
 )
 
@@ -66,7 +68,7 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data"
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex", "zenodo", "epo")
+SUPPORTED_SOURCES = ("wos", "scopus", "crossref", "openalex+crossref", "openalex", "datacite", "zenodo", "epo")
 
 
 # -----------------------------------------------------------------------------
@@ -230,11 +232,16 @@ def build_id_queries(
     # if orcids:
     #     id_queries["crossref"] = "FILTER_ORCID:" + ",".join(orcids)
 
-    # OPENALEX
+    # OPENALEX — same filter applied to both the direct harvester and the Crossref-enriched one
     if openalex_ids:
-        id_queries["openalex"] = "authorships.author.id:" + "|".join(openalex_ids)
+        _oa_filter = "authorships.author.id:" + "|".join(openalex_ids)
     elif orcids:
-        id_queries["openalex"] = "authorships.author.orcid:" + "|".join(orcids)
+        _oa_filter = "authorships.author.orcid:" + "|".join(orcids)
+    else:
+        _oa_filter = None
+    if _oa_filter:
+        id_queries["openalex+crossref"] = _oa_filter
+        id_queries["openalex"] = _oa_filter
     # ZENODO: pas de recherche par auteur-id standard → ne change rien par défaut
     return id_queries
 
@@ -320,8 +327,14 @@ def run_pipeline(
             end_date,
             query=queries["crossref"],
         ).harvest(),
-        "openalex": lambda: OpenAlexCrossrefHarvester(
+        "openalex+crossref": lambda: OpenAlexCrossrefHarvester(
+            start_date, end_date, queries["openalex+crossref"]
+        ).harvest(),
+        "openalex": lambda: OpenAlexHarvester(
             start_date, end_date, queries["openalex"]
+        ).harvest(),
+        "datacite": lambda: DataCiteHarvester(
+            start_date, end_date, queries["datacite"]
         ).harvest(),
         "zenodo": lambda: ZenodoHarvester(
             start_date, end_date, queries["zenodo"]
@@ -576,6 +589,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--query-scopus", type=str, default=None)
     p.add_argument("--query-crossref", type=str, default=None)
     p.add_argument("--query-openalex", type=str, default=None)
+    p.add_argument("--query-datacite", type=str, default=None)
     p.add_argument("--query-zenodo", type=str, default=None)
     p.add_argument("--query-epo", type=str, default=None)
 
@@ -771,6 +785,7 @@ def main():
             "scopus": args.query_scopus,
             "crossref": args.query_crossref,
             "openalex": args.query_openalex,
+            "datacite": args.query_datacite,
             "zenodo": args.query_zenodo,
             "epo": args.query_epo,
         }.items()
