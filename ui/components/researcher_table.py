@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html as _html
 import json
+import time
 
 import streamlit as st
 
@@ -530,9 +531,24 @@ def _unit_level_crumb(acronym: str, css_class: str, icon: str, title: str = "") 
 # ── Detail dialog ─────────────────────────────────────────────────────────────
 
 @st.dialog("Chercheur", width="large")
-def show_researcher_dialog(row: dict, db=None) -> None:
+def show_researcher_dialog(
+    row: dict,
+    db=None,
+    role: str = "reporting",
+    on_harvest: "callable | None" = None,
+    on_analyze: "callable | None" = None,
+    on_sync: "callable | None" = None,
+    root: "Path | None" = None,
+) -> None:
+    from pathlib import Path as _Path
+
     sciper = _s(row.get("sciper"), "?")
     name   = _s(row.get("full_name"), "—")
+
+    # Override with fresh DB data if a job just completed for this researcher
+    _fresh_key = f"_dlg_fresh_{sciper}"
+    if _fresh_key in st.session_state:
+        row = st.session_state.pop(_fresh_key)
 
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;'
@@ -736,6 +752,110 @@ def show_researcher_dialog(row: dict, db=None) -> None:
                 _dlg_id_row("analytics", "Analyse lacunes", gap_val, gap_val != "—"),
                 unsafe_allow_html=True,
             )
+
+        if role != "reporting" and any(
+            cb is not None for cb in (on_harvest, on_analyze, on_sync)
+        ):
+            st.markdown("---")
+            _job_key = f"_dlg_job_{sciper}"
+
+            # ── Read active job state ────────────────────────────────────────
+            _active = None
+            if root is not None:
+                try:
+                    from ui.pages.researcher_monitor import _read_active_researcher_job
+                    _active = _read_active_researcher_job(_Path(root))
+                except Exception:
+                    pass
+            _mine = _active is not None and str(_active.get("sciper")) == str(sciper)
+
+            # ── State machine ────────────────────────────────────────────────
+            _was_running = st.session_state.get(_job_key)
+
+            if _mine:
+                # Job running for this researcher — show spinner and poll
+                st.session_state[_job_key] = _active.get("action", "tâche")
+                _action_label = st.session_state[_job_key]
+                _ACTION_LABELS = {
+                    "harvest": "Moisson",
+                    "analyze": "Analyse des lacunes",
+                    "refresh": "Sync People",
+                }
+                st.info(
+                    f"⏳ **{_ACTION_LABELS.get(_action_label, _action_label)}** "
+                    f"en cours pour ce chercheur…"
+                )
+                time.sleep(2)
+                st.rerun()
+
+            elif _was_running and not _mine:
+                # Job just finished — show result and refresh data
+                _finished_action = st.session_state.pop(_job_key)
+                _ACTION_LABELS = {
+                    "harvest": "Moisson",
+                    "analyze": "Analyse des lacunes",
+                    "refresh": "Sync People",
+                }
+                st.success(
+                    f"✅ **{_ACTION_LABELS.get(_finished_action, _finished_action)}** terminé."
+                )
+                if db is not None:
+                    try:
+                        _reg = db.get_researcher_registry_df(active_only=False)
+                        _fresh = _reg[_reg["sciper"].astype(str) == str(sciper)]
+                        if not _fresh.empty:
+                            st.session_state[_fresh_key] = _fresh.iloc[0].to_dict()
+                    except Exception:
+                        pass
+                time.sleep(1)
+                st.rerun()
+
+            elif _active is not None and not _mine:
+                # A different researcher's job is running
+                st.warning("⛔ Une autre tâche est déjà en cours — attendez sa fin.")
+
+            else:
+                # No job — show action buttons
+                act_cols = st.columns(3)
+                with act_cols[0]:
+                    if on_sync is not None and st.button(
+                        "Sync People",
+                        key=f"dlg_sync_{sciper}",
+                        icon=":material/people:",
+                        type="secondary",
+                        use_container_width=True,
+                        help=(
+                            "Ré-enrichit le profil depuis l'API EPFL People "
+                            "(ORCID, unité, statut, Infoscience, OpenAlex)"
+                        ),
+                    ):
+                        on_sync(sciper)
+                with act_cols[1]:
+                    if on_harvest is not None and st.button(
+                        "Moissonner",
+                        key=f"dlg_harvest_{sciper}",
+                        icon=":material/cloud_download:",
+                        type="secondary",
+                        use_container_width=True,
+                        help=(
+                            "Moisson OpenAlex / ORCID dans la fenêtre d'accréditation EPFL "
+                            "de ce chercheur"
+                        ),
+                    ):
+                        on_harvest(sciper)
+                with act_cols[2]:
+                    if on_analyze is not None and st.button(
+                        "Analyser",
+                        key=f"dlg_analyze_{sciper}",
+                        icon=":material/analytics:",
+                        type="secondary",
+                        use_container_width=True,
+                        help=(
+                            "Collecte les outputs Infoscience et calcule les lacunes "
+                            "pour ce chercheur"
+                        ),
+                    ):
+                        on_analyze(sciper)
 
     with t_units:
         if db is None:

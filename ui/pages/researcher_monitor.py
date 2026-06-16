@@ -77,7 +77,8 @@ def _read_active_researcher_job(root: Path) -> dict | None:
 
 
 def _write_researcher_job_lock(
-    root: Path, action: str, pid: int, log_file: Path, cmd: list[str], env: str
+    root: Path, action: str, pid: int, log_file: Path, cmd: list[str], env: str,
+    sciper: str | None = None,
 ) -> None:
     lock = _job_lock_file(root)
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +90,7 @@ def _write_researcher_job_lock(
             "started_at": datetime.now().isoformat(),
             "env":        env,
             "cmd":        " ".join(cmd),
+            "sciper":     sciper,
         }, indent=2),
         encoding="utf-8",
     )
@@ -203,6 +205,22 @@ def _apply_registry_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     return view
 
 
+# ── Registry helpers ──────────────────────────────────────────────────────────
+
+def _count_filled(series: "pd.Series") -> int:
+    """Count non-null, non-empty, non-whitespace values in a pandas Series."""
+    return int(series.notna().sum() - (series.astype(str).str.strip() == "").sum())
+
+
+_REGISTRY_EXPORT_COLS = [
+    "sciper", "full_name", "epfl_position", "epfl_class",
+    "main_unit", "unit_level_2", "orcid", "scopus_author_id",
+    "openalex_id", "dspace_uuid", "last_harvest_at",
+    "last_gap_analysis_at", "gaps_missing", "harvested_pubs",
+    "infoscience_pubs", "is_active",
+]
+
+
 # ── KPI row helper ────────────────────────────────────────────────────────────
 
 def _kpi_row(items: list[tuple[str, object, str]]) -> None:
@@ -230,7 +248,7 @@ def render(
     ])
 
     with tab_reg:
-        db_lock_guard(lambda: _render_registry(db, role=role))
+        db_lock_guard(lambda: _render_registry(db, role=role, root=root, active_env=active_env))
 
     with tab_pubs:
         db_lock_guard(lambda: _render_publications(db))
@@ -245,7 +263,12 @@ def render(
 # ── Tab: Registre ─────────────────────────────────────────────────────────────
 
 
-def _render_registry(db: PipelineDB, role: str) -> None:
+def _render_registry(
+    db: PipelineDB,
+    role: str,
+    root: Path = Path("."),
+    active_env: str = "dev",
+) -> None:
     df = db.get_researcher_registry_df(active_only=False)
 
     if df.empty:
@@ -256,11 +279,9 @@ def _render_registry(db: PipelineDB, role: str) -> None:
     active = df[df["is_active"] == True]  # noqa: E712
     n_active = len(active)
 
-    def _count_filled(series):
-        return int(series.notna().sum() - (series.astype(str).str.strip() == "").sum())
-
     n_orcid    = _count_filled(active["orcid"])
     n_openalex = _count_filled(active.get("openalex_id", pd.Series(dtype=str)))
+    n_scopus   = _count_filled(active.get("scopus_author_id", pd.Series(dtype=str)))
     n_dspace   = _count_filled(active.get("dspace_uuid", pd.Series(dtype=str)))
     n_analyzed = int(active["last_gap_analysis_at"].notna().sum())
     n_missing  = int(active["gaps_missing"].fillna(0).sum())
@@ -269,6 +290,7 @@ def _render_registry(db: PipelineDB, role: str) -> None:
         ("Chercheurs actifs", n_active, f"{len(df)} au total"),
         ("Avec ORCID", n_orcid, f"{n_orcid * 100 // max(n_active, 1)} %"),
         ("Avec OpenAlex", n_openalex, f"{n_openalex * 100 // max(n_active, 1)} %"),
+        ("Avec Scopus ID", n_scopus, f"{n_scopus * 100 // max(n_active, 1)} %"),
         ("Profil Infoscience", n_dspace, f"{n_dspace * 100 // max(n_active, 1)} %"),
         ("Total lacunes", n_missing, f"{n_analyzed} analysés"),
     ])
@@ -440,7 +462,7 @@ def _render_registry(db: PipelineDB, role: str) -> None:
         st.session_state["_rm_filter_sig"] = filter_sig
         st.session_state["rm_page"] = 1
 
-    pc1, _, pc3 = st.columns([2, 2, 5])
+    pc1, _, pc3, pc4 = st.columns([2, 2, 4, 2])
     with pc1:
         page_num = st.number_input(
             f"Page (/{total_pages})", min_value=1, max_value=total_pages,
@@ -454,6 +476,18 @@ def _render_registry(db: PipelineDB, role: str) -> None:
             f'</div>',
             unsafe_allow_html=True,
         )
+    with pc4:
+        st.markdown('<div style="padding-top:20px">', unsafe_allow_html=True)
+        export_df = view[[c for c in _REGISTRY_EXPORT_COLS if c in view.columns]]
+        st.download_button(
+            "Exporter CSV",
+            export_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"registre_{datetime.now():%Y%m%d}.csv",
+            mime="text/csv",
+            icon=":material/download:",
+            use_container_width=True,
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Card grid (2 columns) ─────────────────────────────────────────────────
     start = (page_num - 1) * _CARD_PAGE_SIZE
@@ -469,7 +503,21 @@ def _render_registry(db: PipelineDB, role: str) -> None:
                     render_researcher_card(
                         row,
                         role=role,
-                        on_detail=lambda r, _db=db: show_researcher_dialog(r, db=_db),
+                        on_detail=lambda r, _db=db, _root=root, _env=active_env, _role=role: show_researcher_dialog(
+                            r,
+                            db=_db,
+                            role=_role,
+                            root=_root,
+                            on_sync=lambda sc, __root=_root, __env=_env: _launch_researcher_job(
+                                __root, __env, "refresh", sciper=sc
+                            ),
+                            on_harvest=lambda sc, __root=_root, __env=_env: _launch_researcher_job(
+                                __root, __env, "harvest", sciper=sc
+                            ),
+                            on_analyze=lambda sc, __root=_root, __env=_env: _launch_researcher_job(
+                                __root, __env, "analyze", sciper=sc
+                            ),
+                        ),
                     )
 
 
@@ -1037,7 +1085,7 @@ def _launch_researcher_job(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        _write_researcher_job_lock(root, action, proc.pid, log_path, cmd, active_env)
+        _write_researcher_job_lock(root, action, proc.pid, log_path, cmd, active_env, sciper=sciper)
         st.rerun()
     except Exception as exc:
         st.error(f"Erreur au lancement : {exc}")
