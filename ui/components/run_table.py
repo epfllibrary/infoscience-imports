@@ -301,7 +301,7 @@ def _run_dialog(row: dict, role: str, root: Path, active_env: str) -> None:
             "les items seront importés dans Infoscience."
         )
 
-    if st.button("▶ Re-déclencher ce run", type="primary", use_container_width=True,
+    if st.button("▶ Re-déclencher ce run", type="primary", width="stretch",
                  key=f"dup_launch_{rid}"):
         new_run_id = _make_run_id()
         log_file   = root / "logs" / f"run_{new_run_id}.log"
@@ -430,7 +430,7 @@ def render_run_table(
             st.multiselect("Sources", SOURCES, key="rf_sources")
         with _fs4:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Réinitialiser", key="rf_reset", use_container_width=True):
+            if st.button("Réinitialiser", key="rf_reset", width="stretch"):
                 for _k in ("rf_date_from", "rf_date_to", "rf_status",
                            "rf_review_status", "rf_search", "rf_claimed_by",
                            "rf_sources"):
@@ -601,7 +601,7 @@ def render_run_table(
                 pass
             elif not _rs:
                 if st.button("", icon=":material/person_add:",
-                             key=f"claim_{_rid}", use_container_width=True,
+                             key=f"claim_{_rid}", width="stretch",
                              help="Prendre en charge"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": "in_progress",
@@ -609,14 +609,14 @@ def render_run_table(
                     st.rerun()
             elif _rs == "in_progress" and _can_act:
                 if st.button("", icon=":material/task_alt:",
-                             key=f"done_{_rid}", use_container_width=True,
+                             key=f"done_{_rid}", width="stretch",
                              help="Marquer terminé"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": "done",
                     }
                     st.rerun()
                 if st.button("", icon=":material/lock_open:",
-                             key=f"unclaim_{_rid}", use_container_width=True,
+                             key=f"unclaim_{_rid}", width="stretch",
                              help="Libérer"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": None,
@@ -624,14 +624,14 @@ def render_run_table(
                     st.rerun()
             elif _rs == "done" and (_role == "admin" or (_role == "curator" and _cb == _username)):
                 if st.button("", icon=":material/restart_alt:",
-                             key=f"reopen_{_rid}", use_container_width=True,
+                             key=f"reopen_{_rid}", width="stretch",
                              help="Réouvrir"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": "in_progress",
                     }
                     st.rerun()
                 if st.button("", icon=":material/sync:",
-                             key=f"sync_{_rid}", use_container_width=True,
+                             key=f"sync_{_rid}", width="stretch",
                              help="Synchroniser les statuts Infoscience"):
                     st.session_state["_run_pending_sync"] = _rid
                     st.rerun()
@@ -639,7 +639,7 @@ def render_run_table(
         # col 9: navigate to publications filtered by this run
         with _c[9]:
             if st.button("", icon=":material/visibility:",
-                         key=f"pubs_{_rid}", use_container_width=True,
+                         key=f"pubs_{_rid}", width="stretch",
                          help="Voir les publications"):
                 st.session_state["_jump_to_run"] = _rid
                 st.query_params["page"] = "Publications"
@@ -650,5 +650,5 @@ def render_run_table(
             _icon = ":material/content_copy:" if _role == "admin" else ":material/info:"
             _help = "Détail + re-déclencher" if _role == "admin" else "Voir le détail du run"
             if st.button("", icon=_icon, key=f"detail_{_rid}",
-                         use_container_width=True, help=_help):
+                         width="stretch", help=_help):
                 _run_dialog(_row.to_dict(), _role, root, active_env)

@@ -81,6 +81,7 @@ _NAV_ICONS = {
     "Programmation":   "schedule",
     "Publications":    "article",
     "Statistiques":    "bar_chart",
+    "Chercheurs":      "manage_accounts",
     "Configuration":   "settings",
     "Aide":            "menu_book",
 }
@@ -179,9 +180,11 @@ if _active:
 # ── Page router ───────────────────────────────────────────────────────────────
 db = get_db()
 
+from ui.helpers import db_lock_guard  # noqa: E402
+
 if page == "Tableau de bord":
     from ui.pages.dashboard import render
-    render(db)
+    db_lock_guard(lambda: render(db))
 
 elif page == "Lancer un run":
     from ui.pages.run_launcher import render
@@ -193,15 +196,19 @@ elif page == "Programmation":
 
 elif page == "Publications":
     from ui.pages.publications import render
-    render(db, role=_role)
+    db_lock_guard(lambda: render(db, role=_role))
 
 elif page == "Statistiques":
     from ui.pages.statistics import render
-    render(db)
+    db_lock_guard(lambda: render(db))
+
+elif page == "Chercheurs":
+    from ui.pages.researcher_monitor import render
+    render(db, active_env=ACTIVE_ENV, root=ROOT, role=_role)
 
 elif page == "Configuration":
     from ui.pages.configuration import render
-    render(db, active_env=ACTIVE_ENV)
+    db_lock_guard(lambda: render(db, active_env=ACTIVE_ENV))
 
 elif page == "Aide":
     from ui.pages.help import render

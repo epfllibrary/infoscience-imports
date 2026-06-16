@@ -197,7 +197,7 @@ def _render_filters(db: PipelineDB) -> None:
             st.markdown("<br>", unsafe_allow_html=True)
             st.button(
                 "Réinitialiser les filtres", icon=":material/refresh:",
-                on_click=_reset, use_container_width=True,
+                on_click=_reset, width="stretch",
                 help="Remettre tous les filtres à zéro",
             )
 

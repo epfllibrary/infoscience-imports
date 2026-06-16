@@ -69,7 +69,7 @@ def _render_infoscience_sync_card(sched_file: Path, root: Path, active_env: str)
             if new_enabled != enabled:
                 _save_system_job(sched_file, _INFOSCIENCE_SYNC_JOB_KEY, {"enabled": new_enabled})
                 st.rerun()
-            if st.button("▶ Now", key="run_ifs_sync", use_container_width=True,
+            if st.button("▶ Now", key="run_ifs_sync", width="stretch",
                          help="Lancer la synchronisation maintenant"):
                 with st.spinner("Synchronisation en cours…"):
                     try:
@@ -270,7 +270,7 @@ def _render_schedule_card(
             _btn1, _btn2 = st.columns(2)
             with _btn1:
                 if st.button("▶ Now", key=f"run_{sid}", help="Lance ce run immédiatement",
-                             use_container_width=True):
+                             width="stretch"):
                     _sched_env = sched.get("env", "dev")
                     _missing = missing_required_env(_sched_env, root)
                     if _missing:
@@ -328,7 +328,7 @@ def _render_schedule_card(
 
             with _btn2:
                 if st.button("🗑", key=f"del_{sid}", help="Supprimer ce schedule",
-                             use_container_width=True):
+                             width="stretch"):
                     _save(sched_file, [x for x in schedules if x["id"] != sid])
                     st.rerun()
 
@@ -363,7 +363,7 @@ def _render_new_schedule_form(
                 index=list(env_loader.ENVIRONMENTS).index(active_env),
             )
 
-        new_sources = st.multiselect("Sources", sources, default=["scopus", "crossref", "openalex"])
+        new_sources = st.multiselect("Sources", sources, default=["scopus", "crossref", "openalex+crossref", "openalex"])
         new_window  = st.number_input("Fenêtre glissante (jours)", min_value=1, max_value=365, value=20)
         new_cron    = st.text_input(
             "Expression cron", value=cron_default, placeholder="0 6 * * *",
@@ -375,7 +375,7 @@ def _render_new_schedule_form(
         with _fo2:
             new_email = st.checkbox("Désactiver l'envoi d'e-mail", value=True)
 
-        submitted = st.form_submit_button("Créer le schedule", use_container_width=True)
+        submitted = st.form_submit_button("Créer le schedule", width="stretch")
 
     if not submitted:
         return

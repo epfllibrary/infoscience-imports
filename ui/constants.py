@@ -18,7 +18,7 @@ C_BLUE      = "#3B82F6"
 
 # ── Pipeline sources ──────────────────────────────────────────────────────────
 
-SOURCES: list[str] = ["scopus", "crossref", "openalex", "wos", "epo", "zenodo"]
+SOURCES: list[str] = ["scopus", "crossref", "openalex+crossref", "openalex", "wos", "datacite", "epo", "zenodo"]
 
 # ── Run statuses ──────────────────────────────────────────────────────────────
 

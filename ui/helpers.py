@@ -81,3 +81,24 @@ def missing_required_env(env_name: str, root: Path) -> list[str]:
 def get_db() -> PipelineDB:
     """Return a cached read-only PipelineDB instance."""
     return PipelineDB(read_only=True)
+
+
+def db_lock_guard(fn):
+    """Run fn(); show a friendly warning instead of crashing on DuckDB lock conflicts.
+
+    Use this to wrap any Streamlit render function that makes DB calls, so that
+    a concurrent write lock held by a running pipeline subprocess does not crash
+    the page.
+    """
+    import duckdb as _duckdb
+    try:
+        fn()
+    except _duckdb.IOException as exc:
+        if "Conflicting lock" in str(exc):
+            st.warning(
+                "Une synchronisation est en cours — la base de données est temporairement "
+                "verrouillée. Actualisez la page dans quelques secondes.",
+                icon="⏳",
+            )
+        else:
+            raise

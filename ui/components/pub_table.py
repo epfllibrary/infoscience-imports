@@ -428,7 +428,7 @@ def _delete_modal(
     st.warning("Cette action est irréversible.", icon=":material/warning:")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Supprimer", type="primary", use_container_width=True,
+        if st.button("Supprimer", type="primary", width="stretch",
                      icon=":material/delete_forever:"):
             from clients.dspace_client_wrapper import DSpaceClientWrapper
             with st.spinner("Connexion à DSpace…"):
@@ -453,7 +453,7 @@ def _delete_modal(
             st.session_state["_del_toast"] = f"«{title[:60]}» supprimé avec succès."
             st.rerun()
     with col2:
-        if st.button("Annuler", use_container_width=True):
+        if st.button("Annuler", width="stretch"):
             st.rerun()
 
 
@@ -551,19 +551,19 @@ def render_pub_component(
 
             # col 2 — metadata
             if rc[2].button("", icon=":material/description:", key=f"meta_{idx}",
-                             use_container_width=True, help="Métadonnées"):
+                             width="stretch", help="Métadonnées"):
                 _meta_modal(row)
 
             # col 3 — authors
             if rc[3].button("", icon=":material/people:", key=f"auth_{idx}",
-                             use_container_width=True, help="Auteurs EPFL",
+                             width="stretch", help="Auteurs EPFL",
                              disabled=not auths):
                 if auths:
                     _authors_modal(title, auths, ds_base)
 
             # col 4 — flagged
             if rc[4].button("", icon=":material/flag:", key=f"flag_{idx}",
-                             use_container_width=True, help="Doublon Infoscience",
+                             width="stretch", help="Doublon Infoscience",
                              disabled=not has_flag):
                 if has_flag:
                     _flagged_modal(
@@ -579,7 +579,7 @@ def render_pub_component(
                 _has_ids = bool(_nn(uuid_raw) or ws_id or wf_id)
                 if rc[_sync_col].button(
                     "", icon=":material/sync:", key=f"sync_{idx}",
-                    use_container_width=True,
+                    width="stretch",
                     help="Synchroniser le statut et les contrôles qualité avec Infoscience",
                     disabled=not _has_ids or _ifs == "deleted",
                 ):
@@ -597,7 +597,7 @@ def render_pub_component(
             if can_delete:
                 _is_published = _s(row.get("infoscience_status")).lower() == "published"
                 if rc[_del_col].button("", icon=":material/delete:", key=f"del_{idx}",
-                                       use_container_width=True, help="Supprimer",
+                                       width="stretch", help="Supprimer",
                                        disabled=not ws_id or _is_published):
                     if ws_id:
                         _delete_modal(ws_id, wf_id, _s(uuid_raw) or None, title, db)
