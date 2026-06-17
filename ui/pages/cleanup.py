@@ -12,20 +12,25 @@ from __future__ import annotations
 
 import html as _html
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode
 
 import streamlit as st
 
 from ui.helpers import page_title, mi
 
 # ── Session-state keys ────────────────────────────────────────────────────────
-_KEY_RESULTS  = "_cleanup_results"
-_KEY_SELECTED = "_cleanup_selected"
-_KEY_QUERY    = "_cleanup_last_query"
-_KEY_PAGE     = "_cleanup_page"
-_PAGE_SIZE    = 25
+_KEY_RESULTS        = "_cleanup_results"        # rows for the current UI page
+_KEY_SELECTED       = "_cleanup_selected"
+_KEY_QUERY          = "_cleanup_last_query"
+_KEY_PAGE           = "_cleanup_page"           # 1-indexed UI page
+_KEY_LOADED_PAGE    = "_cleanup_loaded_page"    # last page actually fetched from DSpace
+_KEY_TOTAL_PAGES    = "_cleanup_total_pages"
+_KEY_TOTAL_ELEMS    = "_cleanup_total_elements"
+_KEY_SEARCH_PARAMS  = "_cleanup_search_params"  # stored params for page-nav re-fetch
+_KEY_PAGE_SIZE      = "_cleanup_page_size"
+_PAGE_SIZE_OPTIONS  = [10, 20, 50, 100]
+_PAGE_SIZE_DEFAULT  = 20
 
 # ── Default submitter UUID (pipeline account) ─────────────────────────────────
 _DEFAULT_SUBMITTER_UUID = "4e8d183f-1309-470c-955e-c45a99c6f1b8"
@@ -95,11 +100,18 @@ def _parse_item_response(raw: dict) -> dict:
 
 # ── DSpace search ─────────────────────────────────────────────────────────────
 
-def _run_search(query: str, submitter_uuid: str, item_types: list[str]) -> list[dict]:
-    """Execute the supervision search and return a list of row dicts.
+def _run_search(
+    query: str,
+    submitter_uuid: str,
+    item_types: list[str],
+    page_num: int = 0,
+    page_size: int = _PAGE_SIZE_DEFAULT,
+) -> tuple[list[dict], int, int]:
+    """Fetch one page of supervision search results from DSpace.
 
-    Uses embed=item,submitter + projection=preventMetadataSecurity on the discovery
-    endpoint so all metadata is returned in a single HTTP call — no per-item fetches.
+    Returns (rows, total_pages, total_elements).
+    Uses embed=item,submitter + projection=preventMetadataSecurity so all
+    metadata comes in a single HTTP call — no per-item fetches.
     """
     from clients.dspace_client_wrapper import DSpaceClientWrapper
 
@@ -107,72 +119,42 @@ def _run_search(query: str, submitter_uuid: str, item_types: list[str]) -> list[
         client = DSpaceClientWrapper()
     except Exception as exc:
         st.error(f"Impossible de se connecter à DSpace : {exc}")
-        return []
+        return [], 1, 0
 
     # DSpace supervision search: "workspace" / "workflow" as namedresourcetype values.
-    # Combining both in a single filter returns no results — only add when exactly one type.
+    # Combining both in a single filter returns no results — only add for exactly one type.
     named_types = [t for t in item_types if t in ("workspace", "workflow")]
 
-    base_params: dict = {
+    params: dict = {
         "configuration": "supervision",
         "query": query,
         "projection": "preventMetadataSecurity",
         "embed": "item,submitter",
-        "size": "100",  # DSpace silently caps embedded responses at 100/page
+        "size": str(page_size),
+        "page": str(page_num),
     }
     if len(named_types) == 1:
-        base_params["f.namedresourcetype"] = f"{named_types[0]},authority"
+        params["f.namedresourcetype"] = f"{named_types[0]},authority"
     if submitter_uuid.strip():
-        base_params["f.submitter"] = f"{submitter_uuid.strip()},authority"
+        params["f.submitter"] = f"{submitter_uuid.strip()},authority"
 
-    # DSpace caps embedded responses at 100/page regardless of size=.
-    # Fetch page 0 alone first (the common case is a single page).
-    # If _links.next is present, fire all remaining pages in parallel.
-    _MAX_PAGES = 20  # hard cap: 20 × 100 = 2 000 items
-
-    def _fetch_page(page_num: int) -> tuple[list, dict]:
-        params = {**base_params, "page": str(page_num)}
-        url = f"{client.client.API_ENDPOINT}/discover/search/objects?{urlencode(params)}"
-        resp = client.client.api_get(url)
-        if resp.status_code != 200:
-            return [], {}
-        sr = resp.json().get("_embedded", {}).get("searchResult", {})
-        return sr.get("_embedded", {}).get("objects", []), sr.get("_links", {})
-
-    def _last_page_from_links(links: dict) -> int:
-        last_href = links.get("last", {}).get("href", "")
-        if last_href:
-            qs = parse_qs(urlparse(last_href).query)
-            try:
-                return int(qs.get("page", ["0"])[0])
-            except (ValueError, IndexError):
-                pass
-        return 0
-
+    url = f"{client.client.API_ENDPOINT}/discover/search/objects?{urlencode(params)}"
     try:
-        page0_objects, links0 = _fetch_page(0)
+        resp = client.client.api_get(url)
     except Exception as exc:
         st.error(f"Erreur lors de la recherche : {exc}")
-        return []
+        return [], 1, 0
 
-    # Single page — done in one call
-    if "next" not in links0:
-        return [_parse_search_hit(obj) for obj in page0_objects]
+    if resp.status_code != 200:
+        st.error(f"DSpace a retourné HTTP {resp.status_code}.")
+        return [], 1, 0
 
-    # Multiple pages — fire remaining pages in parallel
-    last_page = min(_last_page_from_links(links0), _MAX_PAGES - 1)
-    pages: dict[int, list] = {0: page0_objects}
-    with ThreadPoolExecutor(max_workers=last_page) as pool:
-        fts = {pool.submit(_fetch_page, p): p for p in range(1, last_page + 1)}
-        for ft in as_completed(fts):
-            p = fts[ft]
-            try:
-                pages[p] = ft.result()[0]
-            except Exception:
-                pages[p] = []
-
-    flat = [obj for p in range(last_page + 1) for obj in (pages.get(p) or [])]
-    return [_parse_search_hit(obj) for obj in flat]
+    sr = resp.json().get("_embedded", {}).get("searchResult", {})
+    page_info = sr.get("page", {})
+    total_pages = max(1, page_info.get("totalPages", 1))
+    total_elements = page_info.get("totalElements", 0)
+    objects = sr.get("_embedded", {}).get("objects", [])
+    return [_parse_search_hit(obj) for obj in objects], total_pages, total_elements
 
 
 # ── Query builder ─────────────────────────────────────────────────────────────
@@ -337,56 +319,88 @@ def render() -> None:
                 if not item_types:
                     st.warning("Sélectionnez au moins un type d'item.")
                 else:
+                    _page_size = st.session_state.get(_KEY_PAGE_SIZE, _PAGE_SIZE_DEFAULT)
                     with st.spinner("Recherche en cours…"):
-                        results = _run_search(free_query, submitter_uuid, item_types)
+                        rows, total_pages, total_elements = _run_search(
+                            free_query, submitter_uuid, item_types,
+                            page_num=0, page_size=_page_size,
+                        )
                     for _k in list(st.session_state.keys()):
                         if _k.startswith("cleanup_chk_"):
                             del st.session_state[_k]
-                    st.session_state[_KEY_RESULTS]  = results
-                    st.session_state[_KEY_SELECTED] = {}
-                    st.session_state[_KEY_QUERY]    = free_query
-                    st.session_state[_KEY_PAGE]     = 1
+                    st.session_state[_KEY_RESULTS]       = rows
+                    st.session_state[_KEY_SELECTED]      = {}
+                    st.session_state[_KEY_QUERY]         = free_query
+                    st.session_state[_KEY_PAGE]          = 1
+                    st.session_state[_KEY_LOADED_PAGE]   = 1
+                    st.session_state[_KEY_TOTAL_PAGES]   = total_pages
+                    st.session_state[_KEY_TOTAL_ELEMS]   = total_elements
+                    st.session_state[_KEY_SEARCH_PARAMS] = {
+                        "query":          free_query,
+                        "submitter_uuid": submitter_uuid,
+                        "item_types":     item_types,
+                        "page_size":      _page_size,
+                    }
 
     # ── Results ───────────────────────────────────────────────────────────────
-    results: list[dict] = st.session_state.get(_KEY_RESULTS, [])
+    # Detect page navigation: _KEY_PAGE changed since last DSpace fetch → re-fetch.
+    _cur_page    = st.session_state.get(_KEY_PAGE, 1)
+    _loaded_page = st.session_state.get(_KEY_LOADED_PAGE, 1)
+    _params      = st.session_state.get(_KEY_SEARCH_PARAMS)
 
-    if not results:
-        if _KEY_QUERY in st.session_state:
-            st.info("Aucun item trouvé pour ces critères.")
+    if _params and _cur_page != _loaded_page:
+        with st.spinner(f"Chargement page {_cur_page}…"):
+            _rows, _total_pages, _total_elements = _run_search(
+                _params["query"],
+                _params["submitter_uuid"],
+                _params["item_types"],
+                page_num=_cur_page - 1,  # DSpace pages are 0-indexed
+                page_size=_params.get("page_size", _PAGE_SIZE_DEFAULT),
+            )
+        for _k in list(st.session_state.keys()):
+            if _k.startswith("cleanup_chk_"):
+                del st.session_state[_k]
+        st.session_state[_KEY_RESULTS]      = _rows
+        st.session_state[_KEY_TOTAL_PAGES]  = _total_pages
+        st.session_state[_KEY_TOTAL_ELEMS]  = _total_elements
+        st.session_state[_KEY_LOADED_PAGE]  = _cur_page
+
+    results: list[dict] = st.session_state.get(_KEY_RESULTS, [])
+    n_pages       = st.session_state.get(_KEY_TOTAL_PAGES, 1)
+    total_elements = st.session_state.get(_KEY_TOTAL_ELEMS, 0)
+    page          = max(1, min(st.session_state.get(_KEY_PAGE, 1), n_pages))
+    st.session_state[_KEY_PAGE] = page
+
+    if not results and _KEY_QUERY in st.session_state:
+        st.info("Aucun item trouvé pour ces critères.")
         return
 
+    if not results:
+        return
+
+    # The entire results list IS the current page (server-side pagination).
+    page_items = results
     selected: dict = st.session_state.setdefault(_KEY_SELECTED, {})
 
-    n_ws = sum(1 for r in results if "workspace" in (r.get("item_type") or ""))
-    n_wf = sum(1 for r in results if "workflow"  in (r.get("item_type") or ""))
+    n_ws = sum(1 for r in page_items if "workspace" in (r.get("item_type") or ""))
+    n_wf = sum(1 for r in page_items if "workflow"  in (r.get("item_type") or ""))
 
     # ── Toolbar ───────────────────────────────────────────────────────────────
-    # Compute page slice here so toolbar buttons can reference it
-    import math as _math
-    n_pages = max(1, _math.ceil(len(results) / _PAGE_SIZE))
-    page = st.session_state.get(_KEY_PAGE, 1)
-    page = max(1, min(page, n_pages))
-    st.session_state[_KEY_PAGE] = page
-    page_start = (page - 1) * _PAGE_SIZE
-    page_items = results[page_start: page_start + _PAGE_SIZE]
-
-    tb1, tb2, tb3, tb4, tb_info = st.columns([1.1, 1.3, 1.2, 1.4, 2.5])
+    tb1, tb2, tb_sel_info, tb_size, tb_info = st.columns([1.4, 1.4, 1.6, 2.2, 2.2])
     with tb1:
-        if st.button("Tout sélectionner", icon=":material/select_all:", key="cleanup_sel_all"):
-            for r in results:
-                selected[str(r["id"])] = r
-            st.rerun()
-    with tb2:
         if st.button("Sélectionner la page", icon=":material/check_box:", key="cleanup_sel_page"):
             for r in page_items:
                 selected[str(r["id"])] = r
             st.rerun()
-    with tb3:
+    with tb2:
         if st.button("Tout désélectionner", icon=":material/deselect:", key="cleanup_desel",
                      disabled=not selected):
             st.session_state[_KEY_SELECTED] = {}
+            for _k in list(st.session_state.keys()):
+                if _k.startswith("cleanup_chk_"):
+                    del st.session_state[_k]
             st.rerun()
-    with tb3:
+    with tb_sel_info:
         n_sel = len(selected)
         if n_sel:
             n_sel_wf_tb = sum(1 for r in selected.values() if "workflow" in (r.get("item_type") or ""))
@@ -398,12 +412,31 @@ def render() -> None:
                 f'({n_sel_ws_tb} ws · {n_sel_wf_tb} wf)</span></span>',
                 unsafe_allow_html=True,
             )
+    with tb_size:
+        _prev_size = st.session_state.get(_KEY_PAGE_SIZE, _PAGE_SIZE_DEFAULT)
+        _new_size = st.segmented_control(
+            "Par page",
+            options=_PAGE_SIZE_OPTIONS,
+            default=_prev_size,
+            key="cleanup_page_size_ctrl",
+            label_visibility="collapsed",
+        )
+        if _new_size and _new_size != _prev_size and _params:
+            st.session_state[_KEY_PAGE_SIZE] = _new_size
+            _params["page_size"] = _new_size
+            st.session_state[_KEY_SEARCH_PARAMS] = _params
+            st.session_state[_KEY_PAGE] = 1
+            st.session_state[_KEY_LOADED_PAGE] = 0  # force re-fetch
+            st.rerun()
+        elif _new_size:
+            st.session_state[_KEY_PAGE_SIZE] = _new_size
     with tb_info:
         st.markdown(
             f'<div style="line-height:38px;font-size:0.84rem;color:#6B7280;text-align:right">'
-            f'<b>{len(results)}</b> résultat(s) — '
+            f'<b>{total_elements}</b> résultat(s) — '
             f'<span style="color:#3B82F6">{n_ws} workspace</span> · '
             f'<span style="color:#8B5CF6">{n_wf} workflow</span>'
+            f' <span style="color:#D1D5DB">· page {page}/{n_pages}</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -496,7 +529,7 @@ def render() -> None:
                 f'<div style="text-align:center;font-size:0.84rem;color:#6B7280;'
                 f'line-height:38px">Page <b>{page}</b> / {n_pages}'
                 f' <span style="color:#D1D5DB">·</span> '
-                f'{len(results)} résultat(s)</div>',
+                f'{total_elements} résultat(s)</div>',
                 unsafe_allow_html=True,
             )
         with pc3:
