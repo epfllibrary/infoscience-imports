@@ -105,10 +105,10 @@ class AuthorProcessor:
                     ]
                 else:
                     author_ids_to_check = [str(x).strip().lower() for x in author_ids_to_check]
-                author_ids_to_check = set(author_ids_to_check)
+                author_ids_to_check = {x.split("/")[-1] for x in author_ids_to_check}
 
                 def check_and_log(row):
-                    internal_id = str(row.get("internal_author_id", "")).strip().lower()
+                    internal_id = str(row.get("internal_author_id", "")).strip().lower().split("/")[-1]
                     orcid_id = str(row.get("orcid_id", "")).strip().lower()
                     if internal_id in author_ids_to_check or orcid_id in author_ids_to_check:
                         return True
@@ -262,26 +262,7 @@ class AuthorProcessor:
             name = parser(first_name + " " + last_name)
             return name
 
-        # Appliquer le parsing à chaque ligne
-        self.df.loc[:, "nameparse_firstname"] = self.df.apply(
-            lambda row: (
-                " ".join(
-                    [parser(row["author"]).first, parser(row["author"]).middle]
-                    if row["epfl_affiliation"]
-                    else None
-                ).strip()
-                if row["epfl_affiliation"]
-                else None
-            ),
-            axis=1,
-        )
-
-        self.df.loc[:, "nameparse_lastname"] = self.df.apply(
-            lambda row: parser(row["author"]).last if row["epfl_affiliation"] else None,
-            axis=1,
-        )
-
-        # Correction des cas où le nom n'est pas bien divisé
+        # Parse every author name unconditionally via Series.apply (no index alignment issues)
         self.df["nameparse_lastname"] = self.df["author"].apply(
             lambda x: parse_name(x).last
         )

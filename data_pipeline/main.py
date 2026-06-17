@@ -491,7 +491,7 @@ def run_pipeline(
             _pub_id = _auth_row.get("row_id")
             if _pub_id in _already_matched_pub_ids:
                 continue
-            _raw_name = str(_auth_row.get("name") or _auth_row.get("full_name") or "")
+            _raw_name = str(_auth_row.get("author") or _auth_row.get("name") or _auth_row.get("full_name") or "")
             if _norm_name(_raw_name) and _forced_name_norm and (
                 _norm_name(_raw_name) in _forced_name_norm
                 or _forced_name_norm in _norm_name(_raw_name)
