@@ -85,6 +85,40 @@ def _normalize_ws_response(resp, fallback=None):
 #  _process_and_add_contributors, and _construct_patch_operations)
 # ---------------------------------------------------------------------------
 
+# ISO 639-2/3 (3-letter) to ISO 639-1 (2-letter) mapping.
+# Used to normalize language codes from sources that may send 3-letter codes
+# (e.g., DataCite depositors using bibliographic ISO 639-2 codes).
+_ISO639_MAP: dict[str, str] = {
+    "eng": "en", "fre": "fr", "fra": "fr", "ger": "de", "deu": "de",
+    "ita": "it", "spa": "es", "por": "pt", "nld": "nl", "dut": "nl",
+    "swe": "sv", "nor": "no", "dan": "da", "fin": "fi", "rus": "ru",
+    "chi": "zh", "zho": "zh", "jpn": "ja", "kor": "ko", "ara": "ar",
+    "pol": "pl", "ces": "cs", "cze": "cs", "slk": "sk", "slo": "sk",
+    "hun": "hu", "rum": "ro", "ron": "ro", "tur": "tr", "ukr": "uk",
+    "cat": "ca", "hrv": "hr", "bul": "bg", "slv": "sl", "ell": "el",
+    "heb": "he", "hin": "hi", "vie": "vi", "ind": "id", "msa": "ms",
+}
+
+
+def _normalize_language(code) -> str | None:
+    """Normalize a language code to ISO 639-1 (2-letter lowercase).
+
+    Handles ISO 639-2/3 three-letter codes from sources like DataCite.
+    Returns None for blank or unrecognised codes longer than 2 characters.
+    """
+    if not code or not str(code).strip():
+        return None
+    normalized = str(code).strip().lower()
+    if len(normalized) == 2:
+        return normalized
+    if len(normalized) == 3:
+        mapped = _ISO639_MAP.get(normalized)
+        if mapped:
+            return mapped
+        # Unknown 3-letter code — drop it rather than send garbage to DSpace.
+        return None
+    return None
+
 def _build_metadata_value(
     value,
     display=None,
@@ -222,6 +256,7 @@ class Loader:
         affiliations_metadata = []
         orcid_metadata = []
         roles_metadata = []
+        corresponding_metadata = []
 
         # Build metadata blocks
         for _, author_row in subset.iterrows():
@@ -250,6 +285,14 @@ class Loader:
                 )
 
             roles_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
+
+            is_corr = author_row.get("openalex_is_corresponding")
+            if pd.notna(is_corr) and bool(is_corr):
+                corresponding_metadata.append(create_metadata("true"))
+            else:
+                corresponding_metadata.append(
+                    create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#")
+                )
 
         # Authority enrichment
         for i, author in enumerate(authors_metadata):
@@ -298,6 +341,13 @@ class Loader:
                 "value": orcid_metadata,
             },
         ]
+
+        if form_section != "report_" and corresponding_metadata:
+            patch_operations.append({
+                "op": "add",
+                "path": f"{base}/epfl.author.corresponding",
+                "value": corresponding_metadata,
+            })
 
         return patch_operations
 
@@ -593,9 +643,10 @@ class Loader:
         # Clear dc.type pre-populated by the external source importer so we can
         # set the correct type for the target collection without conflicting values.
         if form_section:
+            # conference_, book_, dataset_, report_ have no separate *_type section in DSpace
             type_sect = (
                 f"{form_section}details"
-                if form_section in ("conference_", "book_", "dataset_")
+                if form_section in ("conference_", "book_", "dataset_", "report_")
                 else f"{form_section}type"
             )
             removable_metadata_paths.append(f"/sections/{type_sect}/dc.type")
@@ -963,10 +1014,11 @@ class Loader:
             }]
 
         # Determine correct form_section and related sections
-        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_'] else 'type'}"
+        # conference_, book_, dataset_, report_ have no separate *_type section in DSpace
+        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_', 'report_'] else 'type'}"
         dc_type = row.get("dc.type")
 
-        refereed = None if form_section in ("preprint_", "dataset_", "patent") else "REVIEWED"
+        refereed = None if form_section in ("preprint_", "dataset_", "patent", "report_") else "REVIEWED"
 
         if dc_type in [
             "text::book/monograph::book part or chapter",
@@ -985,7 +1037,11 @@ class Loader:
             )
             alter_id_section = "book_details"
         else:
-            pagination_section = "journalcontainer_details"
+            pagination_section = (
+                f"{form_section}details"
+                if form_section in ("preprint_", "report_")
+                else "journalcontainer_details"
+            )
             isbn_section = "bookcontainer_details"
             isbn_metadata = "dc.relation.isbn"
             alter_id_section = "alternative_identifiers"
@@ -994,6 +1050,8 @@ class Loader:
             publisher_container = "dataset_details"
         elif dc_type in ["text::preprint"]:
             publisher_container = "preprint_details"
+        elif form_section == "report_":
+            publisher_container = "report_details"
         elif form_section == "article_":
             publisher_container = "journalcontainer_details"
         else:
@@ -1039,41 +1097,6 @@ class Loader:
             (
                 f"/sections/{alter_id_section}/dc.identifier.pmid",
                 [build_value(row.get("pmid"))],
-                False,
-            ),
-            (
-                "/sections/journalcontainer_details/dc.relation.journal",
-                [
-                    build_value(
-                        row.get("journalTitle"),
-                        authority=authority_journal,
-                        confidence=500 if authority_journal else -1,
-                    )
-                ],
-                False,
-            ),
-            (
-                "/sections/journalcontainer_details/dc.relation.issn",
-                [
-                    build_value(issn)
-                    for issn in safe_str("journalISSN").split("||")
-                    if issn.strip()
-                ],
-                True,
-            ),
-            (
-                "/sections/journalcontainer_details/oaire.citation.volume",
-                [build_value(row.get("journalVolume"))],
-                False,
-            ),
-            (
-                "/sections/journalcontainer_details/oaire.citation.issue",
-                [build_value(row.get("issue"))],
-                False,
-            ),
-            (
-                "/sections/journalcontainer_details/oaire.citation.articlenumber",
-                [build_value(row.get("artno"))],
                 False,
             ),
             (
@@ -1170,6 +1193,56 @@ class Loader:
                 False,
             )
         ]
+
+        # Language: available from OpenAlex and Zenodo; other sources return None → no op generated.
+        # Datasets use parse_language() below (same section path); skip here to avoid duplicate.
+        # _normalize_language maps 3-letter ISO 639-2 codes (e.g. DataCite) to ISO 639-1.
+        if form_section != "dataset_":
+            fields.append((
+                f"/sections/{form_section}details/dc.language.iso",
+                [build_value(_normalize_language(row.get("language")))],
+                False,
+            ))
+
+        # Journal/proceedings container fields are not part of preprint, report, or dataset forms
+        if form_section not in ("preprint_", "report_", "dataset_"):
+            fields.extend([
+                (
+                    "/sections/journalcontainer_details/dc.relation.journal",
+                    [
+                        build_value(
+                            row.get("journalTitle"),
+                            authority=authority_journal,
+                            confidence=500 if authority_journal else -1,
+                        )
+                    ],
+                    False,
+                ),
+                (
+                    "/sections/journalcontainer_details/dc.relation.issn",
+                    [
+                        build_value(issn)
+                        for issn in safe_str("journalISSN").split("||")
+                        if issn.strip()
+                    ],
+                    True,
+                ),
+                (
+                    "/sections/journalcontainer_details/oaire.citation.volume",
+                    [build_value(row.get("journalVolume"))],
+                    False,
+                ),
+                (
+                    "/sections/journalcontainer_details/oaire.citation.issue",
+                    [build_value(row.get("issue"))],
+                    False,
+                ),
+                (
+                    "/sections/journalcontainer_details/oaire.citation.articlenumber",
+                    [build_value(row.get("artno"))],
+                    False,
+                ),
+            ])
 
         # --- Add ctb.oaireXXlicenseCondition (Zenodo only) ---
         raw_license = row.get("license")
