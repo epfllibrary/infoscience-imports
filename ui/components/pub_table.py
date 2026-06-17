@@ -399,6 +399,75 @@ def _flagged_modal(title: str, flagged_raw: str, dedup_note: str, ds_base: str) 
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
+@st.dialog("Supprimer les items sélectionnés", width="small")
+def _bulk_delete_modal(
+    selected_items: list[dict],
+    db,
+) -> None:
+    """Confirmation and sequential execution of DSpace bulk deletion."""
+    if not selected_items:
+        st.info("Aucun item sélectionné.")
+        return
+
+    st.markdown(
+        f'<p style="margin-bottom:8px">Suppression de '
+        f'<b>{len(selected_items)}</b> item(s) :</p>',
+        unsafe_allow_html=True,
+    )
+    for item in selected_items[:10]:
+        st.markdown(f"• {_esc(item['title'][:80])}", unsafe_allow_html=True)
+    if len(selected_items) > 10:
+        st.caption(f"… et {len(selected_items) - 10} autre(s).")
+
+    st.warning("Cette action est irréversible.", icon=":material/warning:")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(
+            f"Supprimer {len(selected_items)} item(s)",
+            type="primary",
+            width="stretch",
+            icon=":material/delete_forever:",
+        ):
+            from clients.dspace_client_wrapper import DSpaceClientWrapper
+            with st.spinner("Connexion à DSpace…"):
+                try:
+                    client = DSpaceClientWrapper()
+                except Exception as exc:
+                    st.error(f"Impossible de se connecter à DSpace : {exc}")
+                    return
+            progress = st.progress(0.0, text="Suppression en cours…")
+            errors = []
+            for i, item in enumerate(selected_items):
+                ws_id  = item["ws_id"]
+                wf_id  = item.get("wf_id")
+                uuid   = item.get("uuid")
+                title  = item["title"]
+                progress.progress(
+                    (i + 1) / len(selected_items),
+                    text=f"Suppression de «{title[:40]}»…",
+                )
+                ok, msg = client.delete_item(ws_id, wf_id, uuid)
+                if not ok:
+                    errors.append(f"{title[:40]}: {msg}")
+                    continue
+                try:
+                    from db.pipeline_db import PipelineDB as _W
+                    _W().mark_deleted_by_workspace(ws_id)
+                except Exception as exc:
+                    errors.append(f"{title[:40]}: supprimé dans DSpace mais erreur DB — {exc}")
+            # Clear persistent selection set
+            st.session_state.pop(_BULK_SEL_KEY, None)
+            if errors:
+                st.error("Erreurs :\n" + "\n".join(f"• {e}" for e in errors))
+            else:
+                n = len(selected_items)
+                st.session_state["_del_toast"] = f"{n} item(s) supprimé(s) avec succès."
+                st.rerun()
+    with col2:
+        if st.button("Annuler", width="stretch"):
+            st.rerun()
+
+
 @st.dialog("Supprimer un item importé", width="small")
 def _delete_modal(
     workspace_id: str,
@@ -457,11 +526,80 @@ def _delete_modal(
             st.rerun()
 
 
+# ── Pure bulk-delete helpers (tested, no Streamlit) ─────────────────────────
+
+def _is_bulk_deletable(ws_id: str | None, infoscience_status: str | None) -> bool:
+    """Return True when a row can be selected for bulk delete.
+
+    Requires a workspace_id (item still in DSpace staging) and must not be
+    in a terminal state (published or deleted).
+    """
+    if not ws_id:
+        return False
+    ifs = (infoscience_status or "").lower().strip()
+    return ifs not in ("published", "deleted")
+
+
+_BULK_SEL_KEY = "_bulk_selected_ws_ids"
+
+
+def _collect_bulk_selected(session_state: dict, ws_ids: list[str]) -> list[str]:
+    """Return ws_ids from the persistent cross-page selection dict that are in ws_ids."""
+    selected: dict = session_state.get(_BULK_SEL_KEY, {})
+    return [w for w in ws_ids if w in selected]
+
+
+def _on_bulk_chk_change(ws_id: str, item_meta: dict) -> None:
+    """on_change callback: sync checkbox value into the persistent selection dict."""
+    selected: dict = st.session_state.setdefault(_BULK_SEL_KEY, {})
+    if st.session_state.get(f"bulk_chk_{ws_id}"):
+        selected[ws_id] = item_meta
+    else:
+        selected.pop(ws_id, None)
+
+
+def _fetch_all_deletable_for_run(db, run_id: str) -> dict[str, dict]:
+    """Return a ws_id → item_meta dict for all workspace/workflow items in the run."""
+    rows = db.get_publications(
+        run_id=[run_id],
+        status=["workspace", "workflow"],
+        limit=10_000,
+        offset=0,
+    )
+    out: dict[str, dict] = {}
+    for row in rows.to_dict("records"):
+        ws_raw = row.get("workspace_id")
+        ws = None
+        if _nn(ws_raw):
+            try:
+                ws = str(int(float(str(ws_raw))))
+            except (ValueError, TypeError):
+                ws = _s(ws_raw) or None
+        ifs = _s(row.get("infoscience_status"))
+        if not ws or not _is_bulk_deletable(ws, ifs):
+            continue
+        wf_raw = row.get("workflow_id")
+        wf = None
+        if _nn(wf_raw):
+            try:
+                wf = str(int(float(str(wf_raw))))
+            except (ValueError, TypeError):
+                wf = _s(wf_raw) or None
+        out[ws] = {
+            "ws_id": ws,
+            "wf_id": wf,
+            "uuid":  _s(row.get("dspace_item_uuid")) or None,
+            "title": _s(row.get("title"), "—"),
+        }
+    return out
+
+
 # ── Column widths ──────────────────────────────────────────────────────────────
 
 _W_ACT   = 0.85  # action links
 _W_MAIN  = 6.8   # rich content block
 _W_BTN   = 0.46  # each icon button
+_W_CHK   = 0.46  # bulk-select checkbox
 
 # Header icon for each button column (Material Symbols name → tooltip)
 _BTN_HEADER: dict[str, tuple[str, str]] = {
@@ -482,22 +620,129 @@ def render_pub_component(
     ds_base: str,
     role: str = "reporting",
     db=None,
+    bulk_select: bool = False,
+    run_id: str | None = None,
 ) -> None:
     """Render publications as compact native Streamlit rows with per-row dialogs."""
     has_run    = "run_id" in cols
     can_sync   = role != "reporting"
     can_delete = role == "admin"
     n_btns     = 3 + int(can_sync) + int(can_delete)
-    widths     = [_W_ACT, _W_MAIN] + [_W_BTN] * n_btns
 
-    _sync_col = 5
-    _del_col  = 5 + int(can_sync)
+    # Bulk-select column prepended when enabled (admin + single-run context only)
+    show_bulk = bulk_select and can_delete
+    widths    = ([_W_CHK] if show_bulk else []) + [_W_ACT, _W_MAIN] + [_W_BTN] * n_btns
+
+    # Column index offsets shift by 1 when bulk-select column is prepended
+    _off      = int(show_bulk)
+    _act_col  = _off + 0
+    _main_col = _off + 1
+    _meta_col = _off + 2
+    _auth_col = _off + 3
+    _flag_col = _off + 4
+    _sync_col = _off + 5
+    _del_col  = _off + 5 + int(can_sync)
+
+    # Pre-pass: collect deletable items on this page with full metadata for select-all
+    _page_ws_ids: list[str] = []
+    _page_items_meta: dict[str, dict] = {}
+    if show_bulk:
+        for row in d.to_dict("records"):
+            ws_raw = row.get("workspace_id")
+            ws = None
+            if _nn(ws_raw):
+                try:
+                    ws = str(int(float(str(ws_raw))))
+                except (ValueError, TypeError):
+                    ws = _s(ws_raw) or None
+            ifs = _s(row.get("infoscience_status"))
+            if ws and _is_bulk_deletable(ws, ifs):
+                wf_raw = row.get("workflow_id")
+                wf = None
+                if _nn(wf_raw):
+                    try:
+                        wf = str(int(float(str(wf_raw))))
+                    except (ValueError, TypeError):
+                        wf = _s(wf_raw) or None
+                _page_ws_ids.append(ws)
+                _page_items_meta[ws] = {
+                    "ws_id": ws,
+                    "wf_id": wf,
+                    "uuid":  _s(row.get("dspace_item_uuid")) or None,
+                    "title": _s(row.get("title"), "—"),
+                }
 
     with st.container(border=True):
+        # ── Bulk-select toolbar ───────────────────────────────────────────────
+        if show_bulk:
+            # Total across all pages — read from the persistent dict
+            _persistent: dict = st.session_state.get(_BULK_SEL_KEY, {})
+            n_sel = len(_persistent)
+            tb_left, tb_right = st.columns([6, 2])
+            with tb_left:
+                t1, t2, t3, t4 = st.columns([1, 1, 1, 2])
+                with t1:
+                    if st.button(
+                        "Page courante",
+                        icon=":material/select_all:",
+                        key=f"bulk_sel_page_{run_id}",
+                        help="Sélectionner les items supprimables de cette page uniquement",
+                    ):
+                        st.session_state.setdefault(_BULK_SEL_KEY, {}).update(_page_items_meta)
+                        st.rerun()
+                with t2:
+                    _can_sel_run = db is not None and run_id is not None
+                    if st.button(
+                        "Tout le run",
+                        icon=":material/library_add_check:",
+                        key=f"bulk_sel_run_{run_id}",
+                        help="Sélectionner tous les items workspace/workflow du run (toutes les pages)",
+                        disabled=not _can_sel_run,
+                    ):
+                        _all = _fetch_all_deletable_for_run(db, run_id)
+                        st.session_state.setdefault(_BULK_SEL_KEY, {}).update(_all)
+                        st.rerun()
+                with t3:
+                    if st.button(
+                        "Tout désélectionner",
+                        icon=":material/deselect:",
+                        key=f"bulk_desel_all_{run_id}",
+                        disabled=n_sel == 0,
+                    ):
+                        st.session_state[_BULK_SEL_KEY] = {}
+                        st.rerun()
+                with t4:
+                    if n_sel:
+                        st.markdown(
+                            f'<span style="line-height:38px;font-size:0.88rem;color:#374151">'
+                            f'<b>{n_sel}</b> item(s) sélectionné(s)</span>',
+                            unsafe_allow_html=True,
+                        )
+            with tb_right:
+                if st.button(
+                    f"Supprimer {n_sel} item(s)",
+                    key=f"bulk_delete_btn_{run_id}",
+                    type="primary",
+                    icon=":material/delete_forever:",
+                    disabled=n_sel == 0,
+                    width="stretch",
+                ):
+                    items = list(st.session_state.get(_BULK_SEL_KEY, {}).values())
+                    if items:
+                        _bulk_delete_modal(items, db)
+            st.markdown('<hr class="ptbl-sep">', unsafe_allow_html=True)
+
         # ── Header ────────────────────────────────────────────────────────────
         hdr = st.columns(widths)
-        hdr[0].markdown('<div class="ptbl-hdr">Actions</div>', unsafe_allow_html=True)
-        hdr[1].markdown('<div class="ptbl-hdr">Publication</div>', unsafe_allow_html=True)
+        if show_bulk:
+            hdr[0].markdown(
+                '<div class="ptbl-hdr" style="text-align:center">'
+                '<span class="ms ms-neutral ptbl-hdr-icon" title="Sélection">check_box</span>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        hdr[_act_col].markdown('<div class="ptbl-hdr">Actions</div>', unsafe_allow_html=True)
+        hdr[_main_col].markdown('<div class="ptbl-hdr">Publication</div>', unsafe_allow_html=True)
         btn_labels = ["Meta", "Aut.", "Signal."]
         if can_sync:
             btn_labels.append("Sync")
@@ -505,7 +750,7 @@ def render_pub_component(
             btn_labels.append("Suppr.")
         for i, lbl in enumerate(btn_labels):
             icon, tooltip = _BTN_HEADER.get(lbl, (lbl, lbl))
-            hdr[2 + i].markdown(
+            hdr[_meta_col + i].markdown(
                 f'<div class="ptbl-hdr" style="text-align:center">'
                 f'<span class="ms ms-neutral ptbl-hdr-icon" title="{tooltip}">{icon}</span>'
                 f'</div>',
@@ -540,31 +785,48 @@ def render_pub_component(
 
             rc = st.columns(widths)
 
-            # col 0 — action links (HTML only, no Streamlit widget)
-            rc[0].markdown(_action_links(row, ds_base), unsafe_allow_html=True)
+            # bulk-select checkbox
+            if show_bulk:
+                deletable = _is_bulk_deletable(ws_id, _s(row.get("infoscience_status")))
+                chk_key = f"bulk_chk_{ws_id}" if ws_id else f"bulk_chk_none_{idx}"
+                # Restore checkbox state from persistent dict when coming back from another page
+                if deletable and ws_id and chk_key not in st.session_state:
+                    st.session_state[chk_key] = ws_id in st.session_state.get(_BULK_SEL_KEY, {})
+                _item_meta = _page_items_meta.get(ws_id) if ws_id else None
+                rc[0].checkbox(
+                    "Sélectionner",
+                    key=chk_key,
+                    disabled=not deletable,
+                    label_visibility="hidden",
+                    on_change=_on_bulk_chk_change if deletable and ws_id else None,
+                    args=(ws_id, _item_meta) if deletable and ws_id else None,
+                )
 
-            # col 1 — rich content block (carries row class for :has() CSS)
-            rc[1].markdown(
+            # action links (HTML only, no Streamlit widget)
+            rc[_act_col].markdown(_action_links(row, ds_base), unsafe_allow_html=True)
+
+            # rich content block (carries row class for :has() CSS)
+            rc[_main_col].markdown(
                 _main_content(row, title, has_run, idx),
                 unsafe_allow_html=True,
             )
 
-            # col 2 — metadata
-            if rc[2].button("", icon=":material/description:", key=f"meta_{idx}",
-                             width="stretch", help="Métadonnées"):
+            # metadata
+            if rc[_meta_col].button("", icon=":material/description:", key=f"meta_{idx}",
+                                    width="stretch", help="Métadonnées"):
                 _meta_modal(row)
 
-            # col 3 — authors
-            if rc[3].button("", icon=":material/people:", key=f"auth_{idx}",
-                             width="stretch", help="Auteurs EPFL",
-                             disabled=not auths):
+            # authors
+            if rc[_auth_col].button("", icon=":material/people:", key=f"auth_{idx}",
+                                    width="stretch", help="Auteurs EPFL",
+                                    disabled=not auths):
                 if auths:
                     _authors_modal(title, auths, ds_base)
 
-            # col 4 — flagged
-            if rc[4].button("", icon=":material/flag:", key=f"flag_{idx}",
-                             width="stretch", help="Doublon Infoscience",
-                             disabled=not has_flag):
+            # flagged
+            if rc[_flag_col].button("", icon=":material/flag:", key=f"flag_{idx}",
+                                    width="stretch", help="Doublon Infoscience",
+                                    disabled=not has_flag):
                 if has_flag:
                     _flagged_modal(
                         title,
@@ -573,7 +835,7 @@ def render_pub_component(
                         ds_base,
                     )
 
-            # col 5 — sync (admin + curator, disabled without DSpace identifiers)
+            # sync (admin + curator, disabled without DSpace identifiers)
             if can_sync:
                 _ifs = _s(row.get("infoscience_status")).lower()
                 _has_ids = bool(_nn(uuid_raw) or ws_id or wf_id)
@@ -593,7 +855,7 @@ def render_pub_component(
                     }
                     st.rerun()
 
-            # col 5/6 — delete (admin only, disabled once published)
+            # delete (admin only, disabled once published)
             if can_delete:
                 _is_published = _s(row.get("infoscience_status")).lower() == "published"
                 if rc[_del_col].button("", icon=":material/delete:", key=f"del_{idx}",
