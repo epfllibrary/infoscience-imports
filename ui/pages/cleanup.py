@@ -126,12 +126,9 @@ def _run_search(query: str, submitter_uuid: str, item_types: list[str]) -> list[
         base_params["f.submitter"] = f"{submitter_uuid.strip()},authority"
 
     # DSpace caps embedded responses at 100/page regardless of size=.
-    # Strategy: speculatively fire _SPECULATIVE_PAGES requests simultaneously
-    # (we don't know totalPages until page 0 returns). Pages beyond the actual
-    # last page return an empty objects list and no _links.next — discard them.
-    # If totalPages > _SPECULATIVE_PAGES, fetch remaining pages in a second wave.
-    _MAX_PAGES        = 20   # hard cap: 20 × 100 = 2 000 items
-    _SPECULATIVE_PAGES = 5   # pages fired blindly on the first wave
+    # Fetch page 0 alone first (the common case is a single page).
+    # If _links.next is present, fire all remaining pages in parallel.
+    _MAX_PAGES = 20  # hard cap: 20 × 100 = 2 000 items
 
     def _fetch_page(page_num: int) -> tuple[list, dict]:
         params = {**base_params, "page": str(page_num)}
@@ -152,31 +149,29 @@ def _run_search(query: str, submitter_uuid: str, item_types: list[str]) -> list[
                 pass
         return 0
 
-    # Wave 1: speculative parallel fetch of pages 0 .. _SPECULATIVE_PAGES-1
     try:
-        wave1: dict[int, tuple] = {}
-        with ThreadPoolExecutor(max_workers=_SPECULATIVE_PAGES) as pool:
-            fts = {pool.submit(_fetch_page, p): p for p in range(_SPECULATIVE_PAGES)}
-            for ft in as_completed(fts):
-                wave1[fts[ft]] = ft.result()
+        page0_objects, links0 = _fetch_page(0)
     except Exception as exc:
         st.error(f"Erreur lors de la recherche : {exc}")
         return []
 
-    _, links0 = wave1[0]
-    last_page  = min(_last_page_from_links(links0), _MAX_PAGES - 1)
-    total_pages = last_page + 1
+    # Single page — done in one call
+    if "next" not in links0:
+        return [_parse_search_hit(obj) for obj in page0_objects]
 
-    # Wave 2: if there are pages beyond _SPECULATIVE_PAGES, fetch them now
-    if total_pages > _SPECULATIVE_PAGES:
-        wave2: dict[int, tuple] = {}
-        with ThreadPoolExecutor(max_workers=total_pages - _SPECULATIVE_PAGES) as pool:
-            fts2 = {pool.submit(_fetch_page, p): p for p in range(_SPECULATIVE_PAGES, total_pages)}
-            for ft in as_completed(fts2):
-                wave2[fts2[ft]] = ft.result()
-        wave1.update(wave2)
+    # Multiple pages — fire remaining pages in parallel
+    last_page = min(_last_page_from_links(links0), _MAX_PAGES - 1)
+    pages: dict[int, list] = {0: page0_objects}
+    with ThreadPoolExecutor(max_workers=last_page) as pool:
+        fts = {pool.submit(_fetch_page, p): p for p in range(1, last_page + 1)}
+        for ft in as_completed(fts):
+            p = fts[ft]
+            try:
+                pages[p] = ft.result()[0]
+            except Exception:
+                pages[p] = []
 
-    flat = [obj for p in range(total_pages) for obj in (wave1.get(p, ([], {}))[0] or [])]
+    flat = [obj for p in range(last_page + 1) for obj in (pages.get(p) or [])]
     return [_parse_search_hit(obj) for obj in flat]
 
 
