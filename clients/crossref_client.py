@@ -281,8 +281,13 @@ class Client(APIClient):
                 series_issn = self._normalize_issn(issn_field)
                 book_title = container_title[1]
             elif len(container_title) == 1:
-                # Si une seule valeur, c’est le book_title qui est renseigné
-                book_title = container_title[0]
+                if aggregation_type == "book":
+                    # Standalone book: single container-title is the series, not a parent book
+                    series_title = container_title[0]
+                    series_issn = self._normalize_issn(issn_field)
+                else:
+                    # Book chapter with no series info: container-title is the parent book
+                    book_title = container_title[0]
 
         issue = x.get("issue", "")
 

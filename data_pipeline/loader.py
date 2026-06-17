@@ -1204,8 +1204,8 @@ class Loader:
                 False,
             ))
 
-        # Journal/proceedings container fields are not part of preprint, report, or dataset forms
-        if form_section not in ("preprint_", "report_", "dataset_"):
+        # Journal/proceedings container fields are not part of preprint, report, dataset, or book forms
+        if form_section not in ("preprint_", "report_", "dataset_", "book_"):
             fields.extend([
                 (
                     "/sections/journalcontainer_details/dc.relation.journal",
