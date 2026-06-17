@@ -424,6 +424,9 @@ class PipelineDB:
                 "ALTER TABLE researcher_units ADD COLUMN IF NOT EXISTS position VARCHAR",
                 "ALTER TABLE researcher_units ADD COLUMN IF NOT EXISTS epfl_class VARCHAR",
                 "ALTER TABLE researcher_registry ADD COLUMN IF NOT EXISTS openalex_name_variants VARCHAR",
+                # M5 — researcher_import run tracking
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS run_type VARCHAR DEFAULT 'institutional'",
+                "ALTER TABLE runs ADD COLUMN IF NOT EXISTS forced_sciper VARCHAR",
             ]:
                 con.execute(_migration)
         finally:
@@ -644,7 +647,8 @@ class PipelineDB:
 
     def start_run(self, run_id, window_start, window_end, sources, dry_run=False,
                   query_overrides=None, scopus_ids=None, wos_ids=None,
-                  orcid_ids=None, openalex_ids=None):
+                  orcid_ids=None, openalex_ids=None,
+                  run_type: str = "institutional", forced_sciper: str | None = None):
         try:
             started_at = datetime.strptime(run_id[:19], "%Y-%m-%d_%H-%M-%S")
         except (ValueError, TypeError):
@@ -656,13 +660,15 @@ class PipelineDB:
         self._exec(
             "INSERT INTO runs"
             " (run_id,started_at,window_start,window_end,sources,dry_run,status,"
-            "  query_overrides,scopus_ids,wos_ids,orcid_ids,openalex_ids)"
-            " VALUES (?,?,?,?,?,?,'running',?,?,?,?,?)",
+            "  query_overrides,scopus_ids,wos_ids,orcid_ids,openalex_ids,"
+            "  run_type,forced_sciper)"
+            " VALUES (?,?,?,?,?,?,'running',?,?,?,?,?,?,?)",
             [
                 run_id, started_at, window_start, window_end,
                 ",".join(sources), dry_run,
                 json.dumps(query_overrides, ensure_ascii=False) if query_overrides else None,
                 _ids(scopus_ids), _ids(wos_ids), _ids(orcid_ids), _ids(openalex_ids),
+                run_type, forced_sciper,
             ])
 
     def finish_run(self, run_id, status="completed"):
@@ -955,7 +961,7 @@ class PipelineDB:
 
     def _run_filters(self, status=None, date_from=None, date_to=None,
                      search=None, review_status=None, claimed_by=None,
-                     sources=None):
+                     sources=None, with_imports=False):
         filters, params = [], []
         if search:
             filters.append("LOWER(run_id) LIKE ?")
@@ -993,6 +999,14 @@ class PipelineDB:
             ph = ", ".join("?" * len(claimed_by))
             filters.append(f"claimed_by IN ({ph})")
             params.extend(claimed_by)
+        if with_imports:
+            filters.append(
+                "EXISTS ("
+                "  SELECT 1 FROM run_publications rp"
+                "  WHERE rp.run_id = runs.run_id"
+                "  AND rp.status IN ('workflow', 'workspace')"
+                ")"
+            )
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         return where, params
 
@@ -1004,22 +1018,22 @@ class PipelineDB:
 
     def count_runs(self, status=None, date_from=None, date_to=None,
                    search=None, review_status=None, claimed_by=None,
-                   sources=None) -> int:
+                   sources=None, with_imports=False) -> int:
         where, params = self._run_filters(
             status=status, date_from=date_from, date_to=date_to,
             search=search, review_status=review_status, claimed_by=claimed_by,
-            sources=sources)
+            sources=sources, with_imports=with_imports)
         r = self._query_one(
             f"SELECT COUNT(*) FROM runs {where}", params or None)
         return int(r[0]) if r and r[0] else 0
 
     def get_runs(self, status=None, date_from=None, date_to=None,
                  search=None, review_status=None, claimed_by=None,
-                 sources=None, limit=20, offset=0) -> pd.DataFrame:
+                 sources=None, with_imports=False, limit=20, offset=0) -> pd.DataFrame:
         where, params = self._run_filters(
             status=status, date_from=date_from, date_to=date_to,
             search=search, review_status=review_status, claimed_by=claimed_by,
-            sources=sources)
+            sources=sources, with_imports=with_imports)
         params += [limit, offset]
         return self._query(
             f"SELECT run_id, started_at, ended_at,"
@@ -1048,7 +1062,8 @@ class PipelineDB:
             f"  WHERE rp.run_id = runs.run_id"
             f"  AND rp.quality_pdf_ok = FALSE) AS quality_no_pdf_count,"
             f" claimed_by, claimed_at, review_status, review_updated_at,"
-            f" query_overrides, scopus_ids, wos_ids, orcid_ids, openalex_ids"
+            f" query_overrides, scopus_ids, wos_ids, orcid_ids, openalex_ids,"
+            f" run_type, forced_sciper"
             f" FROM runs {where} ORDER BY started_at DESC LIMIT ? OFFSET ?",
             params)
 
@@ -1424,11 +1439,19 @@ class PipelineDB:
         ph = ",".join(["?"] * len(values))
         return f"{col} IN ({ph})", values
 
+    # License prefixes that trigger the CC/libre PDF check — mirrors infoscience_status_sync.py
+    _CC_LICENSE_SQL = (
+        "LOWER(COALESCE(p.upw_license,'')) LIKE 'cc-%'"
+        " OR LOWER(COALESCE(p.upw_license,'')) LIKE 'public-domain%'"
+        " OR LOWER(COALESCE(p.upw_license,'')) LIKE 'pd%'"
+    )
+
     def _pub_filters(self, run_id, status, source, dc_type, sciper, unit_acronym,
                      search, has_pdf=None, oa_filter=None, licence=None,
                      epfl_strength=None, dedup_note=None, no_abstract=False,
                      infoscience_status=None, quality_filter=None,
-                     needs_attention=False, former_only=False):
+                     needs_attention=False, former_only=False,
+                     missing_cc_pdf=False):
         """Shared filter-building logic for get_publications and count_publications.
 
         run_id, status, source, dc_type, unit_acronym, licence each accept either a
@@ -1580,6 +1603,12 @@ class PipelineDB:
                 ")"
             )
 
+        if missing_cc_pdf:
+            filters.append(
+                f"({self._CC_LICENSE_SQL})"
+                " AND (p.upw_valid_pdf IS NULL OR p.upw_valid_pdf = FALSE)"
+            )
+
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         return join_a, join_u, where, params
 
@@ -1589,14 +1618,15 @@ class PipelineDB:
                            licence=None, epfl_strength=None,
                            dedup_note=None, no_abstract=False,
                            infoscience_status=None, quality_filter=None,
-                           needs_attention=False, former_only=False) -> int:
+                           needs_attention=False, former_only=False,
+                           missing_cc_pdf=False) -> int:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
             no_abstract=no_abstract, infoscience_status=infoscience_status,
             quality_filter=quality_filter, needs_attention=needs_attention,
-            former_only=former_only)
+            former_only=former_only, missing_cc_pdf=missing_cc_pdf)
         r = self._query_one(
             f"SELECT COUNT(*) FROM ("
             f"  SELECT DISTINCT rp.run_id, rp.pub_id, p.doi, p.title,"
@@ -1617,14 +1647,15 @@ class PipelineDB:
                          licence=None, epfl_strength=None, dedup_note=None,
                          no_abstract=False, infoscience_status=None,
                          quality_filter=None, needs_attention=False,
-                         former_only=False, limit=100, offset=0) -> pd.DataFrame:
+                         former_only=False, missing_cc_pdf=False,
+                         limit=100, offset=0) -> pd.DataFrame:
         join_a, join_u, where, params = self._pub_filters(
             run_id, status, source, dc_type, sciper, unit_acronym, search,
             has_pdf=has_pdf, oa_filter=oa_filter, licence=licence,
             epfl_strength=epfl_strength, dedup_note=dedup_note,
             no_abstract=no_abstract, infoscience_status=infoscience_status,
             quality_filter=quality_filter, needs_attention=needs_attention,
-            former_only=former_only)
+            former_only=former_only, missing_cc_pdf=missing_cc_pdf)
         params += [limit, offset]
         return self._query(
             f"SELECT DISTINCT rp.run_id, rp.pub_id, rp.row_id, p.doi, p.title,"
@@ -2112,21 +2143,81 @@ class PipelineDB:
         import_run_id: str | None = None,
         import_status: str | None = None,
     ) -> None:
-        """Insert or update a gap analysis result for a researcher publication."""
+        """Insert or update a gap analysis result for a researcher publication.
+
+        On conflict: gap_status and metadata are always updated.
+        import_status is preserved when the caller passes None (re-analyze must
+        not overwrite a human decision such as 'rejected' or 'import_triggered').
+        To explicitly set or clear import_status, use set_gap_import_status().
+        """
         con = self._connect()
         try:
             con.execute(
                 """
-                INSERT OR REPLACE INTO person_gaps (
+                INSERT INTO person_gaps (
                     sciper, pub_id, doi, title, pub_year, dc_type,
                     gap_status, import_run_id, import_status, computed_at
                 ) VALUES (?,?,?,?,?,?,?,?,?,NOW())
+                ON CONFLICT (sciper, pub_id) DO UPDATE SET
+                    gap_status    = excluded.gap_status,
+                    doi           = excluded.doi,
+                    title         = excluded.title,
+                    pub_year      = excluded.pub_year,
+                    dc_type       = excluded.dc_type,
+                    import_run_id = COALESCE(excluded.import_run_id, person_gaps.import_run_id),
+                    import_status = COALESCE(excluded.import_status, person_gaps.import_status),
+                    computed_at   = NOW()
                 """,
                 [
                     sciper, pub_id, doi, title, pub_year, dc_type,
                     gap_status, import_run_id, import_status,
                 ],
             )
+        finally:
+            con.close()
+
+    def set_gap_import_status(
+        self,
+        sciper: str,
+        pub_ids: list[str],
+        status: str | None,
+    ) -> None:
+        """Explicitly set or clear import_status for a list of pub_ids.
+
+        Unlike upsert_person_gap, this always overwrites the existing value
+        (including clearing 'rejected' with status=None for unreject).
+        No-op when pub_ids is empty.
+        """
+        if not pub_ids:
+            return
+        placeholders = ", ".join("?" * len(pub_ids))
+        con = self._connect()
+        try:
+            con.execute(
+                f"UPDATE person_gaps SET import_status = ? "
+                f"WHERE sciper = ? AND pub_id IN ({placeholders})",
+                [status, sciper, *pub_ids],
+            )
+        finally:
+            con.close()
+
+    def get_rejected_pub_ids(self, sciper: str) -> list[dict]:
+        """Return rejected gap records for a researcher as list[dict].
+
+        Each dict has keys: pub_id, doi, title, pub_year.
+        Only records with import_status='rejected' are returned.
+        """
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT pub_id, doi, title, pub_year FROM person_gaps "
+                "WHERE sciper = ? AND import_status = 'rejected'",
+                [sciper],
+            ).fetchall()
+            return [
+                {"pub_id": r[0], "doi": r[1], "title": r[2], "pub_year": r[3]}
+                for r in rows
+            ]
         finally:
             con.close()
 
@@ -2529,6 +2620,7 @@ class PipelineDB:
                     r.full_name,
                     r.main_unit,
                     r.unit_level_2,
+                    g.pub_id,
                     g.pub_year,
                     g.title,
                     g.doi,
