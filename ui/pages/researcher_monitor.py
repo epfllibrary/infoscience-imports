@@ -1,26 +1,37 @@
-"""Researcher Monitor page — registry, gap analysis, sync controls."""
+"""Researcher Monitor page — registry, gap analysis, sync controls.
+
+URI routing: ?sciper=<SCIPER> opens the dedicated researcher detail page.
+No query param → shows the registry + tabs view.
+"""
 
 from __future__ import annotations
 
-import html as _html
 import json
 import math
 import os
-import signal
-import subprocess
-import sys
 import tempfile
-import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from db.pipeline_db import PipelineDB
+from ui.components.researcher_jobs import (
+    launch_import_job,
+    launch_researcher_job,
+    read_active_researcher_job,
+    render_researcher_job_form,
+    render_researcher_job_running,
+)
 from ui.components.researcher_table import (
+    render_harvested_content,
+    render_infoscience_content,
+    render_lacunes_tab,
+    render_profil_content,
     render_researcher_card,
-    show_researcher_dialog,
+    render_researcher_header,
+    render_units_content,
 )
 from ui.helpers import db_lock_guard, metric_card, mi, page_title, sh
 
@@ -36,64 +47,6 @@ _STATUS_ICON: dict[str | None, str] = {
 }
 _PAGE_SIZE = 25
 _CARD_PAGE_SIZE = 16
-
-
-# ── Researcher job lock file (live log tracking) ──────────────────────────────
-
-def _job_lock_file(root: Path) -> Path:
-    return root / "data" / "researcher_job_active.json"
-
-
-def _is_pid_running(pid: int) -> bool:
-    if not pid or pid <= 0:
-        return False
-    try:
-        waited, _ = os.waitpid(pid, os.WNOHANG)
-        if waited == pid:
-            return False
-    except (ChildProcessError, OSError):
-        pass
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
-
-
-def _read_active_researcher_job(root: Path) -> dict | None:
-    lock = _job_lock_file(root)
-    if not lock.exists():
-        return None
-    try:
-        data = json.loads(lock.read_text(encoding="utf-8"))
-    except Exception:
-        lock.unlink(missing_ok=True)
-        return None
-    pid = data.get("pid")
-    if pid and _is_pid_running(int(pid)):
-        return data
-    lock.unlink(missing_ok=True)
-    return None
-
-
-def _write_researcher_job_lock(
-    root: Path, action: str, pid: int, log_file: Path, cmd: list[str], env: str,
-    sciper: str | None = None,
-) -> None:
-    lock = _job_lock_file(root)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text(
-        json.dumps({
-            "action":     action,
-            "pid":        pid,
-            "log_file":   str(log_file),
-            "started_at": datetime.now().isoformat(),
-            "env":        env,
-            "cmd":        " ".join(cmd),
-            "sciper":     sciper,
-        }, indent=2),
-        encoding="utf-8",
-    )
 
 
 # ── Schedules.json helpers ────────────────────────────────────────────────────
@@ -208,7 +161,6 @@ def _apply_registry_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
 # ── Registry helpers ──────────────────────────────────────────────────────────
 
 def _count_filled(series: "pd.Series") -> int:
-    """Count non-null, non-empty, non-whitespace values in a pandas Series."""
     return int(series.notna().sum() - (series.astype(str).str.strip() == "").sum())
 
 
@@ -224,7 +176,6 @@ _REGISTRY_EXPORT_COLS = [
 # ── KPI row helper ────────────────────────────────────────────────────────────
 
 def _kpi_row(items: list[tuple[str, object, str]]) -> None:
-    """Render metric cards in equal columns. items = [(label, value, sub), …]"""
     cols = st.columns(len(items))
     for col, (label, value, sub) in zip(cols, items):
         col.markdown(metric_card(label, value, sub), unsafe_allow_html=True)
@@ -238,6 +189,17 @@ def render(
     root: Path = Path("."),
     role: str = "reporting",
 ) -> None:
+    sciper_param = st.query_params.get("sciper")
+    if sciper_param:
+        _render_researcher_detail(
+            sciper=str(sciper_param),
+            db=db,
+            role=role,
+            root=root,
+            active_env=active_env,
+        )
+        return
+
     page_title("manage_accounts", "Chercheurs")
 
     tab_reg, tab_pubs, tab_gaps, tab_sync = st.tabs([
@@ -260,8 +222,164 @@ def render(
         _render_sync(db, active_env=active_env, root=root, role=role)
 
 
-# ── Tab: Registre ─────────────────────────────────────────────────────────────
+# ── Researcher detail page ────────────────────────────────────────────────────
 
+def _render_researcher_detail(
+    sciper: str,
+    db: PipelineDB,
+    role: str,
+    root: Path,
+    active_env: str,
+) -> None:
+    """Full detail page for a single researcher, routed via ?sciper=<SCIPER>."""
+    if st.button("← Retour au registre", key="btn_back_to_registry", type="secondary"):
+        del st.query_params["sciper"]
+        st.rerun()
+
+    # ── Fetch researcher row ──────────────────────────────────────────────────
+    try:
+        reg_df = db.get_researcher_registry_df(active_only=False)
+        matches = reg_df[reg_df["sciper"].astype(str) == str(sciper)]
+    except Exception as exc:
+        st.error(f"Erreur lors de la récupération du registre : {exc}")
+        return
+
+    if matches.empty:
+        st.error(f"SCIPER **{sciper}** introuvable dans le registre.")
+        return
+
+    row = matches.iloc[0].to_dict()
+    name = str(row.get("full_name") or "?")
+
+    page_title("person", name)
+    render_researcher_header(row)
+
+    # ── KPI row ───────────────────────────────────────────────────────────────
+    harvested    = int(row.get("harvested_pubs") or 0)
+    infos_pubs   = int(row.get("infoscience_pubs") or 0)
+    gaps_missing = row.get("gaps_missing")
+    last_harvest = str(row.get("last_harvest_at") or "—")[:10]
+    last_gap     = str(row.get("last_gap_analysis_at") or "—")[:10]
+
+    _kpi_row([
+        ("Moissonnées", harvested, f"dernier : {last_harvest}"),
+        ("Infoscience", infos_pubs, "profil CRIS"),
+        ("Lacunes",
+         "—" if gaps_missing is None else int(gaps_missing),
+         f"analysé le {last_gap}"),
+    ])
+
+    st.markdown("---")
+
+    # ── Active job detection ──────────────────────────────────────────────────
+    active_job = read_active_researcher_job(root)
+    job_is_mine = (
+        active_job is not None
+        and str(active_job.get("sciper", "")).strip() == str(sciper).strip()
+    )
+
+    if job_is_mine:
+        render_researcher_job_running(active_job, root)
+        return
+
+    # ── Action buttons (admin / non-reporting only) ───────────────────────────
+    if role != "reporting":
+        _render_detail_actions(sciper, row, db, role, root, active_env, active_job)
+        st.markdown("")
+
+    # ── Tabs ──────────────────────────────────────────────────────────────────
+    t_profil, t_units, t_moissonnes, t_infoscience, t_lacunes = st.tabs([
+        "Profil",
+        "Unités",
+        f"Moissonnées ({harvested})",
+        f"Infoscience ({infos_pubs})",
+        f"Lacunes ({int(gaps_missing) if gaps_missing is not None else '—'})",
+    ])
+
+    with t_profil:
+        render_profil_content(row)
+
+    with t_units:
+        render_units_content(sciper, db)
+
+    with t_moissonnes:
+        render_harvested_content(sciper, db, harvested)
+
+    with t_infoscience:
+        render_infoscience_content(sciper, db)
+
+    with t_lacunes:
+        render_lacunes_tab(
+            sciper=sciper,
+            missing=gaps_missing,
+            db=db,
+            role=role,
+            row=row,
+            on_import=(
+                (lambda sc, start_year, _row=row, _root=root, _env=active_env, _db=db:
+                    launch_import_job(_root, _env, _db, _row, sc, override_start_year=start_year))
+                if role != "reporting" else None
+            ),
+        )
+
+
+def _render_detail_actions(
+    sciper: str,
+    row: dict,
+    db: PipelineDB,
+    role: str,
+    root: Path,
+    active_env: str,
+    active_job: dict | None,
+) -> None:
+    """Sync / Harvest / Analyze action buttons shown above the tabs on the detail page."""
+    if active_job:
+        st.warning(
+            "⏳ Une tâche est en cours pour un autre chercheur — "
+            "actions désactivées le temps qu'elle se termine."
+        )
+        return
+
+    ac1, ac2, ac3 = st.columns(3)
+
+    with ac1:
+        with st.container(border=True):
+            st.markdown("**Sync People**")
+            st.caption("Rafraîchit les données depuis l'API EPFL People.")
+            if st.button(
+                "Synchroniser",
+                key=f"btn_detail_sync_{sciper}",
+                icon=":material/sync:",
+                width="stretch",
+            ):
+                launch_researcher_job(root, active_env, "refresh", sciper=sciper)
+
+    with ac2:
+        with st.container(border=True):
+            st.markdown("**Moissonner**")
+            st.caption("Récupère les publications OpenAlex / ORCID.")
+            if st.button(
+                "Moissonner",
+                key=f"btn_detail_harvest_{sciper}",
+                icon=":material/cloud_download:",
+                width="stretch",
+            ):
+                launch_researcher_job(root, active_env, "harvest", sciper=sciper)
+
+    with ac3:
+        with st.container(border=True):
+            st.markdown("**Analyser les lacunes**")
+            st.caption("Compare les moissonnées avec le profil Infoscience.")
+            if st.button(
+                "Analyser",
+                key=f"btn_detail_analyze_{sciper}",
+                icon=":material/analytics:",
+                width="stretch",
+            ):
+                launch_researcher_job(root, active_env, "analyze", sciper=sciper)
+
+
+# ── Tab: Registre ─────────────────────────────────────────────────────────────
 
 def _render_registry(
     db: PipelineDB,
@@ -297,11 +415,10 @@ def _render_registry(
 
     st.markdown("---")
 
-    # ── Filter panel — white elevated container ────────────────────────────────
+    # ── Filter panel ──────────────────────────────────────────────────────────
     with st.container():
         st.markdown('<span class="rmfilter-anchor"></span>', unsafe_allow_html=True)
 
-        # Row 1: search · unit · school · show inactive
         fr1, fr2, fr3, fr4 = st.columns([3, 2, 2, 1])
         with fr1:
             search = st.text_input(
@@ -326,7 +443,6 @@ def _render_registry(
                 "Inactifs", value=False, key="rm_show_inactive"
             )
 
-        # Row 2: ORCID · OpenAlex · Infoscience · Lacunes · Tri
         fr5, fr6, fr7, fr8, fr9 = st.columns([2, 2, 2, 2, 2])
         with fr5:
             orcid_mode = st.selectbox(
@@ -377,7 +493,6 @@ def _render_registry(
                 key="rm_sort_by",
             )
 
-        # Row 3: position · class · reset
         fr10, fr11, _, fr_rst = st.columns([2, 2, 4, 2])
         with fr10:
             position_opts = sorted(
@@ -441,7 +556,6 @@ def _render_registry(
         view = view.sort_values("last_gap_analysis_at", ascending=False, na_position="last")
     elif sort_by == "Dernière moisson ↓":
         view = view.sort_values("last_harvest_at", ascending=False, na_position="last")
-    # "Nom A→Z" preserves the DB default order (last_name, first_name)
 
     if view.empty:
         st.info("Aucun chercheur ne correspond aux filtres sélectionnés.")
@@ -490,7 +604,7 @@ def _render_registry(
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Card grid (2 columns) ─────────────────────────────────────────────────
-    start = (page_num - 1) * _CARD_PAGE_SIZE
+    start   = (page_num - 1) * _CARD_PAGE_SIZE
     page_df = view.iloc[start: start + _CARD_PAGE_SIZE]
 
     for i in range(0, len(page_df), 2):
@@ -500,25 +614,7 @@ def _render_registry(
             if idx < len(page_df):
                 row = page_df.iloc[idx].to_dict()
                 with col:
-                    render_researcher_card(
-                        row,
-                        role=role,
-                        on_detail=lambda r, _db=db, _root=root, _env=active_env, _role=role: show_researcher_dialog(
-                            r,
-                            db=_db,
-                            role=_role,
-                            root=_root,
-                            on_sync=lambda sc, __root=_root, __env=_env: _launch_researcher_job(
-                                __root, __env, "refresh", sciper=sc
-                            ),
-                            on_harvest=lambda sc, __root=_root, __env=_env: _launch_researcher_job(
-                                __root, __env, "harvest", sciper=sc
-                            ),
-                            on_analyze=lambda sc, __root=_root, __env=_env: _launch_researcher_job(
-                                __root, __env, "analyze", sciper=sc
-                            ),
-                        ),
-                    )
+                    render_researcher_card(row, role=role)
 
 
 # ── Tab: Publications ─────────────────────────────────────────────────────────
@@ -529,7 +625,6 @@ def _render_publications(db: PipelineDB) -> None:
         st.info("Registre vide — lancez une synchronisation depuis l'onglet **Synchronisation**.")
         return
 
-    # ── Controls ──────────────────────────────────────────────────────────────
     sf1, sf2 = st.columns([3, 1])
     with sf1:
         researcher_opts = [
@@ -574,7 +669,6 @@ def _render_publications(db: PipelineDB) -> None:
 
     st.markdown("---")
 
-    # ── Moissonnées ───────────────────────────────────────────────────────────
     if view_mode == "Moissonnées":
         pubs = db.get_person_publications(sciper, start_year=int(start_y), end_year=int(end_y))
         if not pubs:
@@ -604,7 +698,6 @@ def _render_publications(db: PipelineDB) -> None:
         st.caption(f"{len(disp)} publication(s) — OpenAlex / ORCID")
         _download_button(disp, f"pubs_moissonnees_{sciper}")
 
-    # ── Infoscience ───────────────────────────────────────────────────────────
     elif view_mode == "Infoscience":
         outputs = db.get_person_infoscience_outputs(sciper)
         if not outputs:
@@ -618,7 +711,6 @@ def _render_publications(db: PipelineDB) -> None:
         ]].copy()
         disp.columns = ["Année", "Titre", "DOI", "Type", "Handle Infoscience"]
         disp["DOI"] = disp["DOI"].fillna("—")
-        # Year filter — Infoscience outputs have no server-side year filter
         for col, bound, op in [("Année", int(start_y), "ge"), ("Année", int(end_y), "le")]:
             disp = disp[disp[col].apply(
                 lambda y, b=bound, o=op: (
@@ -633,7 +725,6 @@ def _render_publications(db: PipelineDB) -> None:
         st.caption(f"{len(disp)} publication(s) liée(s) dans Infoscience via profil CRIS")
         _download_button(disp, f"pubs_infoscience_{sciper}")
 
-    # ── Lacunes ───────────────────────────────────────────────────────────────
     else:
         gap_df = db.get_person_gaps_df(
             sciper=sciper, start_year=int(start_y), end_year=int(end_y)
@@ -693,7 +784,6 @@ def _render_gaps(db: PipelineDB, active_env: str, root: Path, role: str) -> None
 
     st.markdown("---")
 
-    # ── Filters ───────────────────────────────────────────────────────────────
     _STATUS_OPTIONS = ["missing_in_infoscience", "in_infoscience", "superseded_preprint"]
     _STATUS_LABEL = {
         "missing_in_infoscience": "🔴 Manquantes",
@@ -701,7 +791,6 @@ def _render_gaps(db: PipelineDB, active_env: str, root: Path, role: str) -> None
         "superseded_preprint":    "🟡 Préprint — publié dans IS",
     }
 
-    # Row 1: status · years · researcher search
     gf1, gf2, gf3, gf4 = st.columns([2, 2, 2, 3])
     with gf1:
         status_filter = st.multiselect(
@@ -732,7 +821,6 @@ def _render_gaps(db: PipelineDB, active_env: str, root: Path, role: str) -> None
             placeholder="Dupont, 349140…",
         )
 
-    # Row 2: type · unit · school · reset
     gf5, gf6, gf7, gf_rst = st.columns([3, 3, 2, 1])
     with gf5:
         type_filter = st.multiselect(
@@ -804,7 +892,6 @@ def _render_gaps(db: PipelineDB, active_env: str, root: Path, role: str) -> None
         _download_button(display, f"lacunes_{datetime.now():%Y%m%d}")
 
 
-
 # ── Tab: Synchronisation ──────────────────────────────────────────────────────
 
 def _render_sync(db: PipelineDB, active_env: str, root: Path, role: str) -> None:
@@ -855,12 +942,12 @@ def _render_sync(db: PipelineDB, active_env: str, root: Path, role: str) -> None
 
     st.markdown(sh("sync", "Lancer manuellement"), unsafe_allow_html=True)
 
-    active_job = _read_active_researcher_job(root)
+    active_job = read_active_researcher_job(root)
     if active_job:
-        _render_researcher_job_running(active_job, root)
+        render_researcher_job_running(active_job, root)
         return
 
-    _render_researcher_job_form(active_env, root, db)
+    render_researcher_job_form(active_env, root, db)
 
     st.markdown("")
     st.markdown(sh("info", "Architecture"), unsafe_allow_html=True)
@@ -869,223 +956,3 @@ def _render_sync(db: PipelineDB, active_env: str, root: Path, role: str) -> None
         "redémarrage de l'UI). La sync automatique nocturne tourne en-process dans le "
         "scheduler daemon — ses logs sont dans `logs/scheduler.log`."
     )
-
-
-def _render_researcher_job_running(active_job: dict, root: Path) -> None:
-    """Live log view for an active researcher job — mirrors run_launcher._render_running."""
-    action   = active_job.get("action", "?")
-    started  = (active_job.get("started_at") or "")[:16].replace("T", " ")
-    log_file = Path(active_job.get("log_file", ""))
-    pid      = active_job.get("pid")
-
-    info_col, stop_col = st.columns([6, 2])
-    with info_col:
-        st.info(f"⏳ Tâche **{action}** en cours depuis {started}…")
-    with stop_col:
-        if pid and st.button("⛔ Arrêter", key="btn_stop_researcher", type="secondary"):
-            try:
-                os.kill(int(pid), signal.SIGTERM)
-                st.warning("Signal d'arrêt envoyé au processus.")
-                time.sleep(1)
-                _job_lock_file(root).unlink(missing_ok=True)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Impossible d'arrêter le processus : {exc}")
-
-    st.markdown(sh("terminal", "Logs en direct"), unsafe_allow_html=True)
-    log_box  = st.empty()
-    info_box = st.empty()
-
-    while True:
-        current = _read_active_researcher_job(root)
-        if log_file.exists():
-            lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-            tail  = "\n".join(lines[-300:])
-        else:
-            tail = "(log non encore disponible…)"
-        log_box.markdown(
-            f'<div class="log-console">{_html.escape(tail)}</div>',
-            unsafe_allow_html=True,
-        )
-        if current is None:
-            info_box.empty()
-            break
-        info_box.caption("Actualisation dans 2 secondes…")
-        time.sleep(2)
-
-    st.success(f"✅ Tâche **{action}** terminée.")
-    st.rerun()
-
-
-def _render_researcher_job_form(active_env: str, root: Path, db: "PipelineDB | None" = None) -> None:
-    """Launch buttons for manual registry sync, harvest, and gap analysis."""
-    sc1, sc2 = st.columns(2)
-
-    with sc1:
-        with st.container(border=True):
-            st.markdown("**Sync registre (EPFL People API)**")
-            st.caption(
-                "Découverte complète depuis l'API EPFL People : "
-                "ajoute les nouveaux membres, offboarde les partants."
-            )
-            no_orcid = st.checkbox(
-                "Sans enrichissement ORCID", key="sync_no_orcid",
-                help="Plus rapide, ne contacte pas l'API ORCID",
-            )
-            no_dspace = st.checkbox(
-                "Sans enrichissement Infoscience", key="sync_no_dspace",
-                help="Ne récupère pas le profil Infoscience (uuid, OpenAlex IS, variantes de noms)",
-            )
-            no_openalex = st.checkbox(
-                "Sans inférence OpenAlex", key="sync_no_openalex",
-                help="Ne tente pas d'inférer l'OpenAlex ID par recoupement de DOIs",
-            )
-            if st.button(
-                "Synchroniser le registre", key="btn_sync_registry",
-                icon=":material/people:", type="primary",
-            ):
-                _launch_researcher_job(
-                    root, active_env, "sync",
-                    no_orcid=no_orcid,
-                    no_dspace=no_dspace,
-                    no_openalex=no_openalex,
-                )
-
-    with sc2:
-        with st.container(border=True):
-            st.markdown("**Actualiser les données du registre**")
-            st.caption(
-                "Ré-enrichit les entrées déjà présentes (SCIPER connus) sans découverte "
-                "ni offboarding. Utile pour mettre à jour ORCID, profils Infoscience "
-                "et identifiants OpenAlex sur le périmètre existant."
-            )
-            ref_no_orcid = st.checkbox(
-                "Sans enrichissement ORCID", key="ref_no_orcid",
-                help="Plus rapide, ne contacte pas l'API ORCID",
-            )
-            ref_no_dspace = st.checkbox(
-                "Sans enrichissement Infoscience", key="ref_no_dspace",
-            )
-            ref_no_openalex = st.checkbox(
-                "Sans inférence OpenAlex", key="ref_no_openalex",
-            )
-            ref_sciper_input = st.text_input(
-                "Restreindre à des SCIPERs (optionnel)",
-                key="ref_sciper_input",
-                placeholder="349140, 120091, …",
-                help="Laisser vide pour actualiser tous les chercheurs actifs du registre",
-            )
-            if st.button(
-                "Actualiser", key="btn_refresh_registry",
-                icon=":material/refresh:", type="secondary",
-            ):
-                sciper_arg = ref_sciper_input.strip() or None
-                _launch_researcher_job(
-                    root, active_env, "refresh",
-                    no_orcid=ref_no_orcid,
-                    no_dspace=ref_no_dspace,
-                    no_openalex=ref_no_openalex,
-                    sciper=sciper_arg,
-                )
-
-    sc3, sc4 = st.columns(2)
-    with sc3:
-        with st.container(border=True):
-            st.markdown("**Moissonner les publications**")
-            st.caption(
-                "Récupère les publications depuis OpenAlex et ORCID. "
-                "La fenêtre est automatiquement restreinte à la période d'affiliation EPFL "
-                "de chaque chercheur (enrollment → offboarding)."
-            )
-            col_y1, col_y2 = st.columns(2)
-            with col_y1:
-                start_y = st.number_input(
-                    "Depuis (borne max)", min_value=2000, max_value=2030,
-                    value=datetime.now().year - 3, key="harvest_start",
-                )
-            with col_y2:
-                end_y = st.number_input(
-                    "Jusqu'à (borne max)", min_value=2000, max_value=2030,
-                    value=datetime.now().year, key="harvest_end",
-                )
-            if st.button("Moissonner", key="btn_harvest", icon=":material/cloud_download:", type="primary"):
-                _launch_researcher_job(
-                    root, active_env, "harvest",
-                    start_year=int(start_y), end_year=int(end_y),
-                )
-
-    with st.container(border=True):
-        st.markdown("**Analyse des lacunes Infoscience**")
-        st.caption(
-            "Compare les publications moissonnées aux items Infoscience liés à chaque chercheur "
-            "via son profil CRIS (relation ``RELATION.Person.researchoutputs``)."
-        )
-        _ALL_OPT = "Tous les chercheurs avec publications"
-        if db is not None:
-            reg_df = db.get_researcher_registry_df(active_only=True)
-            with_pubs = reg_df[reg_df["harvested_pubs"] > 0]
-            analyze_opts = [_ALL_OPT] + [
-                f"{row['full_name']} ({row['sciper']})"
-                for _, row in with_pubs.iterrows()
-            ]
-        else:
-            analyze_opts = [_ALL_OPT]
-        selected_analyze = st.selectbox("Chercheur", analyze_opts, key="analyze_researcher_sel")
-        if st.button("Analyser", key="btn_analyze", icon=":material/analytics:", type="primary"):
-            sciper_arg = (
-                None if selected_analyze == _ALL_OPT
-                else selected_analyze.split("(")[-1].rstrip(")")
-            )
-            _launch_researcher_job(root, active_env, "analyze", sciper=sciper_arg)
-
-
-def _launch_researcher_job(
-    root: Path,
-    active_env: str,
-    action: str,
-    no_orcid: bool = False,
-    no_dspace: bool = False,
-    no_openalex: bool = False,
-    start_year: int | None = None,
-    end_year: int | None = None,
-    sciper: str | None = None,
-    use_cached: bool = False,
-) -> None:
-    if _read_active_researcher_job(root):
-        st.error("⛔ Une tâche est déjà en cours. Attendez sa fin avant d'en lancer une nouvelle.")
-        return
-
-    python = sys.executable
-    cmd = [
-        python, str(root / "researcher_monitor" / "main.py"),
-        "--action", action, "--env", active_env,
-    ]
-    if no_orcid:
-        cmd.append("--no-orcid")
-    if no_dspace:
-        cmd.append("--no-dspace")
-    if no_openalex:
-        cmd.append("--no-openalex")
-    if start_year:
-        cmd += ["--start-year", str(start_year)]
-    if end_year:
-        cmd += ["--end-year", str(end_year)]
-    if sciper:
-        cmd += ["--sciper", sciper]
-    if use_cached:
-        cmd.append("--use-cached")
-
-    log_path = root / "logs" / f"researcher_{action}_{datetime.now():%Y%m%d_%H%M%S}.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=open(log_path, "w", encoding="utf-8"),
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        _write_researcher_job_lock(root, action, proc.pid, log_path, cmd, active_env, sciper=sciper)
-        st.rerun()
-    except Exception as exc:
-        st.error(f"Erreur au lancement : {exc}")

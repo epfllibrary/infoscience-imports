@@ -1,17 +1,17 @@
-"""Researcher registry card component.
+"""Researcher registry card component and per-researcher page rendering helpers.
 
 Each researcher is rendered as a bordered card via st.container(border=True).
 Cards are laid out in a 2-column grid by the caller (_render_registry).
 
-Dialog: show_researcher_dialog presents 5 tabs:
-  Profil | Unités | Moissonnées | Infoscience | Lacunes
+Detail page helpers (render_researcher_header, render_profil_content, …) are
+used by ui/pages/researcher_monitor._render_researcher_detail.
 """
 
 from __future__ import annotations
 
 import html as _html
 import json
-import time
+from datetime import datetime
 
 import streamlit as st
 
@@ -313,40 +313,6 @@ def _pp_is_output_row(out: dict) -> str:
     )
 
 
-def _pp_gap_row(gap: dict) -> str:
-    """Build one rich HTML row for a gap analysis entry."""
-    year       = _s(gap.get("pub_year"), "—")
-    title      = _s(gap.get("title"), "—")
-    doi        = _s(gap.get("doi"))
-    dc_type    = gap.get("dc_type")
-    gap_status = _s(gap.get("gap_status"))
-
-    meta = (
-        f'<span class="ptbl-year">{_esc(year)}</span>'
-        f'{_pp_gap_badge(gap_status)}'
-        f'{_pp_type_badge(dc_type)}'
-    )
-
-    footer_parts = []
-    if doi:
-        doi_url = f"https://doi.org/{doi}"
-        footer_parts.append(
-            f'<a href="{doi_url}" target="_blank" class="ptbl-doi">'
-            f'{_esc(doi[:40])}{"…" if len(doi) > 40 else ""}'
-            f'</a>'
-        )
-    dot    = '<span class="ptbl-sep-dot">·</span>'
-    footer = f' {dot} '.join(footer_parts)
-
-    return (
-        f'<div class="ptbl-row">'
-        f'<div class="ptbl-row-meta">{meta}</div>'
-        f'<div class="ptbl-title">{_esc(title[:160])}{"…" if len(title) > 160 else ""}</div>'
-        f'<div class="ptbl-row-footer">{footer}</div>'
-        f'</div>'
-    )
-
-
 def _pub_stats_html(harvested: int, missing, infoscience_pubs: int = 0) -> str:
     harvest_val = int(harvested) if harvested else 0
     pubs_css = "rmstat-pubs" + (" rmstat-zero" if harvest_val == 0 else "")
@@ -385,9 +351,12 @@ def _pub_stats_html(harvested: int, missing, infoscience_pubs: int = 0) -> str:
 def render_researcher_card(
     row: dict,
     role: str,
-    on_detail: "callable | None" = None,
 ) -> None:
-    """Render one researcher as a bordered card with Material icon badges."""
+    """Render one researcher as a bordered card.
+
+    Clicking 'Voir →' sets st.query_params['sciper'] to navigate to the
+    dedicated researcher detail page.
+    """
     sciper       = _s(row.get("sciper"), "?")
     name         = _s(row.get("full_name"), "—")
     pos          = row.get("epfl_position")
@@ -472,14 +441,14 @@ def render_researcher_card(
                 unsafe_allow_html=True,
             )
         with btn_col:
-            if on_detail is not None:
-                if st.button(
-                    "Voir →",
-                    key=f"rmcard_{sciper}",
-                    help=f"Détails — {name}",
-                    width="stretch",
-                ):
-                    on_detail(row)
+            if st.button(
+                "Voir →",
+                key=f"rmcard_{sciper}",
+                help=f"Détails — {name}",
+                width="stretch",
+            ):
+                st.query_params["sciper"] = sciper
+                st.rerun()
 
         st.markdown(ids_html, unsafe_allow_html=True)
         if units_html:
@@ -488,7 +457,7 @@ def render_researcher_card(
         st.markdown(footer_html, unsafe_allow_html=True)
 
 
-# ── Dialog helpers ────────────────────────────────────────────────────────────
+# ── Detail page rendering helpers ─────────────────────────────────────────────
 
 def _dlg_id_row(icon: str, label: str, value_html: str, found: bool = True) -> str:
     icon_style = (
@@ -528,32 +497,14 @@ def _unit_level_crumb(acronym: str, css_class: str, icon: str, title: str = "") 
     )
 
 
-# ── Detail dialog ─────────────────────────────────────────────────────────────
-
-@st.dialog("Chercheur", width="large")
-def show_researcher_dialog(
-    row: dict,
-    db=None,
-    role: str = "reporting",
-    on_harvest: "callable | None" = None,
-    on_analyze: "callable | None" = None,
-    on_sync: "callable | None" = None,
-    root: "Path | None" = None,
-) -> None:
-    from pathlib import Path as _Path
-
+def render_researcher_header(row: dict) -> None:
+    """Render the researcher page header: name, SCIPER chip, position, active badge."""
     sciper = _s(row.get("sciper"), "?")
     name   = _s(row.get("full_name"), "—")
-
-    # Override with fresh DB data if a job just completed for this researcher
-    _fresh_key = f"_dlg_fresh_{sciper}"
-    if _fresh_key in st.session_state:
-        row = st.session_state.pop(_fresh_key)
-
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;'
         f'padding-bottom:12px;border-bottom:1px solid #E2E8F0">'
-        f'<span style="font-size:1.05rem;font-weight:700;color:#0F172A">{_esc(name)}</span>'
+        f'<span style="font-size:1.25rem;font-weight:700;color:#0F172A">{_esc(name)}</span>'
         f'{_sciper_chip(sciper)}'
         f'{_position_chip(row.get("epfl_position"))}'
         f'{_active_badge(bool(row.get("is_active", True)))}'
@@ -561,405 +512,476 @@ def show_researcher_dialog(
         unsafe_allow_html=True,
     )
 
-    harvested = int(row.get("harvested_pubs") or 0)
-    missing   = row.get("gaps_missing")
-    in_is     = row.get("gaps_in_infoscience")
 
-    kpi_css = (
-        "display:inline-block;min-width:90px;padding:8px 14px;"
-        "background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;"
-        "margin-right:8px;margin-bottom:12px;vertical-align:top"
+def render_profil_content(row: dict) -> None:
+    """Render the profile identifiers and affiliation columns."""
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown("**Identifiants**")
+
+        orcid        = row.get("orcid")
+        orcid_linked = bool(row.get("orcid_epfl_linked"))
+        if _nn(orcid):
+            orcid_url = f"https://orcid.org/{_s(orcid)}"
+            linked_badge = (
+                f' <span class="rmdlg-linked-badge">'
+                f'{_ms("verified", 12, fill=1)}lié EPFL</span>'
+                if orcid_linked else
+                f' <span class="rmdlg-unlinked-badge">'
+                f'{_ms("link_off", 12)}non lié</span>'
+            )
+            orcid_val = f'<a href="{orcid_url}" target="_blank">{_esc(_s(orcid))}</a>{linked_badge}'
+            found = True
+        else:
+            orcid_val = "—"
+            found = False
+        st.markdown(_dlg_id_row("fingerprint", "ORCID", orcid_val, found), unsafe_allow_html=True)
+
+        oa_id = row.get("openalex_id")
+        if _nn(oa_id):
+            oa = _s(oa_id)
+            url = oa if oa.startswith("http") else f"https://openalex.org/{oa}"
+            oa_val = f'<a href="{url}" target="_blank">{_esc(oa)}</a>'
+            found = True
+        else:
+            oa_val = "—"
+            found = False
+        st.markdown(_dlg_id_row("travel_explore", "OpenAlex", oa_val, found), unsafe_allow_html=True)
+
+        sid = row.get("scopus_author_id")
+        if _nn(sid):
+            url = f"https://www.scopus.com/authid/detail.uri?authorId={_s(sid)}"
+            s_val = f'<a href="{url}" target="_blank">{_esc(_s(sid))}</a>'
+            found = True
+        else:
+            s_val = "—"
+            found = False
+        st.markdown(_dlg_id_row("find_in_page", "Scopus", s_val, found), unsafe_allow_html=True)
+
+        rid = row.get("researcher_id")
+        if _nn(rid):
+            url = f"https://publons.com/researcher/{_s(rid)}"
+            r_val = f'<a href="{url}" target="_blank">{_esc(_s(rid))}</a>'
+            found = True
+        else:
+            r_val = "—"
+            found = False
+        st.markdown(_dlg_id_row("import_contacts", "WoS ResearcherID", r_val, found), unsafe_allow_html=True)
+
+        is_url = row.get("infoscience_profile_url")
+        uuid   = row.get("dspace_uuid")
+        if _nn(is_url):
+            is_val = f'<a href="{_esc(_s(is_url))}" target="_blank">profil ↗</a>'
+            found  = True
+        elif _nn(uuid):
+            link   = f"https://infoscience.epfl.ch/entities/person/{_s(uuid)}"
+            is_val = f'<a href="{_esc(link)}" target="_blank">profil ↗</a>'
+            found  = True
+        else:
+            is_val = "—"
+            found  = False
+        st.markdown(_dlg_id_row("library_books", "Infoscience", is_val, found), unsafe_allow_html=True)
+
+        email = row.get("email")
+        if _nn(email):
+            e_val = f'<a href="mailto:{_esc(_s(email))}">{_esc(_s(email))}</a>'
+            st.markdown(_dlg_id_row("mail", "Email", e_val, True), unsafe_allow_html=True)
+
+        nv_raw = row.get("name_variants")
+        if _nn(nv_raw):
+            try:
+                import json as _json
+                variants = _json.loads(_s(nv_raw))
+                if variants:
+                    nv_html = " · ".join(_esc(str(v)) for v in variants)
+                    st.markdown(_dlg_id_row("badge", "Variantes", nv_html, True), unsafe_allow_html=True)
+            except Exception:
+                pass
+
+        oa_nv_raw = row.get("openalex_name_variants")
+        if _nn(oa_nv_raw):
+            try:
+                import json as _json
+                oa_variants = _json.loads(_s(oa_nv_raw))
+                if oa_variants:
+                    oa_nv_html = " · ".join(_esc(str(v)) for v in oa_variants)
+                    st.markdown(
+                        _dlg_id_row("badge", "Variantes (OpenAlex)", oa_nv_html, True),
+                        unsafe_allow_html=True,
+                    )
+            except Exception:
+                pass
+
+    with c2:
+        st.markdown("**Affiliation**")
+        main_unit = _s(row.get("main_unit"), "—")
+        unit_url  = f"https://search.epfl.ch/?filter=unit&acro={main_unit}" if _nn(row.get("main_unit")) else None
+        unit_val  = f'<a href="{unit_url}" target="_blank">{_esc(main_unit)}</a>' if unit_url else main_unit
+        st.markdown(
+            _dlg_id_row("biotech", "Labo / Unité", unit_val, _nn(row.get("main_unit"))),
+            unsafe_allow_html=True,
+        )
+
+        level2 = row.get("unit_level_2")
+        if _nn(level2):
+            lv2_url = f"https://search.epfl.ch/?filter=unit&acro={_s(level2)}"
+            lv2_val = f'<a href="{lv2_url}" target="_blank">{_esc(_s(level2))}</a>'
+            st.markdown(
+                _dlg_id_row("school", "Faculté / École", lv2_val, True),
+                unsafe_allow_html=True,
+            )
+
+        epfl_class = row.get("epfl_class")
+        if _nn(epfl_class):
+            st.markdown(
+                _dlg_id_row("person", "Classe EPFL", _esc(_s(epfl_class)), True),
+                unsafe_allow_html=True,
+            )
+
+        sync_dt = _s(row.get("last_people_sync"), "—")
+        sync_val = sync_dt[:10] if len(sync_dt) >= 10 else sync_dt
+        st.markdown(
+            _dlg_id_row("sync", "Sync People", sync_val, sync_val != "—"),
+            unsafe_allow_html=True,
+        )
+
+        gap_dt = _s(row.get("last_gap_analysis_at"), "—")
+        gap_val = gap_dt[:10] if len(gap_dt) >= 10 else gap_dt
+        st.markdown(
+            _dlg_id_row("analytics", "Analyse lacunes", gap_val, gap_val != "—"),
+            unsafe_allow_html=True,
+        )
+
+
+def render_harvested_content(sciper: str, db, harvested: int) -> None:
+    """Render the harvested publications list."""
+    if db is None or harvested == 0:
+        st.info("Aucune publication moissonnée pour ce chercheur.")
+        return
+    try:
+        pubs = db.get_person_publications(sciper)
+        if pubs:
+            synced_count  = sum(1 for p in pubs if p.get("orcid_infoscience_synced"))
+            preprint_count = sum(1 for p in pubs if p.get("has_preprint_version"))
+            sep       = '<hr class="ptbl-sep">'
+            rows_html = sep.join(_pp_pub_row(p) for p in pubs)
+            st.markdown(f'<div class="ppub-list">{rows_html}</div>', unsafe_allow_html=True)
+            caption_parts = [f"{len(pubs)} publications — OpenAlex / ORCID"]
+            if synced_count:
+                caption_parts.append(f"{synced_count} déjà sync. vers Infoscience")
+            if preprint_count:
+                caption_parts.append(f"{preprint_count} avec version preprint")
+            st.caption(" · ".join(caption_parts))
+        else:
+            st.info("Aucune publication moissonnée trouvée.")
+    except Exception as exc:
+        st.error(f"Erreur : {exc}")
+
+
+def render_infoscience_content(sciper: str, db) -> None:
+    """Render the Infoscience outputs list."""
+    if db is None:
+        st.info("Base de données non disponible.")
+        return
+    try:
+        outputs = db.get_person_infoscience_outputs(sciper)
+        if outputs:
+            sep       = '<hr class="ptbl-sep">'
+            rows_html = sep.join(_pp_is_output_row(o) for o in outputs)
+            st.markdown(f'<div class="ppub-list">{rows_html}</div>', unsafe_allow_html=True)
+            st.caption(f"{len(outputs)} publications liées dans Infoscience (profil CRIS)")
+        else:
+            st.info(
+                "Aucune publication liée dans Infoscience. "
+                "Lancez une analyse de lacunes pour mettre à jour."
+            )
+    except Exception as exc:
+        st.error(f"Erreur : {exc}")
+
+
+def render_units_content(sciper: str, db) -> None:
+    """Render the units tab content."""
+    if db is None:
+        st.info("Base de données non disponible.")
+        return
+    try:
+        units = db.get_researcher_units(sciper)
+        if not units:
+            st.info(
+                "Aucune donnée d'unité disponible. "
+                "Lancez une synchronisation pour mettre à jour."
+            )
+        else:
+            name_map = {
+                _s(u.get("unit_name")): _s(u.get("unit_label"))
+                for u in units
+                if _nn(u.get("unit_name")) and _nn(u.get("unit_label"))
+            }
+            for u in units:
+                render_unit_card(u, name_map)
+            primary_count = sum(1 for u in units if u.get("is_primary"))
+            st.caption(f"{len(units)} unité(s), dont {primary_count} principale(s)")
+    except Exception as exc:
+        st.error(f"Erreur : {exc}")
+
+
+# ── Gap / lacunes tab ─────────────────────────────────────────────────────────
+
+def _gap_item_link(pub_id: str | None, doi: str | None) -> str:
+    """Return a clickable URL for a gap item — DOI preferred, OpenAlex fallback."""
+    if doi and str(doi).strip() not in ("", "None", "nan"):
+        return f"https://doi.org/{doi.strip()}"
+    if pub_id and str(pub_id).strip().startswith("W"):
+        return f"https://openalex.org/{pub_id.strip()}"
+    return ""
+
+
+def render_lacunes_tab(
+    sciper: str,
+    missing,
+    db,
+    role: str,
+    row: dict,
+    on_import: "callable[[str, int], None] | None" = None,
+) -> None:
+    """Render the Lacunes tab with year/type filters, DOI column, reject/unreject and import.
+
+    on_import signature: on_import(sciper: str, start_year: int) -> None
+    """
+    import pandas as pd
+
+    if db is None or missing is None:
+        st.info("Aucune analyse de lacunes disponible pour ce chercheur.")
+        return
+    if missing == 0:
+        st.success("Toutes les publications moissonnées sont présentes dans Infoscience.")
+        return
+
+    try:
+        gap_df = db.get_person_gaps_df(sciper=sciper, gap_status="missing_in_infoscience")
+    except Exception as exc:
+        st.error(f"Erreur : {exc}")
+        return
+
+    if gap_df is None or gap_df.empty:
+        st.success("Aucune lacune détectée.")
+        return
+
+    _pending_key = f"_lacunes_pending_{sciper}"
+    if _pending_key in st.session_state and db is not None:
+        _pending = st.session_state.pop(_pending_key)
+        from db.pipeline_db import PipelineDB as _PipelineDB
+        _PipelineDB(db.db_path).set_gap_import_status(
+            sciper, _pending["pub_ids"], _pending["status"]
+        )
+        st.rerun()
+
+    _has_pub_id = "pub_id" in gap_df.columns
+    _display = gap_df[
+        [c for c in ["pub_id", "pub_year", "title", "dc_type", "doi", "import_status"]
+         if c in gap_df.columns]
+    ].copy()
+
+    _display["_link"] = _display.apply(
+        lambda r: _gap_item_link(
+            r.get("pub_id") if _has_pub_id else None,
+            r.get("doi"),
+        ),
+        axis=1,
     )
-    val_css = "font-size:1.4rem;font-weight:700;color:#0F172A;line-height:1.1"
-    lbl_css = "font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#94A3B8;margin-bottom:3px"
-    kpis = [
-        ("Moissonnées", harvested),
-        ("Infoscience", in_is if in_is is not None else "—"),
-        ("Lacunes", missing if missing is not None else "—"),
-    ]
-    kpi_html = "".join(
-        f'<div style="{kpi_css}"><div style="{lbl_css}">{lbl}</div>'
-        f'<div style="{val_css}">{val}</div></div>'
-        for lbl, val in kpis
+    _display["_rejected"] = _display["import_status"] == "rejected"
+
+    # ── Filters ───────────────────────────────────────────────────────────────
+    _int_years = (
+        _display["pub_year"].dropna()
+        .apply(lambda y: int(str(y)) if str(y).isdigit() else None)
+        .dropna()
+        .astype(int)
+        .sort_values()
+        .unique()
+        .tolist()
     )
-    st.markdown(f'<div style="margin-bottom:4px">{kpi_html}</div>', unsafe_allow_html=True)
+    _types = sorted(
+        _display["dc_type"].dropna().astype(str).str.strip()
+        .replace("", float("nan")).dropna().unique().tolist()
+    ) if "dc_type" in _display.columns else []
 
-    t_profil, t_units, t_moissonnes, t_infoscience, t_lacunes = st.tabs([
-        "Profil",
-        "Unités",
-        f"Moissonnées ({harvested})",
-        "Infoscience",
-        f"Lacunes ({missing if missing is not None else '?'})",
-    ])
-
-    with t_profil:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Identifiants**")
-
-            orcid        = row.get("orcid")
-            orcid_linked = bool(row.get("orcid_epfl_linked"))
-            if _nn(orcid):
-                orcid_url = f"https://orcid.org/{_s(orcid)}"
-                linked_badge = (
-                    f' <span class="rmdlg-linked-badge">'
-                    f'{_ms("verified", 12, fill=1)}lié EPFL</span>'
-                    if orcid_linked else
-                    f' <span class="rmdlg-unlinked-badge">'
-                    f'{_ms("link_off", 12)}non lié</span>'
-                )
-                orcid_val = f'<a href="{orcid_url}" target="_blank">{_esc(_s(orcid))}</a>{linked_badge}'
-                found = True
-            else:
-                orcid_val = "—"
-                found = False
-            st.markdown(
-                _dlg_id_row("fingerprint", "ORCID", orcid_val, found),
-                unsafe_allow_html=True,
-            )
-
-            oa_id = row.get("openalex_id")
-            if _nn(oa_id):
-                oa = _s(oa_id)
-                url = oa if oa.startswith("http") else f"https://openalex.org/{oa}"
-                oa_val = f'<a href="{url}" target="_blank">{_esc(oa)}</a>'
-                found = True
-            else:
-                oa_val = "—"
-                found = False
-            st.markdown(
-                _dlg_id_row("travel_explore", "OpenAlex", oa_val, found),
-                unsafe_allow_html=True,
-            )
-
-            sid = row.get("scopus_author_id")
-            if _nn(sid):
-                url = f"https://www.scopus.com/authid/detail.uri?authorId={_s(sid)}"
-                s_val = f'<a href="{url}" target="_blank">{_esc(_s(sid))}</a>'
-                found = True
-            else:
-                s_val = "—"
-                found = False
-            st.markdown(
-                _dlg_id_row("find_in_page", "Scopus", s_val, found),
-                unsafe_allow_html=True,
-            )
-
-            rid = row.get("researcher_id")
-            if _nn(rid):
-                url = f"https://publons.com/researcher/{_s(rid)}"
-                r_val = f'<a href="{url}" target="_blank">{_esc(_s(rid))}</a>'
-                found = True
-            else:
-                r_val = "—"
-                found = False
-            st.markdown(
-                _dlg_id_row("import_contacts", "WoS ResearcherID", r_val, found),
-                unsafe_allow_html=True,
-            )
-
-            is_url  = row.get("infoscience_profile_url")
-            uuid    = row.get("dspace_uuid")
-            if _nn(is_url):
-                is_val = f'<a href="{_esc(_s(is_url))}" target="_blank">profil ↗</a>'
-                found  = True
-            elif _nn(uuid):
-                link   = f"https://infoscience.epfl.ch/entities/person/{_s(uuid)}"
-                is_val = f'<a href="{_esc(link)}" target="_blank">profil ↗</a>'
-                found  = True
-            else:
-                is_val = "—"
-                found  = False
-            st.markdown(
-                _dlg_id_row("library_books", "Infoscience", is_val, found),
-                unsafe_allow_html=True,
-            )
-
-            email = row.get("email")
-            if _nn(email):
-                e_val = (
-                    f'<a href="mailto:{_esc(_s(email))}">{_esc(_s(email))}</a>'
-                )
-                st.markdown(
-                    _dlg_id_row("mail", "Email", e_val, True),
-                    unsafe_allow_html=True,
-                )
-
-            nv_raw = row.get("name_variants")
-            if _nn(nv_raw):
-                try:
-                    import json as _json
-                    variants = _json.loads(_s(nv_raw))
-                    if variants:
-                        nv_html = " · ".join(_esc(str(v)) for v in variants)
-                        st.markdown(
-                            _dlg_id_row("badge", "Variantes", nv_html, True),
-                            unsafe_allow_html=True,
-                        )
-                except Exception:
-                    pass
-
-            oa_nv_raw = row.get("openalex_name_variants")
-            if _nn(oa_nv_raw):
-                try:
-                    import json as _json
-                    oa_variants = _json.loads(_s(oa_nv_raw))
-                    if oa_variants:
-                        oa_nv_html = " · ".join(_esc(str(v)) for v in oa_variants)
-                        st.markdown(
-                            _dlg_id_row("badge", "Variantes (OpenAlex)", oa_nv_html, True),
-                            unsafe_allow_html=True,
-                        )
-                except Exception:
-                    pass
-
-        with c2:
-            st.markdown("**Affiliation**")
-            main_unit = _s(row.get("main_unit"), "—")
-            unit_url  = f"https://search.epfl.ch/?filter=unit&acro={main_unit}" if _nn(row.get("main_unit")) else None
-            unit_val  = f'<a href="{unit_url}" target="_blank">{_esc(main_unit)}</a>' if unit_url else main_unit
-            st.markdown(
-                _dlg_id_row("biotech", "Labo / Unité", unit_val, _nn(row.get("main_unit"))),
-                unsafe_allow_html=True,
-            )
-
-            level2 = row.get("unit_level_2")
-            if _nn(level2):
-                lv2_url = f"https://search.epfl.ch/?filter=unit&acro={_s(level2)}"
-                lv2_val = f'<a href="{lv2_url}" target="_blank">{_esc(_s(level2))}</a>'
-                st.markdown(
-                    _dlg_id_row("school", "Faculté / École", lv2_val, True),
-                    unsafe_allow_html=True,
-                )
-
-            epfl_class = row.get("epfl_class")
-            if _nn(epfl_class):
-                st.markdown(
-                    _dlg_id_row("person", "Classe EPFL", _esc(_s(epfl_class)), True),
-                    unsafe_allow_html=True,
-                )
-
-            sync_dt = _s(row.get("last_people_sync"), "—")
-            sync_val = sync_dt[:10] if len(sync_dt) >= 10 else sync_dt
-            st.markdown(
-                _dlg_id_row("sync", "Sync People", sync_val, sync_val != "—"),
-                unsafe_allow_html=True,
-            )
-
-            gap_dt = _s(row.get("last_gap_analysis_at"), "—")
-            gap_val = gap_dt[:10] if len(gap_dt) >= 10 else gap_dt
-            st.markdown(
-                _dlg_id_row("analytics", "Analyse lacunes", gap_val, gap_val != "—"),
-                unsafe_allow_html=True,
-            )
-
-        if role != "reporting" and any(
-            cb is not None for cb in (on_harvest, on_analyze, on_sync)
+    fc1, fc2, fc3, fc4 = st.columns([1, 1, 3, 1])
+    with fc1:
+        y_min = int(_int_years[0]) if _int_years else 2000
+        y_max = int(_int_years[-1]) if _int_years else 2030
+        yr_from = st.number_input(
+            "Depuis", min_value=y_min, max_value=y_max, value=y_min,
+            key=f"lac_yr_from_{sciper}",
+        )
+    with fc2:
+        yr_to = st.number_input(
+            "Jusqu'à", min_value=y_min, max_value=y_max, value=y_max,
+            key=f"lac_yr_to_{sciper}",
+        )
+    with fc3:
+        type_sel = st.multiselect("Type de document", _types, key=f"lac_type_{sciper}")
+    with fc4:
+        st.markdown('<div style="padding-top:26px">', unsafe_allow_html=True)
+        if st.button(
+            "", key=f"lac_rst_{sciper}",
+            icon=":material/filter_alt_off:",
+            help="Réinitialiser les filtres",
+            use_container_width=True,
         ):
-            st.markdown("---")
-            _job_key = f"_dlg_job_{sciper}"
+            for _k in [f"lac_yr_from_{sciper}", f"lac_yr_to_{sciper}", f"lac_type_{sciper}"]:
+                st.session_state.pop(_k, None)
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-            # ── Read active job state ────────────────────────────────────────
-            _active = None
-            if root is not None:
-                try:
-                    from ui.pages.researcher_monitor import _read_active_researcher_job
-                    _active = _read_active_researcher_job(_Path(root))
-                except Exception:
-                    pass
-            _mine = _active is not None and str(_active.get("sciper")) == str(sciper)
+    if _int_years:
+        _display = _display[
+            _display["pub_year"].apply(
+                lambda y: str(y).isdigit() and int(yr_from) <= int(str(y)) <= int(yr_to)
+            )
+        ]
+    if type_sel:
+        _display = _display[_display["dc_type"].astype(str).str.strip().isin(type_sel)]
 
-            # ── State machine ────────────────────────────────────────────────
-            _was_running = st.session_state.get(_job_key)
+    # ── Counts after filtering ────────────────────────────────────────────────
+    n_total    = len(_display)
+    n_rejected = int(_display["_rejected"].sum())
+    n_pending  = n_total - n_rejected
 
-            if _mine:
-                # Job running for this researcher — show spinner and poll
-                st.session_state[_job_key] = _active.get("action", "tâche")
-                _action_label = st.session_state[_job_key]
-                _ACTION_LABELS = {
-                    "harvest": "Moisson",
-                    "analyze": "Analyse des lacunes",
-                    "refresh": "Sync People",
+    caption_parts = [f"{n_total} publication(s) absente(s) dans Infoscience"]
+    if n_rejected:
+        caption_parts.append(f"{n_rejected} exclue(s) volontairement")
+    st.caption(" · ".join(caption_parts))
+
+    _pending_df  = _display[~_display["_rejected"]].copy()
+    _rejected_df = _display[_display["_rejected"]].copy()
+
+    # Shared column config (pub_year | title | dc_type | doi | _link)
+    _col_cfg: dict = {
+        "pub_year": st.column_config.TextColumn("Année", width="small"),
+        "title":    st.column_config.TextColumn("Titre", width="large"),
+        "dc_type":  st.column_config.TextColumn("Type", width="medium"),
+        "doi":      st.column_config.TextColumn("DOI", width="medium"),
+        "_link":    st.column_config.LinkColumn("Lien", display_text="↗", width="small"),
+    }
+    if _has_pub_id:
+        _col_cfg["pub_id"] = None
+
+    _hidden = ["import_status", "_rejected"]
+
+    if not _pending_df.empty:
+        st.markdown("**Lacunes à importer**")
+        _show_cols = [c for c in _pending_df.columns if c not in _hidden]
+
+        _event_pending = st.dataframe(
+            _pending_df[_show_cols],
+            column_config={k: v for k, v in _col_cfg.items() if k in _show_cols},
+            hide_index=True,
+            selection_mode="multi-row",
+            on_select="rerun",
+            key=f"lacunes_pending_{sciper}",
+        )
+        _sel_idx_pending = _event_pending.selection.rows if _event_pending else []
+        _sel_pub_ids_pending = (
+            [_pending_df.iloc[i]["pub_id"] for i in _sel_idx_pending if _has_pub_id]
+            if _has_pub_id else []
+        )
+
+        _btn_cols = st.columns([2, 1, 2])
+        with _btn_cols[0]:
+            if role != "reporting" and st.button(
+                "Rejeter la sélection",
+                icon=":material/block:",
+                disabled=not _sel_pub_ids_pending,
+                key=f"btn_reject_{sciper}",
+                width="stretch",
+                help="Marquer les items sélectionnés comme rejetés (exclus de l'import)",
+            ):
+                st.session_state[_pending_key] = {
+                    "pub_ids": _sel_pub_ids_pending,
+                    "status":  "rejected",
                 }
-                st.info(
-                    f"⏳ **{_ACTION_LABELS.get(_action_label, _action_label)}** "
-                    f"en cours pour ce chercheur…"
-                )
-                time.sleep(2)
                 st.rerun()
 
-            elif _was_running and not _mine:
-                # Job just finished — show result and refresh data
-                _finished_action = st.session_state.pop(_job_key)
-                _ACTION_LABELS = {
-                    "harvest": "Moisson",
-                    "analyze": "Analyse des lacunes",
-                    "refresh": "Sync People",
+        with _btn_cols[2]:
+            _can_import = (
+                on_import is not None
+                and role != "reporting"
+                and n_pending > 0
+            )
+            if _can_import:
+                from researcher_monitor.import_trigger import ImportTrigger
+                _trigger = ImportTrigger()
+                if _trigger.can_trigger(row):
+                    _enroll_raw = row.get("enrollment_date")
+                    _enroll_year = (
+                        int(str(_enroll_raw)[:4])
+                        if _enroll_raw and str(_enroll_raw)[:4].isdigit()
+                        else datetime.now().year - 5
+                    )
+                    import_start_year = st.number_input(
+                        "Depuis l'année",
+                        min_value=2000,
+                        max_value=datetime.now().year,
+                        value=_enroll_year,
+                        key=f"import_start_year_{sciper}",
+                        help=(
+                            "Année de début de l'import — par défaut l'année d'enrollment EPFL. "
+                            "Réduire pour un import rétroactif."
+                        ),
+                    )
+                    if st.button(
+                        "Importer",
+                        icon=":material/upload:",
+                        type="primary",
+                        key=f"btn_import_{sciper}",
+                        width="stretch",
+                        help=f"Lancer l'import ciblé depuis {int(import_start_year)} ({n_pending} lacune(s))",
+                    ):
+                        on_import(sciper, int(import_start_year))
+
+    if not _rejected_df.empty:
+        with st.expander(f"Exclus ({n_rejected})", expanded=False):
+            st.caption(
+                "Ces publications ont été exclues volontairement et ne seront pas importées."
+            )
+            _show_cols_rej = [c for c in _rejected_df.columns if c not in _hidden]
+            _event_rej = st.dataframe(
+                _rejected_df[_show_cols_rej],
+                column_config={k: v for k, v in _col_cfg.items() if k in _show_cols_rej},
+                hide_index=True,
+                selection_mode="multi-row" if role != "reporting" else "single-row",
+                on_select="rerun",
+                key=f"lacunes_rejected_{sciper}",
+            )
+            _sel_idx_rej = _event_rej.selection.rows if _event_rej else []
+            _sel_pub_ids_rej = (
+                [_rejected_df.iloc[i]["pub_id"] for i in _sel_idx_rej if _has_pub_id]
+                if _has_pub_id else []
+            )
+            if role != "reporting" and st.button(
+                "Retirer le rejet",
+                icon=":material/undo:",
+                disabled=not _sel_pub_ids_rej,
+                key=f"btn_unreject_{sciper}",
+                help="Retirer le statut 'rejeté' pour les items sélectionnés",
+            ):
+                st.session_state[_pending_key] = {
+                    "pub_ids": _sel_pub_ids_rej,
+                    "status":  None,
                 }
-                st.success(
-                    f"✅ **{_ACTION_LABELS.get(_finished_action, _finished_action)}** terminé."
-                )
-                if db is not None:
-                    try:
-                        _reg = db.get_researcher_registry_df(active_only=False)
-                        _fresh = _reg[_reg["sciper"].astype(str) == str(sciper)]
-                        if not _fresh.empty:
-                            st.session_state[_fresh_key] = _fresh.iloc[0].to_dict()
-                    except Exception:
-                        pass
-                time.sleep(1)
                 st.rerun()
 
-            elif _active is not None and not _mine:
-                # A different researcher's job is running
-                st.warning("⛔ Une autre tâche est déjà en cours — attendez sa fin.")
 
-            else:
-                # No job — show action buttons
-                act_cols = st.columns(3)
-                with act_cols[0]:
-                    if on_sync is not None and st.button(
-                        "Sync People",
-                        key=f"dlg_sync_{sciper}",
-                        icon=":material/people:",
-                        type="secondary",
-                        use_container_width=True,
-                        help=(
-                            "Ré-enrichit le profil depuis l'API EPFL People "
-                            "(ORCID, unité, statut, Infoscience, OpenAlex)"
-                        ),
-                    ):
-                        on_sync(sciper)
-                with act_cols[1]:
-                    if on_harvest is not None and st.button(
-                        "Moissonner",
-                        key=f"dlg_harvest_{sciper}",
-                        icon=":material/cloud_download:",
-                        type="secondary",
-                        use_container_width=True,
-                        help=(
-                            "Moisson OpenAlex / ORCID dans la fenêtre d'accréditation EPFL "
-                            "de ce chercheur"
-                        ),
-                    ):
-                        on_harvest(sciper)
-                with act_cols[2]:
-                    if on_analyze is not None and st.button(
-                        "Analyser",
-                        key=f"dlg_analyze_{sciper}",
-                        icon=":material/analytics:",
-                        type="secondary",
-                        use_container_width=True,
-                        help=(
-                            "Collecte les outputs Infoscience et calcule les lacunes "
-                            "pour ce chercheur"
-                        ),
-                    ):
-                        on_analyze(sciper)
+# ── Unit card ─────────────────────────────────────────────────────────────────
 
-    with t_units:
-        if db is None:
-            st.info("Base de données non disponible.")
-        else:
-            try:
-                units = db.get_researcher_units(sciper)
-                if not units:
-                    st.info(
-                        "Aucune donnée d'unité disponible. "
-                        "Lancez une synchronisation pour mettre à jour."
-                    )
-                else:
-                    name_map = {
-                        _s(u.get("unit_name")): _s(u.get("unit_label"))
-                        for u in units
-                        if _nn(u.get("unit_name")) and _nn(u.get("unit_label"))
-                    }
-                    for u in units:
-                        _render_unit_card(u, name_map)
-                    primary_count = sum(1 for u in units if u.get("is_primary"))
-                    st.caption(f"{len(units)} unité(s), dont {primary_count} principale(s)")
-            except Exception as exc:
-                st.error(f"Erreur : {exc}")
-
-    with t_moissonnes:
-        if db is None or harvested == 0:
-            st.info("Aucune publication moissonnée pour ce chercheur.")
-        else:
-            try:
-                pubs = db.get_person_publications(sciper)
-                if pubs:
-                    synced_count = sum(1 for p in pubs if p.get("orcid_infoscience_synced"))
-                    preprint_count = sum(1 for p in pubs if p.get("has_preprint_version"))
-                    sep = '<hr class="ptbl-sep">'
-                    rows_html = sep.join(_pp_pub_row(p) for p in pubs)
-                    st.markdown(
-                        f'<div class="ppub-list">{rows_html}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    caption_parts = [f"{len(pubs)} publications — OpenAlex / ORCID"]
-                    if synced_count:
-                        caption_parts.append(f"{synced_count} déjà sync. vers Infoscience")
-                    if preprint_count:
-                        caption_parts.append(f"{preprint_count} avec version preprint")
-                    st.caption(" · ".join(caption_parts))
-                else:
-                    st.info("Aucune publication moissonnée trouvée.")
-            except Exception as exc:
-                st.error(f"Erreur : {exc}")
-
-    with t_infoscience:
-        if db is None:
-            st.info("Base de données non disponible.")
-        else:
-            try:
-                outputs = db.get_person_infoscience_outputs(sciper)
-                if outputs:
-                    sep = '<hr class="ptbl-sep">'
-                    rows_html = sep.join(_pp_is_output_row(o) for o in outputs)
-                    st.markdown(
-                        f'<div class="ppub-list">{rows_html}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.caption(f"{len(outputs)} publications liées dans Infoscience (profil CRIS)")
-                else:
-                    st.info(
-                        "Aucune publication liée dans Infoscience. "
-                        "Lancez une analyse de lacunes pour mettre à jour."
-                    )
-            except Exception as exc:
-                st.error(f"Erreur : {exc}")
-
-    with t_lacunes:
-        if db is None or missing is None:
-            st.info("Aucune analyse de lacunes disponible pour ce chercheur.")
-        elif missing == 0:
-            st.success("Toutes les publications moissonnées sont présentes dans Infoscience.")
-        else:
-            try:
-                gap_df = db.get_person_gaps_df(
-                    sciper=sciper, gap_status="missing_in_infoscience"
-                )
-                if not gap_df.empty:
-                    gap_records = gap_df.to_dict("records")
-                    sep = '<hr class="ptbl-sep">'
-                    rows_html = sep.join(_pp_gap_row(g) for g in gap_records)
-                    st.markdown(
-                        f'<div class="ppub-list">{rows_html}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.caption(f"{len(gap_df)} publication(s) absente(s) dans Infoscience")
-                else:
-                    st.success("Aucune lacune détectée.")
-            except Exception as exc:
-                st.error(f"Erreur : {exc}")
-
-
-def _render_unit_card(u: dict, name_map: dict | None = None) -> None:
+def render_unit_card(u: dict, name_map: dict | None = None) -> None:
     """Render one unit row as a bordered card with 3-level breadcrumb."""
-    uid           = _s(u.get("unit_id"), "")       # numeric internal ID (kept for fallback)
-    unit_acronym  = _s(u.get("unit_name"), "")      # short acronym, e.g. "NAL"
-    unit_fullname = _s(u.get("unit_label"), "")     # English full name
-    unit_type_val = _s(u.get("unit_type"), "")      # e.g. "Laboratory", "Institute"
+    uid           = _s(u.get("unit_id"), "")
+    unit_acronym  = _s(u.get("unit_name"), "")
+    unit_fullname = _s(u.get("unit_label"), "")
+    unit_type_val = _s(u.get("unit_type"), "")
     lvl2          = _s(u.get("unit_level_2"), "")
     lvl3          = _s(u.get("unit_level_3"), "")
     unit_cf       = _s(u.get("unit_cf"), "")
@@ -970,7 +992,7 @@ def _render_unit_card(u: dict, name_map: dict | None = None) -> None:
     valid_to      = _s(u.get("valid_to"), "")[:10]
     nm            = name_map or {}
 
-    display_id = unit_acronym or uid   # prefer acronym; numeric as fallback
+    display_id = unit_acronym or uid
 
     with st.container(border=True):
         hcol, dcol = st.columns([4, 1])
@@ -1016,7 +1038,6 @@ def _render_unit_card(u: dict, name_map: dict | None = None) -> None:
             if valid_from or valid_to:
                 st.caption(f"{valid_from or '—'} → {valid_to or '∞'}")
 
-        # Breadcrumb: school (lvl2) › institute (lvl3) › lab (display_id)
         crumbs = []
         if lvl2 and lvl2 != display_id:
             crumbs.append(_unit_level_crumb(lvl2, "rmunit-crumb-school", "school", nm.get(lvl2, "")))
@@ -1024,7 +1045,6 @@ def _render_unit_card(u: dict, name_map: dict | None = None) -> None:
             crumbs.append(_unit_level_crumb(lvl3, "rmunit-crumb-institute", "domain", nm.get(lvl3, "")))
         if display_id:
             people_url = f"https://search.epfl.ch/?filter=unit&acro={_esc(display_id)}"
-            # epfl.unit.code = unit acronym/identifier (not the CF code)
             is_url = f"https://infoscience.epfl.ch/search?query=epfl.unit.code%3A{_esc(display_id)}"
             ms_style = (
                 "font-family:'Material Symbols Outlined';"

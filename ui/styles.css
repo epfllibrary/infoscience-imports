@@ -1228,6 +1228,18 @@ a.rtbl-published-link:hover {
     gap: 2px;
     margin-top: 4px;
 }
+.rtbl-researcher-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.60rem;
+    font-weight: 600;
+    letter-spacing: .02em;
+    background: #EDE9FE;
+    color: #5B21B6;
+    margin-top: 3px;
+}
 .pub-quality-warn {
     display: inline-flex;
     align-items: center;
