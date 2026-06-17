@@ -107,8 +107,14 @@ def _render_filters(db: PipelineDB) -> None:
             )
         with _r2[3]:
             st.selectbox(
-                "PDF récupéré", ["Tous", "Avec PDF", "Sans PDF"],
-                help="Filtre sur la présence d'un PDF en accès libre.", key="pf_pdf",
+                "PDF récupéré",
+                ["Tous", "Avec PDF", "Sans PDF", "Manquant (licence CC)"],
+                help=(
+                    "Filtre sur la présence d'un PDF en accès libre.\n"
+                    "« Manquant (licence CC) » : OA avec licence CC/public-domain "
+                    "mais sans PDF récupéré — même critère que les contrôles qualité post-import."
+                ),
+                key="pf_pdf",
             )
 
         # ── Ligne 3 : signaux qualité ─────────────────────────────────────────
@@ -238,7 +244,12 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
         sciper             = resolved_sciper or None,
         unit_acronym       = sel_unit or None,
         search             = search_q.strip() or None,
-        has_pdf            = True if sel_pdf == "Avec PDF" else (False if sel_pdf == "Sans PDF" else None),
+        has_pdf            = (
+            True  if sel_pdf == "Avec PDF"  else
+            False if sel_pdf == "Sans PDF"  else
+            None
+        ),
+        missing_cc_pdf     = sel_pdf == "Manquant (licence CC)",
         oa_filter          = None if sel_oa == "Tous" else sel_oa,
         licence            = sel_licence or None,
         epfl_strength      = (
@@ -369,7 +380,13 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
 
     authors_by_row = _build_authors_modal_dict(d, db, sel_run)
 
-    render_pub_component(d, _cols, authors_by_row, ds_base, role=role, db=db)
+    _single_run = sel_run[0] if len(sel_run) == 1 else None
+    render_pub_component(
+        d, _cols, authors_by_row, ds_base,
+        role=role, db=db,
+        bulk_select=(len(sel_run) == 1 and role == "admin"),
+        run_id=_single_run,
+    )
 
     _render_downloads(db, filter_kwargs, sel_run)
 
