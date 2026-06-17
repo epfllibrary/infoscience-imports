@@ -82,6 +82,7 @@ _NAV_ICONS = {
     "Publications":    "article",
     "Statistiques":    "bar_chart",
     "Chercheurs":      "manage_accounts",
+    "Nettoyage":       "cleaning_services",
     "Configuration":   "settings",
     "Aide":            "menu_book",
 }
@@ -205,6 +206,10 @@ elif page == "Statistiques":
 elif page == "Chercheurs":
     from ui.pages.researcher_monitor import render
     render(db, active_env=ACTIVE_ENV, root=ROOT, role=_role)
+
+elif page == "Nettoyage":
+    from ui.pages.cleanup import render
+    render()
 
 elif page == "Configuration":
     from ui.pages.configuration import render

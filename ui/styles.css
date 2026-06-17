@@ -2060,3 +2060,94 @@ a.rmunit-is-link:hover { background: #DDD6FE; }
 }
 .ppub-handle:hover { text-decoration: underline; }
 
+
+/* ── Cleanup table (.ctbl-*) ────────────────────────────────────────────────── */
+
+.ctbl-row { padding: 4px 0; }
+
+.ctbl-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #111827;
+    line-height: 1.45;
+    margin-bottom: 4px;
+}
+
+.ctbl-type {
+    font-size: 0.72rem;
+    color: #9CA3AF;
+    font-weight: 400;
+    margin-left: 7px;
+    background: #F3F4F6;
+    border-radius: 3px;
+    padding: 1px 5px;
+    vertical-align: middle;
+}
+
+.ctbl-meta {
+    font-size: 0.78rem;
+    color: #6B7280;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    line-height: 1.5;
+}
+
+.ctbl-meta a { color: #2563EB; text-decoration: none; }
+.ctbl-meta a:hover { text-decoration: underline; }
+
+.ctbl-sep { color: #D1D5DB; user-select: none; }
+
+.ctbl-submitter {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: #F1F5F9;
+    color: #334155;
+    border: 1px solid #CBD5E1;
+    border-radius: 999px;
+    padding: 1px 8px 1px 5px;
+    font-size: 0.76rem;
+    font-weight: 500;
+    line-height: 1.6;
+    white-space: nowrap;
+}
+
+.ctbl-uuid {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.72rem;
+    color: #2563EB;
+    text-decoration: none;
+}
+.ctbl-uuid:hover { text-decoration: underline; }
+
+.ctbl-badge-wf {
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 4px;
+    background: #EDE9FE;
+    color: #5B21B6;
+    white-space: nowrap;
+    line-height: 1.5;
+    display: inline-block;
+}
+
+.ctbl-badge-ws {
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 4px;
+    background: #DBEAFE;
+    color: #1D4ED8;
+    white-space: nowrap;
+    line-height: 1.5;
+    display: inline-block;
+}
+
+/* Shrink checkbox cell to align vertically with the card's first line */
+[data-testid="stHorizontalBlock"]:has(.ctbl-row) [data-testid="stCheckbox"] {
+    margin-top: 6px;
+}
+

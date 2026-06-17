@@ -622,6 +622,52 @@ class DSpaceClientWrapper:
     def delete_workflow(self, workflow_id):
         return self.client.delete_workflow_item(workflow_id)
 
+    def reject_to_workspace(
+        self,
+        workflow_id: int | str,
+        item_uuid: str | None = None,
+    ) -> tuple[bool, str, int | None]:
+        """Reject a workflow item back to workspace (draft) without deleting it.
+
+        Calls DELETE /workflow/workflowitems/{id} without ?expunge=true — DSpace
+        rejects the item back to the submitter's workspace as a new draft and
+        returns the new workspace item ID in the response body.
+
+        The original workflow_id is gone after this call; the underlying item UUID
+        is the only stable reference. The new workspace ID is resolved from the
+        response body (primary) or via find_workspaceitem_by_item_uuid (fallback).
+
+        Returns (success, message, new_workspace_id).
+        """
+        try:
+            url = f"{self.client.API_ENDPOINT}/workflow/workflowitems/{int(float(str(workflow_id)))}"
+            response = self.client.api_delete(url)
+            if response.status_code not in (200, 201, 204):
+                self.logger.error(
+                    "reject_to_workspace failed for %s: %s %s",
+                    workflow_id, response.status_code, response.text,
+                )
+                return False, f"Échec du rejet ({response.status_code}).", None
+
+            self.logger.info("Workflow item %s rejected back to workspace.", workflow_id)
+
+            new_ws_id = self._parse_workspace_id_from_response(response)
+            if new_ws_id is not None:
+                self.logger.info("New workspace item %s found in response.", new_ws_id)
+            elif item_uuid:
+                new_ws_id = self.find_workspaceitem_by_item_uuid(item_uuid)
+                if new_ws_id is not None:
+                    self.logger.info("New workspace item %s found via UUID search.", new_ws_id)
+                else:
+                    self.logger.warning(
+                        "Could not resolve new workspace ID for item %s after rejection.", item_uuid
+                    )
+
+            return True, "Item renvoyé en draft.", new_ws_id
+        except Exception as exc:
+            self.logger.error("reject_to_workspace error: %s", exc)
+            return False, f"Erreur : {exc}", None
+
     def find_workspaceitem_by_item_uuid(self, item_uuid: str) -> int | None:
         """Return the workspace item ID for the given DSpace item UUID, or None if not found.
 
