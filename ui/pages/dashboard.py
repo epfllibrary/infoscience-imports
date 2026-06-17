@@ -44,7 +44,7 @@ def render(db: PipelineDB) -> None:
     with st.container():
         st.markdown('<span class="runs-card-anchor"></span>', unsafe_allow_html=True)
         st.markdown(sh("history", "Runs"), unsafe_allow_html=True)
-        render_run_table(db)
+        render_run_table(db, default_with_imports=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
