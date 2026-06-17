@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import html as _html
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qs
 
 import streamlit as st
 
@@ -112,37 +113,71 @@ def _run_search(query: str, submitter_uuid: str, item_types: list[str]) -> list[
     # Combining both in a single filter returns no results — only add when exactly one type.
     named_types = [t for t in item_types if t in ("workspace", "workflow")]
 
-    params: dict = {
+    base_params: dict = {
         "configuration": "supervision",
         "query": query,
         "projection": "preventMetadataSecurity",
         "embed": "item,submitter",
-        "page": "0",
-        "size": "200",
+        "size": "100",  # DSpace silently caps embedded responses at 100/page
     }
     if len(named_types) == 1:
-        params["f.namedresourcetype"] = f"{named_types[0]},authority"
+        base_params["f.namedresourcetype"] = f"{named_types[0]},authority"
     if submitter_uuid.strip():
-        params["f.submitter"] = f"{submitter_uuid.strip()},authority"
+        base_params["f.submitter"] = f"{submitter_uuid.strip()},authority"
 
-    url = f"{client.client.API_ENDPOINT}/discover/search/objects?{urlencode(params)}"
-    try:
+    # DSpace caps embedded responses at 100/page regardless of size=.
+    # Strategy: speculatively fire _SPECULATIVE_PAGES requests simultaneously
+    # (we don't know totalPages until page 0 returns). Pages beyond the actual
+    # last page return an empty objects list and no _links.next — discard them.
+    # If totalPages > _SPECULATIVE_PAGES, fetch remaining pages in a second wave.
+    _MAX_PAGES        = 20   # hard cap: 20 × 100 = 2 000 items
+    _SPECULATIVE_PAGES = 5   # pages fired blindly on the first wave
+
+    def _fetch_page(page_num: int) -> tuple[list, dict]:
+        params = {**base_params, "page": str(page_num)}
+        url = f"{client.client.API_ENDPOINT}/discover/search/objects?{urlencode(params)}"
         resp = client.client.api_get(url)
         if resp.status_code != 200:
-            st.error(f"Erreur DSpace ({resp.status_code}) lors de la recherche.")
-            return []
-        data = resp.json()
+            return [], {}
+        sr = resp.json().get("_embedded", {}).get("searchResult", {})
+        return sr.get("_embedded", {}).get("objects", []), sr.get("_links", {})
+
+    def _last_page_from_links(links: dict) -> int:
+        last_href = links.get("last", {}).get("href", "")
+        if last_href:
+            qs = parse_qs(urlparse(last_href).query)
+            try:
+                return int(qs.get("page", ["0"])[0])
+            except (ValueError, IndexError):
+                pass
+        return 0
+
+    # Wave 1: speculative parallel fetch of pages 0 .. _SPECULATIVE_PAGES-1
+    try:
+        wave1: dict[int, tuple] = {}
+        with ThreadPoolExecutor(max_workers=_SPECULATIVE_PAGES) as pool:
+            fts = {pool.submit(_fetch_page, p): p for p in range(_SPECULATIVE_PAGES)}
+            for ft in as_completed(fts):
+                wave1[fts[ft]] = ft.result()
     except Exception as exc:
         st.error(f"Erreur lors de la recherche : {exc}")
         return []
 
-    objects = (
-        data.get("_embedded", {})
-        .get("searchResult", {})
-        .get("_embedded", {})
-        .get("objects", [])
-    )
-    return [_parse_search_hit(obj) for obj in objects]
+    _, links0 = wave1[0]
+    last_page  = min(_last_page_from_links(links0), _MAX_PAGES - 1)
+    total_pages = last_page + 1
+
+    # Wave 2: if there are pages beyond _SPECULATIVE_PAGES, fetch them now
+    if total_pages > _SPECULATIVE_PAGES:
+        wave2: dict[int, tuple] = {}
+        with ThreadPoolExecutor(max_workers=total_pages - _SPECULATIVE_PAGES) as pool:
+            fts2 = {pool.submit(_fetch_page, p): p for p in range(_SPECULATIVE_PAGES, total_pages)}
+            for ft in as_completed(fts2):
+                wave2[fts2[ft]] = ft.result()
+        wave1.update(wave2)
+
+    flat = [obj for p in range(total_pages) for obj in (wave1.get(p, ([], {}))[0] or [])]
+    return [_parse_search_hit(obj) for obj in flat]
 
 
 # ── Query builder ─────────────────────────────────────────────────────────────
