@@ -277,6 +277,11 @@ def run_pipeline(
     wos_ids: Optional[List[str]] = None,
     orcid_ids: Optional[List[str]] = None,
     openalex_ids: Optional[List[str]] = None,
+    run_type: str = "institutional",
+    forced_sciper: Optional[str] = None,
+    exclude_dois: Optional[List[str]] = None,
+    exclude_openalex_ids: Optional[List[str]] = None,
+    exclude_titles: Optional[List[str]] = None,
 ) -> Dict[str, pd.DataFrame | str | None]:
     """
     Harvest, deduplicate, enrich, and (optionally) load data into DSpace.
@@ -304,6 +309,7 @@ def run_pipeline(
         query_overrides=query_overrides,
         scopus_ids=scopus_ids, wos_ids=wos_ids,
         orcid_ids=orcid_ids, openalex_ids=openalex_ids,
+        run_type=run_type, forced_sciper=forced_sciper,
     )
 
     # -------------------- Harvest
@@ -353,6 +359,47 @@ def run_pipeline(
 
     for name, df in publications.items():
         save_csv(df, f"Raw_{name.capitalize()}Items.csv", export_dir, logger)
+
+    # -------------------- Exclusion filter (M5 pre-import rejection)
+    _exclude_doi_set = {d.lower().strip() for d in (exclude_dois or [])}
+    _exclude_oa_set  = set(exclude_openalex_ids or [])
+
+    def _norm_title(t: str | None) -> str:
+        import re as _re
+        import string as _string
+        if not t:
+            return ""
+        t = _re.sub(r"<[^>]+>", "", t)
+        t = _re.sub(r"[^\w\s]", " ", t)
+        t = _re.sub(r"\s+", " ", t).strip().lower()
+        return t.translate(str.maketrans("", "", _string.punctuation))
+
+    _exclude_title_set: set[tuple[str, str]] = set()
+    for entry in (exclude_titles or []):
+        parts = entry.split("||", 1)
+        if len(parts) == 2:
+            _exclude_title_set.add((_norm_title(parts[0]), parts[1].strip()))
+
+    if _exclude_doi_set or _exclude_oa_set or _exclude_title_set:
+        def _apply_exclusions(df: pd.DataFrame) -> pd.DataFrame:
+            if df.empty:
+                return df
+            mask = pd.Series(True, index=df.index)
+            if _exclude_doi_set and "doi" in df.columns:
+                mask &= ~df["doi"].str.lower().str.strip().isin(_exclude_doi_set)
+            if _exclude_oa_set and "row_id" in df.columns:
+                mask &= ~df["row_id"].isin(_exclude_oa_set)
+            if _exclude_title_set and "title" in df.columns:
+                def _title_year_matches(row):
+                    key = (_norm_title(str(row.get("title") or "")), str(row.get("pubyear") or ""))
+                    return key in _exclude_title_set
+                mask &= ~df.apply(_title_year_matches, axis=1)
+            n_excluded = (~mask).sum()
+            if n_excluded:
+                logger.info("[Exclusion] %d record(s) excluded (pre-import rejection)", n_excluded)
+            return df[mask].copy()
+
+        publications = {k: _apply_exclusions(v) for k, v in publications.items()}
 
     # -------------------- Deduplication
     non_empty = [df for df in publications.values() if not df.empty]
@@ -412,6 +459,66 @@ def run_pipeline(
             .nameparse_authors()
             .reconcile_authors(return_df=True)
         )
+
+    # -------------------- Forced-SCIPER injection (M5 researcher_import)
+    if forced_sciper and df_authors is not None and not df_authors.empty:
+        _forced_parts = forced_sciper.split(":", 1)
+        _forced_sciper_id = _forced_parts[0].strip()
+        _forced_name      = _forced_parts[1].strip() if len(_forced_parts) > 1 else ""
+
+        def _norm_name(s: str) -> str:
+            import unicodedata
+            s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+            return "".join(c.lower() for c in s if c.isalpha() or c.isspace()).strip()
+
+        _forced_name_norm = _norm_name(_forced_name)
+
+        _already_in = (
+            df_epfl_authors["sciper_id"].astype(str).str.strip() == _forced_sciper_id
+            if (df_epfl_authors is not None and not df_epfl_authors.empty
+                and "sciper_id" in df_epfl_authors.columns)
+            else pd.Series([], dtype=bool)
+        )
+        _already_matched_pub_ids: set = set()
+        if _already_in.any():
+            _already_matched_pub_ids = set(
+                df_epfl_authors.loc[_already_in, "row_id"].dropna()
+                if "row_id" in df_epfl_authors.columns else []
+            )
+
+        _forced_rows = []
+        for _, _auth_row in df_authors.iterrows():
+            _pub_id = _auth_row.get("row_id")
+            if _pub_id in _already_matched_pub_ids:
+                continue
+            _raw_name = str(_auth_row.get("name") or _auth_row.get("full_name") or "")
+            if _norm_name(_raw_name) and _forced_name_norm and (
+                _norm_name(_raw_name) in _forced_name_norm
+                or _forced_name_norm in _norm_name(_raw_name)
+            ):
+                _inject = _auth_row.to_dict()
+                _inject["sciper_id"]             = _forced_sciper_id
+                _inject["epfl_affiliation_valid"] = True
+                _inject["dspace_link_valid"]      = True
+                _inject["epfl_is_former"]         = False
+                _inject["_forced_sciper"]         = True
+                _forced_rows.append(_inject)
+                logger.debug(
+                    "[ForcedSCIPER] Injected sciper %s for author '%s' in pub %s",
+                    _forced_sciper_id, _raw_name, _pub_id,
+                )
+
+        if _forced_rows:
+            _forced_df = pd.DataFrame(_forced_rows)
+            df_epfl_authors = (
+                pd.concat([df_epfl_authors, _forced_df], ignore_index=True)
+                if df_epfl_authors is not None and not df_epfl_authors.empty
+                else _forced_df
+            )
+            logger.info(
+                "[ForcedSCIPER] Injected %d author link(s) for forced SCIPER %s",
+                len(_forced_rows), _forced_sciper_id,
+            )
 
     save_csv(df_epfl_authors, "EpflAuthors.csv", export_dir, logger)
     if not df_epfl_authors.empty:
@@ -625,7 +732,49 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="OpenAlex Author IDs (comma-separated or file path). Triggers ID-based harvesting for OpenAlex.",
-    )   
+    )
+
+    # ---------- M5: researcher_import flags ----------
+    p.add_argument(
+        "--run-type",
+        choices=["institutional", "researcher_import"],
+        default="institutional",
+        help="Run type stored in DB (default: institutional).",
+    )
+    p.add_argument(
+        "--forced-sciper",
+        type=str,
+        default=None,
+        dest="forced_sciper",
+        help=(
+            "Force-link target researcher: '{sciper}:{fullname}'. "
+            "Used for researcher_import runs where affiliation may be absent."
+        ),
+    )
+    p.add_argument(
+        "--exclude-dois",
+        type=str,
+        default=None,
+        dest="exclude_dois",
+        help="Comma-separated DOIs to exclude from import (pre-rejected items).",
+    )
+    p.add_argument(
+        "--exclude-openalex-ids",
+        type=str,
+        default=None,
+        dest="exclude_openalex_ids",
+        help="Comma-separated OpenAlex work IDs (e.g. W123) to exclude from import.",
+    )
+    p.add_argument(
+        "--exclude-titles",
+        type=str,
+        default=None,
+        dest="exclude_titles",
+        help=(
+            "Comma-separated 'title||year' pairs to exclude by normalised title+year "
+            "(used for Scopus records without DOI or OpenAlex ID)."
+        ),
+    )
 
     # Source selection
     p.add_argument(
@@ -863,6 +1012,11 @@ def main():
             wos_ids=wos_ids or None,
             orcid_ids=orcid_ids or None,
             openalex_ids=openalex_ids or None,
+            run_type=args.run_type,
+            forced_sciper=args.forced_sciper or None,
+            exclude_dois=[d.strip() for d in args.exclude_dois.split(",") if d.strip()] if args.exclude_dois else None,
+            exclude_openalex_ids=[i.strip() for i in args.exclude_openalex_ids.split(",") if i.strip()] if args.exclude_openalex_ids else None,
+            exclude_titles=[t.strip() for t in args.exclude_titles.split(",") if t.strip()] if args.exclude_titles else None,
         )
         sys.exit(0)
     except Exception as e:

@@ -49,10 +49,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--action",
         required=True,
-        choices=["sync", "refresh", "harvest", "analyze", "all"],
+        choices=["sync", "refresh", "harvest", "analyze", "import", "all"],
         help="Action to run",
     )
     p.add_argument("--sciper", default=None, help="Comma-separated SCIPER(s) (default: all active)")
+    p.add_argument("--run-id", default=None, dest="run_id", help="Explicit run ID for import action")
     p.add_argument("--env", default="dev", help="Environment: dev / test / prod")
     p.add_argument("--start-year", type=int, default=None, help="Harvest start year")
     p.add_argument("--end-year", type=int, default=None, help="Harvest end year")
@@ -311,6 +312,65 @@ def _action_analyze(args, db) -> None:
     )
 
 
+def _action_import(args, db) -> None:
+    """Trigger a targeted import run for a single researcher."""
+    import logging
+    from pathlib import Path
+    from researcher_monitor.import_trigger import ImportTrigger
+
+    log = logging.getLogger("pipeline.researcher_monitor.main")
+
+    if not args.sciper:
+        log.error("--sciper is required for the import action (single SCIPER only).")
+        return
+
+    scipers = [s.strip() for s in args.sciper.split(",") if s.strip()]
+    if len(scipers) != 1:
+        log.error("import action accepts exactly one --sciper at a time.")
+        return
+
+    sciper = scipers[0]
+    import duckdb
+    con = duckdb.connect(db.db_path)
+    rows = con.execute(
+        "SELECT sciper, full_name, openalex_id, scopus_author_id, "
+        "enrollment_date, offboarding_date "
+        "FROM researcher_registry WHERE sciper = ?",
+        [sciper],
+    ).fetchall()
+    con.close()
+
+    if not rows:
+        log.error("sciper %s not found in researcher_registry.", sciper)
+        return
+
+    row = dict(zip(
+        ["sciper", "full_name", "openalex_id", "scopus_author_id",
+         "enrollment_date", "offboarding_date"],
+        rows[0],
+    ))
+
+    trigger = ImportTrigger()
+    if not trigger.can_trigger(row):
+        log.error(
+            "sciper %s has no openalex_id or scopus_author_id — cannot trigger import.",
+            sciper,
+        )
+        return
+
+    root = ROOT
+    try:
+        result = trigger.trigger(
+            row=row, env=args.env, root=root, db=db, run_id=args.run_id,
+        )
+        log.info(
+            "Import triggered for sciper %s — run_id=%s pid=%d",
+            sciper, result["run_id"], result["pid"],
+        )
+    except RuntimeError as exc:
+        log.error("Cannot trigger import: %s", exc)
+
+
 def main() -> None:
     args = _parse_args()
     _setup_logger(verbose=args.verbose)
@@ -329,6 +389,8 @@ def main() -> None:
         _action_harvest(args, db)
     if args.action in ("analyze", "all"):
         _action_analyze(args, db)
+    if args.action == "import":
+        _action_import(args, db)
 
 
 if __name__ == "__main__":
