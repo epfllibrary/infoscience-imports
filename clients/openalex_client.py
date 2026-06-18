@@ -510,6 +510,7 @@ class Client(APIClient):
             "primary_is_core": str(source.get("is_core", "")),
             "primary_source_type": source.get("type", ""),
             "primary_container_title": source.get("display_name", ""),
+            "primary_landing_page_url": primary.get("landing_page_url", ""),
         }
 
     def _extract_best_oa_location_info(self, x: dict) -> dict:

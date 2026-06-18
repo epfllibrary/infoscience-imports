@@ -576,6 +576,19 @@ class DSpaceClientWrapper:
             "name_variants": name_variants,
         }
 
+    def create_blank_workspace(self, collection_id: str):
+        """Create an empty workspace item in the given collection (no external source)."""
+        try:
+            response = self.client.create_workspaceitem(collection_id)
+            if response and isinstance(response, dict) and "id" in response:
+                self.logger.info("Blank workspace item created with ID: %s", response["id"])
+                return response
+            self.logger.error("Failed to create blank workspace item: no 'id' in response.")
+            return None
+        except Exception as e:
+            self.logger.error("Error creating blank workspace item: %s", e)
+            return None
+
     def push_publication(self, source, wos_id, collection_id):
         try:
             # Attempt to create a workspace item from the external source

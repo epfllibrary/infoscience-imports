@@ -11,6 +11,37 @@ from utils import get_pipeline_logger
 
 logger = get_pipeline_logger("loader")
 
+_ARXIV_URL_RE = re.compile(r'arxiv\.org/abs/([^\s?#]+)', re.IGNORECASE)
+_ARXIV_VERSION_RE = re.compile(r'v\d+$')
+
+
+def _extract_arxiv_id(url) -> str | None:
+    """Extract the arxiv ID from a landing page URL, stripping any version suffix.
+
+    Handles http/https and the old category format (e.g. math.AG/0601001).
+    Returns None for non-arxiv URLs, empty input, or None.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    m = _ARXIV_URL_RE.search(url)
+    if not m:
+        return None
+    arxiv_id = _ARXIV_VERSION_RE.sub('', m.group(1))
+    return arxiv_id if arxiv_id else None
+
+
+def _resolve_openalex_no_doi(row) -> tuple[str | None, str | None]:
+    """For an OpenAlex item without a DOI, attempt to derive a usable (source_id, agency) pair.
+
+    Tries arxiv DOI reconstruction from primary_landing_page_url.
+    Returns (None, None) when no fallback is available — caller should use blank workspace.
+    """
+    landing_url = row.get("primary_landing_page_url", "") or ""
+    arxiv_id = _extract_arxiv_id(landing_url)
+    if arxiv_id:
+        return f"10.48550/arXiv.{arxiv_id}", "datacite"
+    return None, None
+
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -1651,6 +1682,9 @@ class Loader:
         """Create complete publications including metadata and file uploads."""
         df_items_to_import = self._filter_publications_by_valid_affiliations()
         df_items_imported = df_items_to_import.copy()
+        for col in ("workspace_id", "dspace_item_uuid", "workflow_id"):
+            if col not in df_items_imported.columns:
+                df_items_imported[col] = pd.NA
 
         if df_items_to_import.empty:
             logger.error("No valid publications to process.")
@@ -1661,17 +1695,38 @@ class Loader:
             source = row.get("source", "")
             source_id = row.get("internal_id", "")
             collection_id = row.get("ifs3_collection_id", "")
+            use_blank_workspace = False
 
             if source == "openalex" or source == "zenodo":
-                source_id = row.get("doi", source_id)
+                doi = row.get("doi")
+                if doi and str(doi).strip():
+                    source_id = str(doi).strip()
             if source == "openalex+crossref":
                 source = "crossref"
             elif source == "openalex":
-                # Use the agency resolved via doi.org/ra during enrichment.
-                # Only the two main DSpace external sources are supported;
-                # unknown or missing agency falls back to crossref.
-                agency = row.get("doi_agency", "")
-                source = agency if agency in ("crossref", "datacite") else "crossref"
+                doi = row.get("doi")
+                has_doi = bool(doi and str(doi).strip())
+                if has_doi:
+                    # Use the agency resolved via doi.org/ra during enrichment.
+                    # Only the two main DSpace external sources are supported;
+                    # unknown or missing agency falls back to crossref.
+                    agency = row.get("doi_agency", "")
+                    source = agency if agency in ("crossref", "datacite") else "crossref"
+                else:
+                    resolved_id, resolved_agency = _resolve_openalex_no_doi(row)
+                    if resolved_id:
+                        source_id = resolved_id
+                        source = resolved_agency
+                        logger.info(
+                            "No DOI for OpenAlex item %s — arxiv fallback: %s",
+                            row.get("internal_id", ""), source_id,
+                        )
+                    else:
+                        use_blank_workspace = True
+                        logger.info(
+                            "No DOI for OpenAlex item %s — creating blank workspace item",
+                            row.get("internal_id", ""),
+                        )
             elif source == "zenodo":
                 source = "datacite"
             if str(source).lower() == "epo":
@@ -1679,11 +1734,14 @@ class Loader:
                 if not internalid:
                     logger.error("EPO item without internal_id: cannot build source_id epodoc:<id>.")
                     continue
-                source_id = f"epodoc:{internalid}"         
+                source_id = f"epodoc:{internalid}"
 
-            workspace_response = self.dspace_wrapper.push_publication(
-                source, source_id, collection_id
-            )
+            if use_blank_workspace:
+                workspace_response = self.dspace_wrapper.create_blank_workspace(collection_id)
+            else:
+                workspace_response = self.dspace_wrapper.push_publication(
+                    source, source_id, collection_id
+                )
 
             valid_pdf = row.get("upw_valid_pdf", "")
             # If valid_pdf is already an absolute path, keep it as-is
