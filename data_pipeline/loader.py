@@ -11,38 +11,6 @@ from utils import get_pipeline_logger
 
 logger = get_pipeline_logger("loader")
 
-_ARXIV_URL_RE = re.compile(r'arxiv\.org/abs/([^\s?#]+)', re.IGNORECASE)
-_ARXIV_VERSION_RE = re.compile(r'v\d+$')
-
-
-def _extract_arxiv_id(url) -> str | None:
-    """Extract the arxiv ID from a landing page URL, stripping any version suffix.
-
-    Handles http/https and the old category format (e.g. math.AG/0601001).
-    Returns None for non-arxiv URLs, empty input, or None.
-    """
-    if not url or not isinstance(url, str):
-        return None
-    m = _ARXIV_URL_RE.search(url)
-    if not m:
-        return None
-    arxiv_id = _ARXIV_VERSION_RE.sub('', m.group(1))
-    return arxiv_id if arxiv_id else None
-
-
-def _resolve_openalex_no_doi(row) -> tuple[str | None, str | None]:
-    """For an OpenAlex item without a DOI, attempt to derive a usable (source_id, agency) pair.
-
-    Tries arxiv DOI reconstruction from primary_landing_page_url.
-    Returns (None, None) when no fallback is available — caller should use blank workspace.
-    """
-    landing_url = row.get("primary_landing_page_url", "") or ""
-    arxiv_id = _extract_arxiv_id(landing_url)
-    if arxiv_id:
-        return f"10.48550/arXiv.{arxiv_id}", "datacite"
-    return None, None
-
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -1713,20 +1681,11 @@ class Loader:
                     agency = row.get("doi_agency", "")
                     source = agency if agency in ("crossref", "datacite") else "crossref"
                 else:
-                    resolved_id, resolved_agency = _resolve_openalex_no_doi(row)
-                    if resolved_id:
-                        source_id = resolved_id
-                        source = resolved_agency
-                        logger.info(
-                            "No DOI for OpenAlex item %s — arxiv fallback: %s",
-                            row.get("internal_id", ""), source_id,
-                        )
-                    else:
-                        use_blank_workspace = True
-                        logger.info(
-                            "No DOI for OpenAlex item %s — creating blank workspace item",
-                            row.get("internal_id", ""),
-                        )
+                    use_blank_workspace = True
+                    logger.info(
+                        "No DOI for OpenAlex item %s — creating blank workspace item",
+                        row.get("internal_id", ""),
+                    )
             elif source == "zenodo":
                 source = "datacite"
             if str(source).lower() == "epo":

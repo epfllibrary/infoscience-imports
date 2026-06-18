@@ -511,6 +511,7 @@ class Client(APIClient):
             "primary_source_type": source.get("type", ""),
             "primary_container_title": source.get("display_name", ""),
             "primary_landing_page_url": primary.get("landing_page_url", ""),
+            "primary_location_id": primary.get("id", ""),
         }
 
     def _extract_best_oa_location_info(self, x: dict) -> dict:

@@ -298,6 +298,40 @@ class ZenodoHarvester(Harvester):
 
         return df
 
+
+_ARXIV_URL_RE = re.compile(r'arxiv\.org/abs/([^\s?#]+)', re.IGNORECASE)
+_ARXIV_VERSION_RE = re.compile(r'v\d+$')
+_OAI_ARXIV_ID_RE = re.compile(r'^pmh:oai:arxiv\.org:(.+)$', re.IGNORECASE)
+
+
+def _extract_arxiv_id(url) -> str | None:
+    """Extract the arxiv ID from a landing page URL, stripping any version suffix.
+
+    Handles http/https and the old category format (e.g. math.AG/0601001).
+    Returns None for non-arxiv URLs, empty input, or None.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    m = _ARXIV_URL_RE.search(url)
+    if not m:
+        return None
+    arxiv_id = _ARXIV_VERSION_RE.sub('', m.group(1))
+    return arxiv_id if arxiv_id else None
+
+
+def _extract_arxiv_id_from_oai_id(oai_id) -> str | None:
+    """Extract the arxiv ID from an OpenAlex primary_location.id OAI-PMH identifier.
+
+    Format: "pmh:oai:arXiv.org:<arxiv_id>" — stable across modern and old-style
+    category IDs, never carries a version suffix. Preferred over landing-page
+    URL parsing when available.
+    """
+    if not oai_id or not isinstance(oai_id, str):
+        return None
+    m = _OAI_ARXIV_ID_RE.match(oai_id)
+    return m.group(1) if m else None
+
+
 class OpenAlexHarvester(Harvester):
     """
     OpenAlex Harvester.
@@ -356,6 +390,12 @@ class OpenAlexHarvester(Harvester):
             if rec is None:
                 continue
             rec["source"] = "openalex"
+            if not rec.get("doi"):
+                arxiv_id = _extract_arxiv_id_from_oai_id(
+                    rec.get("primary_location_id")
+                ) or _extract_arxiv_id(rec.get("primary_landing_page_url"))
+                if arxiv_id:
+                    rec["doi"] = f"10.48550/arXiv.{arxiv_id}"
             ifs3_records.append(rec)
             if not raw.get("type_crossref") and rec.get("doi"):
                 dois_needing_enrichment.append(rec["doi"])
