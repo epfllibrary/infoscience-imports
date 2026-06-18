@@ -27,6 +27,21 @@ _NON_OPEN_LICENSES: frozenset[str] = frozenset({
 })
 
 
+def safe_int(val) -> int | None:
+    """Convert val to int, returning None for missing or unparseable values.
+
+    Defends against legacy DB rows where a missing id was stored as the
+    literal string "<NA>" instead of NULL (pre-dating the PipelineDB._safe
+    fix for pd.NA), in addition to the normal None/NaN/empty-string cases.
+    """
+    if pd.isna(val):
+        return None
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return None
+
+
 def is_weak(status: str | None, position: str | None) -> bool:
     """Return True when an EPFL author's affiliation is considered weak."""
     s = (status or "").strip().lower()

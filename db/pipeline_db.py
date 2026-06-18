@@ -159,9 +159,13 @@ class PipelineDB:
         if val is None:
             return None
         try:
-            if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+            # pd.isna handles pd.NA, float/numpy NaN, and pd.NaT in one call —
+            # str(pd.NA) is the literal 4-character string "<NA>", which must
+            # never reach the DB as if it were real data.
+            import pandas as _pd
+            if _pd.isna(val):
                 return None
-        except Exception:
+        except (TypeError, ValueError):
             pass
         s = str(val).strip()
         return s if s and s.lower() not in ("nan", "none", "nat", "") else None

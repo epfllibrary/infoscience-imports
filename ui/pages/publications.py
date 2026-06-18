@@ -11,7 +11,7 @@ import streamlit as st
 
 from db.pipeline_db import PipelineDB
 from ui.helpers import page_title
-from ui.pub_helpers import is_weak, oa_text, lic_text, source_api_url
+from ui.pub_helpers import is_weak, oa_text, lic_text, safe_int, source_api_url
 from ui.components.pub_table import render_pub_component
 from ui.constants import INFOSCIENCE_STATUS_LABELS, INFOSCIENCE_STATUSES
 
@@ -406,24 +406,24 @@ def _enrich_dataframe(pub_df: pd.DataFrame, db: PipelineDB, sel_run: list, ds_ba
     )
     d["ws_url"] = d.apply(
         lambda r: (
-            f"{ds_base}/workspaceitems/{int(float(r['workspace_id']))}/edit"
-            if pd.notna(r.get("workspace_id")) and r.get("workspace_id") != ""
-            and (pd.isna(r.get("workflow_id")) or r.get("workflow_id") == "")
+            f"{ds_base}/workspaceitems/{safe_int(r.get('workspace_id'))}/edit"
+            if safe_int(r.get("workspace_id")) is not None
+            and safe_int(r.get("workflow_id")) is None
             else None
         ), axis=1,
     )
     d["wf_url"] = d.apply(
         lambda r: (
             f"{ds_base}/mydspace?configuration=workflow&spc.page=1&query=Item-{r['dspace_item_uuid']}"
-            if pd.notna(r.get("workflow_id")) and r.get("workflow_id") != ""
+            if safe_int(r.get("workflow_id")) is not None
             and pd.notna(r.get("dspace_item_uuid")) and r.get("dspace_item_uuid") != ""
             else None
         ), axis=1,
     )
     d["item_url"] = d.apply(
         lambda r: (
-            f"{ds_base}/workflowitems/{int(float(r['workflow_id']))}/view"
-            if pd.notna(r.get("workflow_id")) and r.get("workflow_id") != ""
+            f"{ds_base}/workflowitems/{safe_int(r.get('workflow_id'))}/view"
+            if safe_int(r.get("workflow_id")) is not None
             else (
                 f"{ds_base}/items/{r['dspace_item_uuid']}"
                 if "dspace_item_uuid" in r and pd.notna(r.get("dspace_item_uuid"))
