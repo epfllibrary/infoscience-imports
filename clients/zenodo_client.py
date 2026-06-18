@@ -19,6 +19,8 @@ from utils import get_pipeline_logger
 import mappings
 
 
+_LICENSE_VERSION_SUFFIX_RE = re.compile(r"-\d+(?:\.\d+)*$")
+
 zenodo_api_base_url = "https://zenodo.org/api/"
 # env var
 load_dotenv(os.path.join(os.getcwd(), ".env"))
@@ -258,7 +260,7 @@ class Client(APIClient):
         record["publisher"] = self._extract_publisher(x)
         record["related_works"] = self._extract_related_identifiers(x)
         record["additional_url"] = self._extract_additional_url(x)
-        record["access_conditions"] = self._extract_access_right(x)
+        record["access_conditions"], record["embargo_date"] = self._extract_access_right(x)
         record["language"], record["version"] = self._extract_language_and_version(x)
         record["conference_info"] = self._extract_conference_info(x)
         record.update(self._extract_venue_info(x))
@@ -345,13 +347,19 @@ class Client(APIClient):
     def _extract_ifs3_license(self, x):
         """
         Extracts license information in IFS3 format.
+
+        Zenodo license ids carry a trailing SPDX-style version suffix (e.g.
+        'cc-by-4.0') that licenses_mapping (licenses.yaml) doesn't key on —
+        it uses bare ids ('cc-by'). Strip it so the value resolves to a
+        recognized DSpace license-condition vocabulary entry instead of
+        being sent through unmapped and rejected (422).
         """
         try:
             license_info = x["metadata"].get("license", {})
             if isinstance(license_info, dict):
                 license_id = license_info.get("id", None)
                 if license_id:
-                    return license_id
+                    return _LICENSE_VERSION_SUFFIX_RE.sub("", license_id)
                 else:
                     return "N/A"
             else:
@@ -562,22 +570,33 @@ class Client(APIClient):
             return f"Code Repository URL::{url.strip()}"
         return ""
 
-    def _extract_access_right(self, x: dict) -> str:
+    def _extract_access_right(self, x: dict) -> tuple[str, str | None]:
         """
-        Extract and map Zenodo access level to local values:
+        Extract and map Zenodo access level to Infoscience access conditions.
+
         - 'open'       → 'openaccess'
+        - 'embargoed'  → 'embargo' (+ embargo lift date from metadata.embargo_date)
         - 'restricted' → 'restricted'
+        - 'closed'     → 'restricted' (no Infoscience equivalent; closest available)
+        - missing/unrecognized → 'openaccess' (never silently restrict for lack of info)
+
+        Returns (access_conditions, embargo_date) — embargo_date is None unless
+        access_conditions == 'embargo'.
         """
         md = x.get("metadata", {}) or {}
         value = md.get("access_right", "")
-        if not isinstance(value, str):
-            return ""
+        if not isinstance(value, str) or not value.strip():
+            return "openaccess", None
         value = value.strip().lower()
         mapping = {
             "open": "openaccess",
+            "embargoed": "embargo",
             "restricted": "restricted",
+            "closed": "restricted",
         }
-        return mapping.get(value, value)
+        condition = mapping.get(value, "openaccess")
+        embargo_date = md.get("embargo_date") if condition == "embargo" else None
+        return condition, embargo_date
 
     def _extract_language_and_version(self, x: dict) -> tuple[str | None, str | None]:
         """

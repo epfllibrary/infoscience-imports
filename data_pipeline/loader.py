@@ -143,6 +143,22 @@ def _build_metadata_value(
     }
 
 
+def _format_sciper(sciper) -> str:
+    """Format a SCIPER id as a clean integer string.
+
+    sciper_id arrives as float64 (e.g. 329669.0) whenever the source column
+    has NaN elsewhere — pandas upcasts the whole column. Embedding that
+    directly in the SCIPER-ID authority string ('...SCIPER-ID::329669.0')
+    breaks DSpace's authority resolution and the submission is rejected.
+    """
+    if sciper is None or _is_nan_like(sciper):
+        return ""
+    try:
+        return str(int(float(sciper)))
+    except (TypeError, ValueError):
+        return str(sciper).strip()
+
+
 def _get_first_segment(
     value,
     delimiter: str = "|",
@@ -306,7 +322,7 @@ class Loader:
 
             for _, match in matching_epfl_author.iterrows():
                 if match.get("dspace_link_valid"):
-                    sciper = match.get("sciper_id")
+                    sciper = _format_sciper(match.get("sciper_id"))
                     prefix = (
                         "will be referenced::"
                         if pd.notna(match.get("dspace_uuid"))
@@ -341,7 +357,7 @@ class Loader:
             },
         ]
 
-        if form_section != "report_" and corresponding_metadata:
+        if form_section not in ("report_", "dataset_") and corresponding_metadata:
             patch_operations.append({
                 "op": "add",
                 "path": f"{base}/epfl.author.corresponding",
@@ -430,7 +446,7 @@ class Loader:
                             if pd.notna(m.get("dspace_uuid"))
                             else "will be generated::"
                         )
-                        authority = f"{prefix}SCIPER-ID::{m.get('sciper_id')}"
+                        authority = f"{prefix}SCIPER-ID::{_format_sciper(m.get('sciper_id'))}"
                         confidence = 600
                         break
 
@@ -961,18 +977,23 @@ class Loader:
                 )
             return operations
 
-        def parse_access_conditions(access_conditions: str):
+        def parse_access_conditions(access_conditions: str, embargo_date=None):
             """
             Build patch operation for /sections/itemAccessConditions/accessConditions.
-            - Ignore if empty value
+            Defaults to 'openaccess' when no value is provided. For 'embargo',
+            includes startDate (the embargo lift date) when available.
             """
-            if not access_conditions or not str(access_conditions).strip():
-                return []
+            if pd.isna(access_conditions) or not str(access_conditions).strip():
+                access_conditions = "openaccess"
+
+            value = {"name": str(access_conditions).strip()}
+            if value["name"] == "embargo" and not pd.isna(embargo_date) and str(embargo_date).strip():
+                value["startDate"] = str(embargo_date).strip()
 
             return [{
                 "op": "add",
                 "path": "/sections/itemAccessConditions/accessConditions",
-                "value": [{"name": str(access_conditions).strip()}],
+                "value": [value],
             }]
 
         def parse_language(language_code: str):
@@ -980,7 +1001,7 @@ class Loader:
             Add dataset language without any mapping/conversion.
             Expects a 2-letter ISO code already prepared upstream (e.g., 'en').
             """
-            if not language_code or not str(language_code).strip():
+            if pd.isna(language_code) or not str(language_code).strip():
                 return []
             return [{
                 "op": "add",
@@ -998,7 +1019,7 @@ class Loader:
             """
             Add dataset version as-is (no mapping).
             """
-            if not version_str or not str(version_str).strip():
+            if pd.isna(version_str) or not str(version_str).strip():
                 return []
             return [{
                 "op": "add",
@@ -1243,12 +1264,18 @@ class Loader:
                 ),
             ])
 
-        # --- Add ctb.oaireXXlicenseCondition (Zenodo only) ---
+        # --- Add ctb.oaireXXlicenseCondition for dataset items, defaulting to
+        # N/A (Copyrighted) when no license is provided. Gated on form_section
+        # rather than source: an OpenAlex-harvested item hosted on Zenodo is
+        # still a dataset_ form and needs this field. ---
         raw_license = row.get("license")
-        mapped = licenses_mapping.get(raw_license, {}) if raw_license is not None else {}
-        license_val = (mapped.get("value") or raw_license) if raw_license is not None else None
-        has_license = isinstance(license_val, str) and license_val.strip() != ""
-        if str(row.get("source", "")).strip().lower() == "zenodo" and has_license:
+        has_raw_license = not pd.isna(raw_license) and str(raw_license).strip() != ""
+        if has_raw_license:
+            mapped = licenses_mapping.get(raw_license, {})
+            license_val = mapped.get("value") or raw_license
+        else:
+            license_val = licenses_mapping["NA"]["value"]
+        if form_section == "dataset_":
             fields.append(
                 (
                     "/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
@@ -1275,7 +1302,9 @@ class Loader:
             metadata_definitions.extend(parse_language(row.get("language")))
             metadata_definitions.extend(parse_version(row.get("version")))
             metadata_definitions.extend(parse_additional_link(row.get("additional_url")))
-            metadata_definitions.extend(parse_access_conditions(row.get("access_conditions")))
+            metadata_definitions.extend(
+                parse_access_conditions(row.get("access_conditions"), row.get("embargo_date"))
+            )
 
         metadata_definitions.extend(parse_related_works(row.get("related_works")))
         metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))

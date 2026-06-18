@@ -167,6 +167,12 @@ class PipelineDB:
                 return None
         except (TypeError, ValueError):
             pass
+        # Integer-valued ids (sciper, unit ids, ...) are routinely upcast to
+        # float64 by pandas whenever the column has NaN elsewhere. Writing
+        # "329669.0" instead of "329669" into a VARCHAR key would fragment
+        # that entity's identity across two different DB rows.
+        if isinstance(val, float) and val.is_integer():
+            val = int(val)
         s = str(val).strip()
         return s if s and s.lower() not in ("nan", "none", "nat", "") else None
 
