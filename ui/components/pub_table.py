@@ -25,6 +25,7 @@ from ui.constants import (
     INFOSCIENCE_STATUS_LABELS,
     INFOSCIENCE_STATUS_CSS,
 )
+from ui.pub_helpers import safe_int
 
 
 # ── Source / status maps ───────────────────────────────────────────────────────
@@ -51,6 +52,19 @@ _STATUS_CSS: dict[str, str] = {
 
 def _nn(v) -> bool:
     return v is not None and not (isinstance(v, float) and pd.isna(v)) and str(v).strip() not in ("", "nan", "None")
+
+
+def _id_str(raw) -> str | None:
+    """Convert a workspace/workflow id to its canonical string form, or None.
+
+    DB ids are stored as VARCHAR but always hold integers. Anything
+    unparseable — including legacy corrupted rows holding the literal
+    string "<NA>" — must collapse to None rather than to a literal id
+    string shared by every corrupted row (which produced duplicate
+    Streamlit widget keys, e.g. bulk_chk_<NA>).
+    """
+    n = safe_int(raw)
+    return str(n) if n is not None else None
 
 
 def _has_no_abstract(row: dict) -> bool:
@@ -568,23 +582,11 @@ def _fetch_all_deletable_for_run(db, run_id: str) -> dict[str, dict]:
     )
     out: dict[str, dict] = {}
     for row in rows.to_dict("records"):
-        ws_raw = row.get("workspace_id")
-        ws = None
-        if _nn(ws_raw):
-            try:
-                ws = str(int(float(str(ws_raw))))
-            except (ValueError, TypeError):
-                ws = _s(ws_raw) or None
+        ws = _id_str(row.get("workspace_id"))
         ifs = _s(row.get("infoscience_status"))
         if not ws or not _is_bulk_deletable(ws, ifs):
             continue
-        wf_raw = row.get("workflow_id")
-        wf = None
-        if _nn(wf_raw):
-            try:
-                wf = str(int(float(str(wf_raw))))
-            except (ValueError, TypeError):
-                wf = _s(wf_raw) or None
+        wf = _id_str(row.get("workflow_id"))
         out[ws] = {
             "ws_id": ws,
             "wf_id": wf,
@@ -648,22 +650,10 @@ def render_pub_component(
     _page_items_meta: dict[str, dict] = {}
     if show_bulk:
         for row in d.to_dict("records"):
-            ws_raw = row.get("workspace_id")
-            ws = None
-            if _nn(ws_raw):
-                try:
-                    ws = str(int(float(str(ws_raw))))
-                except (ValueError, TypeError):
-                    ws = _s(ws_raw) or None
+            ws = _id_str(row.get("workspace_id"))
             ifs = _s(row.get("infoscience_status"))
             if ws and _is_bulk_deletable(ws, ifs):
-                wf_raw = row.get("workflow_id")
-                wf = None
-                if _nn(wf_raw):
-                    try:
-                        wf = str(int(float(str(wf_raw))))
-                    except (ValueError, TypeError):
-                        wf = _s(wf_raw) or None
+                wf = _id_str(row.get("workflow_id"))
                 _page_ws_ids.append(ws)
                 _page_items_meta[ws] = {
                     "ws_id": ws,
@@ -765,23 +755,11 @@ def render_pub_component(
             row        = {**row, "_all_former_epfl": all_former}
             has_flag   = _nn(row.get("flagged_publication"))
             title      = _s(row.get("title"), "—")
-            ws_raw   = row.get("workspace_id")
-            wf_raw   = row.get("workflow_id")
             uuid_raw = row.get("dspace_item_uuid")
 
             # Pre-compute string IDs once — reused by sync and delete buttons
-            ws_id: str | None = None
-            if _nn(ws_raw):
-                try:
-                    ws_id = str(int(float(str(ws_raw))))
-                except (ValueError, TypeError):
-                    ws_id = _s(ws_raw) or None
-            wf_id: str | None = None
-            if _nn(wf_raw):
-                try:
-                    wf_id = str(int(float(str(wf_raw))))
-                except (ValueError, TypeError):
-                    wf_id = _s(wf_raw) or None
+            ws_id = _id_str(row.get("workspace_id"))
+            wf_id = _id_str(row.get("workflow_id"))
 
             rc = st.columns(widths)
 
