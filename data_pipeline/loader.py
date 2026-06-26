@@ -303,11 +303,9 @@ class Loader:
 
             is_corr = author_row.get("openalex_is_corresponding")
             if pd.notna(is_corr) and bool(is_corr):
-                corresponding_metadata.append(create_metadata("true"))
+                corresponding_metadata.append(create_metadata("yes"))
             else:
-                corresponding_metadata.append(
-                    create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#")
-                )
+                corresponding_metadata.append(create_metadata("no"))
 
         # Authority enrichment
         for i, author in enumerate(authors_metadata):
@@ -357,7 +355,7 @@ class Loader:
             },
         ]
 
-        if form_section not in ("report_", "dataset_") and corresponding_metadata:
+        if form_section is not None and form_section not in ("report_", "dataset_") and corresponding_metadata:
             patch_operations.append({
                 "op": "add",
                 "path": f"{base}/epfl.author.corresponding",
@@ -1393,26 +1391,28 @@ class Loader:
         if title:
             ops.append({"op": "add", "path": f"{base}/dc.title", "value": [title]})
 
-        alt_fr = build_value(row.get("title_fr"), language="fr")
-        if alt_fr:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_fr]}
-            )
-        alt_de= build_value(row.get("title_de"), language="de")
-        if alt_de:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_de]}
-            )
-        alt_it = build_value(row.get("title_it"), language="it")
-        if alt_it:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_it]}
-            )
-        abst = build_value(row.get("abstract"))
-        if abst:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.description.abstract", "value": [abst]}
-            )
+        alt_titles = [
+            v for lang, key in [("fr", "title_fr"), ("de", "title_de"), ("it", "title_it")]
+            for v in [build_value(row.get(key), language=lang)]
+            if v
+        ]
+        if alt_titles:
+            ops.append({"op": "add", "path": f"{base}/dc.title.alternative", "value": alt_titles})
+
+        abst_values = [
+            v for lang, key in [
+                ("en", "abstract_en"), ("fr", "abstract_fr"),
+                ("de", "abstract_de"), ("it", "abstract_it"),
+            ]
+            for v in [build_value(row.get(key), language=lang)]
+            if v
+        ]
+        if not abst_values:
+            v = build_value(row.get("abstract"))
+            if v:
+                abst_values.append(v)
+        if abst_values:
+            ops.append({"op": "add", "path": f"{base}/dc.description.abstract", "value": abst_values})
 
         # ------------------------------------------------------------------
         # RIGHT HOLDER from applicants (multi-valued)
