@@ -828,7 +828,7 @@ def render_lacunes_tab(
             "", key=f"lac_rst_{sciper}",
             icon=":material/filter_alt_off:",
             help="Réinitialiser les filtres",
-            use_container_width=True,
+            width="stretch",
         ):
             for _k in [f"lac_yr_from_{sciper}", f"lac_yr_to_{sciper}", f"lac_type_{sciper}"]:
                 st.session_state.pop(_k, None)

@@ -510,7 +510,7 @@ def _render_registry(
             st.markdown('<div style="padding-top:26px">', unsafe_allow_html=True)
             if st.button(
                 "Réinitialiser les filtres", key="btn_reset_rm_filters",
-                use_container_width=True, icon=":material/filter_alt_off:",
+                width="stretch", icon=":material/filter_alt_off:",
             ):
                 for _k in [
                     "rm_search", "rm_unit_filter", "rm_school_filter",
@@ -599,7 +599,7 @@ def _render_registry(
             file_name=f"registre_{datetime.now():%Y%m%d}.csv",
             mime="text/csv",
             icon=":material/download:",
-            use_container_width=True,
+            width="stretch",
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -659,7 +659,7 @@ def _render_publications(db: PipelineDB) -> None:
         st.markdown('<div style="padding-top:26px">', unsafe_allow_html=True)
         if st.button(
             "", key="btn_reset_pub_filters",
-            use_container_width=True, icon=":material/filter_alt_off:",
+            width="stretch", icon=":material/filter_alt_off:",
             help="Réinitialiser les filtres",
         ):
             for _k in ["pub_view_mode", "pub_start_year", "pub_end_year", "pub_search"]:
@@ -836,7 +836,7 @@ def _render_gaps(db: PipelineDB, active_env: str, root: Path, role: str) -> None
         st.markdown('<div style="padding-top:26px">', unsafe_allow_html=True)
         if st.button(
             "", key="btn_reset_gap_filters",
-            use_container_width=True, icon=":material/filter_alt_off:",
+            width="stretch", icon=":material/filter_alt_off:",
             help="Réinitialiser les filtres",
         ):
             for _k in [
