@@ -58,6 +58,7 @@ ROLE_PAGES: dict[str, list[str]] = {
         "Publications",
         "Statistiques",
         "Chercheurs",
+        "OA Monitor",
         "Nettoyage",
         "Configuration",
         "Aide",
@@ -68,6 +69,7 @@ ROLE_PAGES: dict[str, list[str]] = {
         "Publications",
         "Statistiques",
         "Chercheurs",
+        "OA Monitor",
         "Nettoyage",
         "Aide",
     ],
@@ -76,6 +78,7 @@ ROLE_PAGES: dict[str, list[str]] = {
         "Publications",
         "Statistiques",
         "Chercheurs",
+        "OA Monitor",
         "Aide",
     ],
 }

@@ -519,6 +519,7 @@ class Client(APIClient):
         source = best_oa.get("source", {}) or {}
 
         return {
+            "best_oa_location_id": best_oa.get("id", ""),
             "best_oa_is_oa": str(best_oa.get("is_oa", "")),
             "best_oa_pdf_url": best_oa.get("pdf_url", ""),
             "best_oa_landing_url": best_oa.get("landing_page_url", ""),

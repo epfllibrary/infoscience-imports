@@ -2151,3 +2151,23 @@ a.rmunit-is-link:hover { background: #DDD6FE; }
     margin-top: 6px;
 }
 
+
+/* ── OA Monitor — enriched data browser filter panel ──────────────────────── */
+
+.oabr-filter-anchor { display: none; }
+.stVerticalBlock:has(.oabr-filter-anchor) {
+    background: #FFFFFF;
+    border-radius: 12px;
+    border: 1px solid #E2E8F0;
+    padding: 16px 20px 18px !important;
+    box-shadow: 0 1px 4px rgba(15,23,42,.05), 0 0 0 1px rgba(226,232,240,.6);
+    margin-bottom: 20px;
+}
+
+/* Sub-group headers inside the panel need less bottom margin than a full
+   page-level .section-header — several stack in the same container. */
+.stVerticalBlock:has(.oabr-filter-anchor) .section-header {
+    margin-top: 4px;
+    margin-bottom: 10px;
+}
+
