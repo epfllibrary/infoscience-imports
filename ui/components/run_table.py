@@ -301,7 +301,7 @@ def _run_dialog(row: dict, role: str, root: Path, active_env: str) -> None:
             "les items seront importés dans Infoscience."
         )
 
-    if st.button("▶ Re-déclencher ce run", type="primary", use_container_width=True,
+    if st.button("▶ Re-déclencher ce run", type="primary", width="stretch",
                  key=f"dup_launch_{rid}"):
         new_run_id = _make_run_id()
         log_file   = root / "logs" / f"run_{new_run_id}.log"
@@ -375,6 +375,7 @@ def render_run_table(
     db: PipelineDB,
     root: Path | None = None,
     active_env: str | None = None,
+    default_with_imports: bool = False,
 ) -> None:
     """Render the filterable, paginated runs table with review tracking."""
     if root is None:
@@ -403,6 +404,9 @@ def render_run_table(
         st.toast(", ".join(_parts) + ".", icon="✅" if not _res["errors"] else "⚠️")
 
     # ── Filters ───────────────────────────────────────────────────────────────
+    if "rf_with_imports" not in st.session_state:
+        st.session_state["rf_with_imports"] = default_with_imports
+
     with st.expander("Filtres", icon=":material/search:", expanded=False):
         _fc1, _fc2, _fc3, _fc4 = st.columns([2, 2, 2, 2])
         with _fc1:
@@ -430,13 +434,18 @@ def render_run_table(
             st.multiselect("Sources", SOURCES, key="rf_sources")
         with _fs4:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Réinitialiser", key="rf_reset", use_container_width=True):
+            if st.button("Réinitialiser", key="rf_reset", width="stretch"):
                 for _k in ("rf_date_from", "rf_date_to", "rf_status",
                            "rf_review_status", "rf_search", "rf_claimed_by",
-                           "rf_sources"):
+                           "rf_sources", "rf_with_imports"):
                     st.session_state.pop(_k, None)
                 st.session_state["run_page"] = 1
                 st.rerun()
+        st.toggle(
+            "Avec imports uniquement",
+            key="rf_with_imports",
+            help="Afficher uniquement les runs contenant au moins un item importé (workspace ou workflow)",
+        )
 
     _date_from     = st.session_state.get("rf_date_from") or None
     _date_to       = st.session_state.get("rf_date_to") or None
@@ -445,6 +454,7 @@ def render_run_table(
     _search        = st.session_state.get("rf_search") or None
     _claimed_by_raw = st.session_state.get("rf_claimed_by") or None
     _sources       = st.session_state.get("rf_sources") or None
+    _with_imports  = st.session_state.get("rf_with_imports", default_with_imports)
     _claimed_by = (
         [_username if v == "__me__" else v for v in _claimed_by_raw]
         if _claimed_by_raw else None
@@ -455,6 +465,7 @@ def render_run_table(
         tuple(_status or []), tuple(_review_status or []),
         _search or "", tuple(_claimed_by_raw or []),
         tuple(_sources or []),
+        _with_imports,
     )
     if st.session_state.get("_run_filter_sig") != _filter_sig:
         st.session_state["_run_filter_sig"] = _filter_sig
@@ -464,7 +475,7 @@ def render_run_table(
     _total = db.count_runs(
         status=_status, date_from=_date_from, date_to=_date_to,
         search=_search, review_status=_review_status, claimed_by=_claimed_by,
-        sources=_sources)
+        sources=_sources, with_imports=_with_imports)
 
     _pc1, _pc2, _pc3 = st.columns([2, 2, 5])
     with _pc1:
@@ -482,7 +493,7 @@ def render_run_table(
     _runs_df = db.get_runs(
         status=_status, date_from=_date_from, date_to=_date_to,
         search=_search, review_status=_review_status, claimed_by=_claimed_by,
-        sources=_sources, limit=_page_size, offset=_offset)
+        sources=_sources, with_imports=_with_imports, limit=_page_size, offset=_offset)
 
     if _runs_df.empty:
         st.info("Aucun run correspondant aux filtres.")
@@ -499,10 +510,31 @@ def render_run_table(
         _c   = st.columns(_COLS)
         _rid = _row["run_id"]
 
-        # col 0: run ID + invisible CSS scope marker
+        # Detect researcher_import runs by run_type column or run_id prefix
+        _run_type = _row.get("run_type") or ""
+        _is_researcher_import = (
+            _run_type == "researcher_import"
+            or str(_rid).startswith("researcher_import_")
+        )
+        _forced_sciper_val = _row.get("forced_sciper") or ""
+        _researcher_badge = ""
+        if _is_researcher_import:
+            _researcher_label = "Import ciblé"
+            if _forced_sciper_val and ":" in str(_forced_sciper_val):
+                _researcher_name = str(_forced_sciper_val).split(":", 1)[1].strip()
+                _researcher_label = f"Import — {_researcher_name[:25]}"
+            _researcher_badge = (
+                f'<span class="rtbl-researcher-badge">'
+                f'<span style="font-family:\'Material Symbols Outlined\';font-size:10px;'
+                f'vertical-align:middle;margin-right:3px;">person_search</span>'
+                f'{_researcher_label}</span>'
+            )
+
+        # col 0: run ID + invisible CSS scope marker + optional researcher badge
         _c[0].markdown(
             f'<span class="rtbl-row"></span>'
-            f'<span class="rtbl-run-id">{_rid}</span>',
+            f'<span class="rtbl-run-id">{_rid}</span>'
+            + (f'<br>{_researcher_badge}' if _researcher_badge else ""),
             unsafe_allow_html=True,
         )
         _c[1].markdown(f'<div class="rtbl-cell">{fmt_dt(_row["ended_at"])}</div>',
@@ -601,7 +633,7 @@ def render_run_table(
                 pass
             elif not _rs:
                 if st.button("", icon=":material/person_add:",
-                             key=f"claim_{_rid}", use_container_width=True,
+                             key=f"claim_{_rid}", width="stretch",
                              help="Prendre en charge"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": "in_progress",
@@ -609,14 +641,14 @@ def render_run_table(
                     st.rerun()
             elif _rs == "in_progress" and _can_act:
                 if st.button("", icon=":material/task_alt:",
-                             key=f"done_{_rid}", use_container_width=True,
+                             key=f"done_{_rid}", width="stretch",
                              help="Marquer terminé"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": "done",
                     }
                     st.rerun()
                 if st.button("", icon=":material/lock_open:",
-                             key=f"unclaim_{_rid}", use_container_width=True,
+                             key=f"unclaim_{_rid}", width="stretch",
                              help="Libérer"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": None,
@@ -624,14 +656,14 @@ def render_run_table(
                     st.rerun()
             elif _rs == "done" and (_role == "admin" or (_role == "curator" and _cb == _username)):
                 if st.button("", icon=":material/restart_alt:",
-                             key=f"reopen_{_rid}", use_container_width=True,
+                             key=f"reopen_{_rid}", width="stretch",
                              help="Réouvrir"):
                     st.session_state["_run_pending_action"] = {
                         "run_id": _rid, "to_status": "in_progress",
                     }
                     st.rerun()
                 if st.button("", icon=":material/sync:",
-                             key=f"sync_{_rid}", use_container_width=True,
+                             key=f"sync_{_rid}", width="stretch",
                              help="Synchroniser les statuts Infoscience"):
                     st.session_state["_run_pending_sync"] = _rid
                     st.rerun()
@@ -639,7 +671,7 @@ def render_run_table(
         # col 9: navigate to publications filtered by this run
         with _c[9]:
             if st.button("", icon=":material/visibility:",
-                         key=f"pubs_{_rid}", use_container_width=True,
+                         key=f"pubs_{_rid}", width="stretch",
                          help="Voir les publications"):
                 st.session_state["_jump_to_run"] = _rid
                 st.query_params["page"] = "Publications"
@@ -650,5 +682,5 @@ def render_run_table(
             _icon = ":material/content_copy:" if _role == "admin" else ":material/info:"
             _help = "Détail + re-déclencher" if _role == "admin" else "Voir le détail du run"
             if st.button("", icon=_icon, key=f"detail_{_rid}",
-                         use_container_width=True, help=_help):
+                         width="stretch", help=_help):
                 _run_dialog(_row.to_dict(), _role, root, active_env)

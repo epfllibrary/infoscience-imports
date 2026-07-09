@@ -49,9 +49,12 @@ openalex_token = os.environ.get("OPENALEX_API_KEY")
 user_agent = os.environ.get("USER_AGENT", "EPFL-Institutional-Repository - Infoscience-imports/1.0 (https://github.com/epfllibrary/infoscience-imports)")
 
 
-accepted_doctypes = [
-    key for key in mappings.doctypes_mapping_dict["source_crossref"].keys()
-]
+accepted_doctypes = list({
+    key
+    for source in ("source_crossref", "source_openalex")
+    for key, val in mappings.doctypes_mapping_dict[source].items()
+    if not val.get("rejected", False)
+})
 
 # Retry decorator to handle request retries on specific status codes
 retry_decorator = tenacity.retry(
@@ -67,6 +70,7 @@ class OpenAlexEndpoint:
     works = "works"
     work_id = "works/{openalexId}"
     doi = "works/doi:{doi}"
+    author = "authors/{authorId}"
 class Client(APIClient):
     logger = get_pipeline_logger('openalex')
 
@@ -322,6 +326,7 @@ class Client(APIClient):
             "openalex_id": self._extract_openalex_id(x),
             "referenced_works_count": self._extract_referenced_works_count(x),
             "cited_by_count": self._extract_cited_by_count(x),
+            "pmid": self._extract_pmid(x),
         }
 
         for label, func in [
@@ -364,11 +369,21 @@ class Client(APIClient):
         digest_info = self._extract_digest_record_info(x)
         digest_info["ifs3_collection"] = self._extract_ifs3_collection(x)
         digest_info["ifs3_collection_id"] = self._extract_ifs3_collection_id(x)
-        # Get dc.type and dc.type_authority for the document type
         dc_type_info = self.get_dc_type_info(x)
-        # Add dc.type and dc.type_authority to the record
         digest_info["dc.type"] = dc_type_info["dc.type"]
         digest_info["dc.type_authority"] = dc_type_info["dc.type_authority"]
+
+        # Canonical field names expected by the loader (mirrors WoS/Crossref/Scopus convention).
+        # primary_container_title / primary_issn / primary_host_org are already in digest_info
+        # via _extract_primary_location_info; we expose them under the loader-facing names too.
+        digest_info["journalTitle"] = digest_info.get("primary_container_title", "")
+        digest_info["journalISSN"] = digest_info.get("primary_issn", "")
+        digest_info["journalVolume"] = digest_info.get("volume", "")
+        digest_info["publisher"] = digest_info.get("primary_host_org", "")
+        digest_info["language"] = self._extract_language(x)
+        digest_info["abstract"] = self.extract_abstract(x)
+        digest_info["fundings_info"] = self._extract_funding_info(x)
+
         return digest_info
 
     def _extract_ifs3_record_info(self, x):
@@ -382,7 +397,7 @@ class Client(APIClient):
             dict: Extracted information in ifs3 format.
         """
         ifs3_info = self._extract_ifs3_digest_record_info(x)
-        ifs3_info["abstract"] = self.extract_abstract(x)
+        # abstract is already included by _extract_ifs3_digest_record_info
         ifs3_info["authors"] = self.extract_ifs3_authors(x)
         return ifs3_info
 
@@ -411,7 +426,11 @@ class Client(APIClient):
         Returns:
             str: Document type extracted from the record.
         """
-        return x.get("type_crossref")
+        return x.get("type_crossref") or x.get("type") or "other"
+
+    def _get_doctype_mapping_source(self, x):
+        """Return the mapping source key to use for doctype lookups."""
+        return "source_crossref" if x.get("type_crossref") else "source_openalex"
 
     def _extract_openalex_doctype(self, x):
         """
@@ -491,6 +510,8 @@ class Client(APIClient):
             "primary_is_core": str(source.get("is_core", "")),
             "primary_source_type": source.get("type", ""),
             "primary_container_title": source.get("display_name", ""),
+            "primary_landing_page_url": primary.get("landing_page_url", ""),
+            "primary_location_id": primary.get("id", ""),
         }
 
     def _extract_best_oa_location_info(self, x: dict) -> dict:
@@ -498,6 +519,7 @@ class Client(APIClient):
         source = best_oa.get("source", {}) or {}
 
         return {
+            "best_oa_location_id": best_oa.get("id", ""),
             "best_oa_is_oa": str(best_oa.get("is_oa", "")),
             "best_oa_pdf_url": best_oa.get("pdf_url", ""),
             "best_oa_landing_url": best_oa.get("landing_page_url", ""),
@@ -588,9 +610,7 @@ class Client(APIClient):
         :return: A dictionary with the keys "dc.type" and "dc.type_authority", or "unknown" if not found.
         """
         data_doctype = self._extract_first_doctype(x)
-        # Access the doctype mapping for "source_wos"
-        doctype_mapping = mappings.doctypes_mapping_dict.get("source_crossref", {})
-        # Check if the document type exists in the mapping for dc.type
+        doctype_mapping = mappings.doctypes_mapping_dict.get(self._get_doctype_mapping_source(x), {})
         document_info = doctype_mapping.get(data_doctype, None)
         dc_type = (
             document_info.get("dc.type", "unknown") if document_info else "unknown"
@@ -609,7 +629,7 @@ class Client(APIClient):
         data_doctype = self._extract_first_doctype(x)
         # Check if the document type is accepted
         if data_doctype in accepted_doctypes:
-            mapped_value = mappings.doctypes_mapping_dict["source_crossref"].get(
+            mapped_value = mappings.doctypes_mapping_dict[self._get_doctype_mapping_source(x)].get(
                 data_doctype
             )
 
@@ -666,7 +686,7 @@ class Client(APIClient):
             for author in x.get("authorships", []):
                 institutions = "|".join(
                     [
-                        f"{inst.get('ror', '').split('/')[-1]}:{inst.get('display_name', '')}"
+                        f"{(inst.get('ror') or '').split('/')[-1]}:{inst.get('display_name') or ''}"
                         for inst in author.get("institutions", [])
                     ]
                 )
@@ -741,13 +761,21 @@ class Client(APIClient):
 
     def _extract_keywords(self, x):
         try:
+            kw_list = x.get("keywords", [])
+            if isinstance(kw_list, list) and kw_list:
+                return "||".join(
+                    k.get("display_name", "").strip()
+                    for k in kw_list
+                    if isinstance(k, dict) and k.get("display_name")
+                )
+            # fallback: concepts field (deprecated by OpenAlex, kept for older records)
             concepts = x.get("concepts", [])
-            if not isinstance(concepts, list):
-                return ""
-            return "||".join(
-                [c.get("display_name", "") for c in concepts if isinstance(c, dict)]
-            )
-        except Exception as e:
+            if isinstance(concepts, list):
+                return "||".join(
+                    c.get("display_name", "") for c in concepts if isinstance(c, dict)
+                )
+            return ""
+        except Exception:
             return ""
 
     def _extract_apc_info(self, x: dict) -> dict:
@@ -769,6 +797,37 @@ class Client(APIClient):
         flatten("apc_paid")
 
         return out
+
+    def _extract_pmid(self, x) -> str:
+        pmid = (x.get("ids") or {}).get("pmid", "") or ""
+        if isinstance(pmid, str):
+            pmid = pmid.replace("https://pubmed.ncbi.nlm.nih.gov/", "").rstrip("/")
+        return str(pmid).strip() if pmid else ""
+
+    def _extract_language(self, x) -> str:
+        lang = x.get("language", "") or ""
+        return str(lang).strip()
+
+    def _extract_funding_info(self, x) -> str:
+        """Build 'FunderName::AwardId[||...]' from OpenAlex grants array.
+
+        Mirrors the format produced by Crossref and WoS clients so the loader
+        can patch oairecerif.funder / dc.relation.grantno identically.
+        """
+        try:
+            grants = x.get("grants") or []
+            if not grants:
+                return ""
+            parts = []
+            for g in grants:
+                name = (g.get("funder_display_name") or "").strip()
+                award = (g.get("award_id") or "").strip()
+                if name:
+                    parts.append(f"{name}::{award}")
+            return "||".join(parts)
+        except Exception as e:
+            self.logger.error("Error extracting funding info: %s", e)
+            return ""
 
     def _extract_content_info(self, x: dict) -> dict:
         has_content = x.get("has_content") or {}
@@ -831,6 +890,159 @@ class Client(APIClient):
         except Exception as e:
             self.logger.warning(f"Error in _extract_corresponding_institution_ids: {e}")
             return {"corresponding_institution_ids": ""}
+
+    def _oa_get(self, path: str, params: dict | None = None) -> dict:
+        """Direct requests.get call to the OpenAlex API, bypassing apiclient.
+
+        Used for endpoints (authors) where the apiclient JsonResponseHandler
+        raises UnexpectedError despite a valid 200 response.
+        Returns the parsed JSON dict, or raises on HTTP/network error.
+        """
+        url = f"{openalex_api_base_url}/{path}"
+        merged = self._merge_params(params or {})
+        resp = requests.get(url, params=merged, timeout=15,
+                            headers=getattr(self, "default_headers", {}))
+        resp.raise_for_status()
+        return resp.json()
+
+    def fetch_author_id_by_orcid(self, orcid: str) -> str | None:
+        """Look up the OpenAlex author ID for a given ORCID.
+
+        Calls /authors?filter=orcid:{orcid}. Returns the short OpenAlex author ID
+        (e.g. "A5014490073") or None when not found or on error.
+        """
+        try:
+            data = self._oa_get("authors", {"filter": f"orcid:{orcid}", "select": "id"})
+            results = data.get("results") or []
+            if results:
+                return normalize_openalex_id(results[0].get("id", "")) or None
+        except Exception as exc:
+            self.logger.warning("fetch_author_id_by_orcid failed for %s: %s", orcid, exc)
+        return None
+
+    def fetch_author_by_id(self, openalex_id: str) -> dict:
+        """Fetch author profile from OpenAlex and extract useful identifiers.
+
+        Returns a dict with any of: orcid, scopus_author_id, openalex_name_variants.
+        Returns {} on error or when the author is not found.
+        """
+        import json as _json
+
+        short_id = normalize_openalex_id(openalex_id)
+        if not short_id:
+            return {}
+        try:
+            data = self._oa_get(f"authors/{short_id}")
+        except Exception as exc:
+            self.logger.warning("fetch_author_by_id failed for %s: %s", short_id, exc)
+            return {}
+
+        if not data or not isinstance(data, dict):
+            return {}
+
+        result: dict = {}
+        ids = data.get("ids") or {}
+
+        raw_orcid = ids.get("orcid") or data.get("orcid") or ""
+        if raw_orcid:
+            orcid_match = re.search(r"(\d{4}-\d{4}-\d{4}-\d{3}[\dX])", str(raw_orcid))
+            if orcid_match:
+                result["orcid"] = orcid_match.group(1)
+
+        raw_scopus = ids.get("scopus") or ""
+        if raw_scopus:
+            scopus_match = re.search(r"authorI[dD]=(\d+)", str(raw_scopus))
+            if scopus_match:
+                result["scopus_author_id"] = scopus_match.group(1)
+
+        alternatives = data.get("display_name_alternatives") or []
+        if alternatives:
+            result["openalex_name_variants"] = _json.dumps(alternatives, ensure_ascii=False)
+
+        return result
+
+    def fetch_author_ids_from_dois(
+        self,
+        dois: list[str],
+        display_name: str,
+        max_edit_distance: int = 1,
+        batch_size: int = 40,
+    ) -> list[str]:
+        """Infer OpenAlex author IDs from a batch of DOIs using name matching.
+
+        Queries /works by DOI batch, collects all authorships, and returns IDs
+        whose display_name is within max_edit_distance (Levenshtein) of the
+        standardized display_name.  Returns at most 5 IDs ordered by frequency.
+        """
+        from rapidfuzz.distance import Levenshtein
+
+        def _std_name(name: str | None) -> str | None:
+            import unicodedata
+            import re
+            if not name or not isinstance(name, str):
+                return None
+            s = name.strip()
+            if "," in s:
+                last, first = [p.strip() for p in s.split(",", 1)]
+                s = f"{first} {last}"
+            nfkd = unicodedata.normalize("NFKD", s)
+            clean = nfkd.encode("ASCII", "ignore").decode()
+            parts = re.sub(r"[^\w\s-]", "", clean).split()
+            if len(parts) < 2:
+                return None
+            first_part, last_part = parts[0], parts[-1]
+            initials = "".join(p[0] for p in first_part.split("-") if p) or first_part[0]
+            return f"{initials.lower()} {last_part.lower()}"
+
+        name_std = _std_name(display_name)
+        clean_dois = [d for d in (dois or []) if d]
+        if not clean_dois:
+            return []
+
+        authors: list[dict] = []
+        for i in range(0, len(clean_dois), batch_size):
+            chunk = clean_dois[i:i + batch_size]
+            try:
+                params = self._merge_params({
+                    "filter": f"doi:{'|'.join(chunk)}",
+                    "select": "authorships",
+                    "per_page": batch_size,
+                })
+                resp = self.get(OpenAlexEndpoint.works, params=params)
+                for pub in (resp.get("results") or []):
+                    for a in (pub.get("authorships") or []):
+                        author_obj = a.get("author") or {}
+                        if author_obj.get("id"):
+                            authors.append(author_obj)
+            except Exception as exc:
+                self.logger.warning(
+                    "OpenAlex works batch failed (offset %d): %s", i, exc
+                )
+
+        if not authors:
+            return []
+
+        import pandas as pd
+        df = (
+            pd.DataFrame(authors)
+            .groupby("id")
+            .agg(display_name=("display_name", "first"), count=("id", "size"))
+            .sort_values("count", ascending=False)
+            .head(50)
+            .reset_index()
+        )
+        df["name_std"] = df["display_name"].apply(_std_name)
+
+        if name_std is None:
+            return df["id"].tolist()[:5]
+
+        df = df.dropna(subset=["name_std"])
+        if df.empty:
+            return []
+
+        df["dist"] = df["name_std"].apply(lambda s: Levenshtein.distance(s, name_std))
+        close = df[df["dist"] <= max_edit_distance].sort_values(["dist", "count"], ascending=[True, False])
+        return close["id"].tolist()
 
     @staticmethod
     def _format_authorname(raw: str) -> str:

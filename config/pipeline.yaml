@@ -17,7 +17,13 @@ default_queries:
     OR AF-ID(60210160) OR AF-ID(60204331) OR AF-ID(126395205) OR AF-ID(128154174)
     OR AF-ID(121763255) OR AF-ID(126033832) OR AF-ID(127851587) OR AF-ID(126100075)
     OR AF-ID(126035869) OR AF-ID(126394243)
+  openalex+crossref: "authorships.institutions.lineage:i5124864|i4210122261|i4210129591,is_retracted:false,is_paratext:false"
   openalex: "authorships.institutions.lineage:i5124864|i4210122261|i4210129591,is_retracted:false,is_paratext:false"
+  datacite: >-
+    creators.affiliation.name:*EPFL* OR
+    creators.affiliation.name:"Ecole Polytechnique Federale de Lausanne" OR
+    creators.affiliation.name:"Swiss Federal Institute of Technology in Lausanne" OR
+    creators.affiliation.affiliationIdentifier:02s376052
   zenodo: 'parent.communities.entries.id:"3c1383da-d7ab-4167-8f12-4d8aa0cc637f"'
   crossref: '[{"query.affiliation": "EPFL"}, {"filter": "ror-id:02s376052"}]'
   epo: '(pa all "ECOLE POLYTECH* FED LAUSANNE*" OR pa any "EPFL") AND (pn=EP OR pn=WO)'

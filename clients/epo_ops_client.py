@@ -39,7 +39,8 @@ DEFAULT_ACRONYMS: Set[str] = {
 }
 
 accepted_doctypes = [
-    key for key in mappings.doctypes_mapping_dict["source_epo"].keys()
+    key for key, val in mappings.doctypes_mapping_dict["source_epo"].items()
+    if not val.get("rejected", False)
 ]
 
 _WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)

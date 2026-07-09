@@ -523,6 +523,72 @@ class DSpaceClientWrapper:
             )
             return None
 
+    def fetch_person_profile(self, sciper: str) -> dict | None:
+        """Fetch the Infoscience person profile for a SCIPER.
+
+        Returns a dict with dspace_uuid, infoscience_profile_url, openalex_id,
+        scopus_author_id, and researcher_id extracted from the DSpace item
+        metadata.  Returns None when no profile is found for the SCIPER.
+        """
+        items = self._search_objects(
+            query=f"epfl.sciperId:{sciper}",
+            page=0,
+            size=1,
+            sort="dc.date.accessioned,DESC",
+            configuration="person",
+        )
+        if not items:
+            return None
+
+        item = items[0]
+        md = item.metadata
+
+        def _first_value(key: str) -> str | None:
+            arr = md.get(key)
+            if not isinstance(arr, list) or not arr:
+                return None
+            v = (arr[0] or {}).get("value")
+            return str(v).strip() if v else None
+
+        def _all_values(key: str) -> list[str]:
+            arr = md.get(key)
+            if not isinstance(arr, list):
+                return []
+            return [str(e["value"]).strip() for e in arr if e and e.get("value")]
+
+        handle = getattr(item, "handle", None)
+        url = (
+            f"https://infoscience.epfl.ch/handle/{handle}"
+            if handle
+            else _first_value("dc.identifier.uri")
+        )
+
+        import json as _json
+        raw_variants = _all_values("crisrp.name.variant")
+        name_variants = _json.dumps(raw_variants) if raw_variants else None
+
+        return {
+            "dspace_uuid": item.uuid,
+            "infoscience_profile_url": url,
+            "openalex_id": _first_value("person.identifier.openalex"),
+            "scopus_author_id": _first_value("person.identifier.scopus-author-id"),
+            "researcher_id": _first_value("person.identifier.rid"),
+            "name_variants": name_variants,
+        }
+
+    def create_blank_workspace(self, collection_id: str):
+        """Create an empty workspace item in the given collection (no external source)."""
+        try:
+            response = self.client.create_workspaceitem(collection_id)
+            if response and isinstance(response, dict) and "id" in response:
+                self.logger.info("Blank workspace item created with ID: %s", response["id"])
+                return response
+            self.logger.error("Failed to create blank workspace item: no 'id' in response.")
+            return None
+        except Exception as e:
+            self.logger.error("Error creating blank workspace item: %s", e)
+            return None
+
     def push_publication(self, source, wos_id, collection_id):
         try:
             # Attempt to create a workspace item from the external source
@@ -568,6 +634,52 @@ class DSpaceClientWrapper:
 
     def delete_workflow(self, workflow_id):
         return self.client.delete_workflow_item(workflow_id)
+
+    def reject_to_workspace(
+        self,
+        workflow_id: int | str,
+        item_uuid: str | None = None,
+    ) -> tuple[bool, str, int | None]:
+        """Reject a workflow item back to workspace (draft) without deleting it.
+
+        Calls DELETE /workflow/workflowitems/{id} without ?expunge=true — DSpace
+        rejects the item back to the submitter's workspace as a new draft and
+        returns the new workspace item ID in the response body.
+
+        The original workflow_id is gone after this call; the underlying item UUID
+        is the only stable reference. The new workspace ID is resolved from the
+        response body (primary) or via find_workspaceitem_by_item_uuid (fallback).
+
+        Returns (success, message, new_workspace_id).
+        """
+        try:
+            url = f"{self.client.API_ENDPOINT}/workflow/workflowitems/{int(float(str(workflow_id)))}"
+            response = self.client.api_delete(url)
+            if response.status_code not in (200, 201, 204):
+                self.logger.error(
+                    "reject_to_workspace failed for %s: %s %s",
+                    workflow_id, response.status_code, response.text,
+                )
+                return False, f"Échec du rejet ({response.status_code}).", None
+
+            self.logger.info("Workflow item %s rejected back to workspace.", workflow_id)
+
+            new_ws_id = self._parse_workspace_id_from_response(response)
+            if new_ws_id is not None:
+                self.logger.info("New workspace item %s found in response.", new_ws_id)
+            elif item_uuid:
+                new_ws_id = self.find_workspaceitem_by_item_uuid(item_uuid)
+                if new_ws_id is not None:
+                    self.logger.info("New workspace item %s found via UUID search.", new_ws_id)
+                else:
+                    self.logger.warning(
+                        "Could not resolve new workspace ID for item %s after rejection.", item_uuid
+                    )
+
+            return True, "Item renvoyé en draft.", new_ws_id
+        except Exception as exc:
+            self.logger.error("reject_to_workspace error: %s", exc)
+            return False, f"Erreur : {exc}", None
 
     def find_workspaceitem_by_item_uuid(self, item_uuid: str) -> int | None:
         """Return the workspace item ID for the given DSpace item UUID, or None if not found.
@@ -850,6 +962,59 @@ class DSpaceClientWrapper:
 
         # No identifiers at all — cannot determine status
         return "still_pending", None, None
+
+    def fetch_person_publications(
+        self,
+        person_uuid: str,
+        page_size: int = 100,
+    ) -> list[dict]:
+        """Return all Infoscience publications linked to a person UUID.
+
+        Uses the ``RELATION.Person.researchoutputs`` discovery configuration
+        with ``scope={person_uuid}`` — follows the explicit CRIS authorship
+        link rather than matching free-text metadata, so it captures all
+        linked records including those without a stored DOI or author-authority
+        field value.  (Per the Infoscience REST API documentation.)
+
+        Each returned dict has: uuid, doi, title, pub_year, dc_type, handle.
+        """
+        dsos = self._search_objects(
+            query=None,
+            page=0,
+            size=page_size,
+            dso_type="item",
+            configuration="RELATION.Person.researchoutputs",
+            scope=person_uuid,
+            max_pages=200,
+        )
+
+        results: list[dict] = []
+        for dso in dsos:
+            md = dso.metadata
+            doi_entries = md.get("dc.identifier.doi", [])
+            doi = doi_entries[0].get("value", "").strip() if doi_entries else None
+            title_entries = md.get("dc.title", [])
+            title = title_entries[0].get("value", "").strip() if title_entries else None
+            year_entries = md.get("dc.date.issued", [])
+            pub_year = None
+            if year_entries:
+                raw_year = year_entries[0].get("value", "")
+                pub_year = raw_year[:4] if raw_year else None
+            handle_entries = md.get("dc.identifier.uri", [])
+            handle = handle_entries[0].get("value", "").strip() if handle_entries else None
+            type_entries = md.get("dc.type", [])
+            dc_type = type_entries[0].get("value", "").strip() if type_entries else None
+            results.append(
+                {
+                    "uuid": dso.uuid,
+                    "doi": doi or None,
+                    "title": title,
+                    "pub_year": pub_year,
+                    "dc_type": dc_type,
+                    "handle": handle,
+                }
+            )
+        return results
 
     def search_authority(
         self,

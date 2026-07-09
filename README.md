@@ -5,7 +5,9 @@
 
 Automated harvesting, deduplication, enrichment, and loading of publication data from multiple external sources into **[Infoscience](https://infoscience.epfl.ch) / [DSpace-CRIS](https://wiki.lyrasis.org/display/DSDOC7x)**.
 
-**Sources:** [Scopus](https://dev.elsevier.com/) · [Web of Science](https://developer.clarivate.com/) · [Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/) · [OpenAlex](https://docs.openalex.org/) · [Zenodo](https://developers.zenodo.org/) · [EPO OPS](https://developers.epo.org/)
+**Sources:** [Scopus](https://dev.elsevier.com/) · [Web of Science](https://developer.clarivate.com/) · [Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/) · [OpenAlex](https://docs.openalex.org/) · [DataCite](https://support.datacite.org/docs/api) · [Zenodo](https://developers.zenodo.org/) · [EPO OPS](https://developers.epo.org/)
+
+Two companion subsystems share the same codebase and infrastructure: **Researcher Monitor** (per-researcher publication tracking and gap analysis against Infoscience) and **OA Monitor** (institution-wide Open Access compliance monitoring against the Swiss NOAM typology, plus Read & Publish / APC tracking).
 
 ---
 
@@ -19,13 +21,15 @@ Automated harvesting, deduplication, enrichment, and loading of publication data
 6. [Authentication](#authentication)
 7. [Scheduled runs](#scheduled-runs)
 8. [CLI reference](#cli-reference)
-9. [Environments](#environments-dev--test--prod)
-10. [Environment variables](#environment-variables)
-11. [Architecture](#architecture)
-12. [Output structure](#output-structure)
-13. [Incremental logic](#incremental-logic)
-14. [License](#license)
-15. [Citation](#citation)
+9. [Researcher Monitor](#researcher-monitor)
+10. [OA Monitor](#oa-monitor)
+11. [Environments](#environments-dev--test--prod)
+12. [Environment variables](#environment-variables)
+13. [Architecture](#architecture)
+14. [Output structure](#output-structure)
+15. [Incremental logic](#incremental-logic)
+16. [License](#license)
+17. [Citation](#citation)
 
 ---
 
@@ -87,7 +91,7 @@ python3 data_pipeline/main.py --env prod
 A web dashboard for monitoring run history, browsing and curating publications, and launching pipeline runs without touching the CLI.
 
 ```bash
-./run_ui.sh          # default port 8501
+./run_ui.sh          # default port 8500
 ./run_ui.sh 8502     # custom port
 # or directly:
 streamlit run app.py
@@ -98,11 +102,15 @@ streamlit run app.py
 | Page | Role | Description |
 |---|---|---|
 | 🏠 Tableau de bord | all | KPIs, 30-day trend chart, recent runs, per-source breakdown, charts by type / OA status / year / unit / journal / PDF proportion |
-| 🚀 Lancer un run | admin | Form to configure and launch the pipeline; live log streaming with stop button |
+| 🚀 Lancer un run | admin, curator | Form to configure and launch the pipeline; live log streaming with stop button |
 | ⏰ Programmation | admin | Create and manage scheduled runs; cron-based triggers; enable/disable toggle; run-now button; scheduler status indicator |
 | 📋 Publications | all | Paginated, filterable datatable with inline modals; OA / licence / PDF badges; EPFL author + unit aggregation; weak-status flag; direct links to DSpace workspace, workflow (`mydspace`), and published item; CSV and Excel report download |
 | 📊 Statistiques | all | Per-run funnel by source, publication type breakdown, EPFL author and unit tabs |
+| 🧑‍🔬 Chercheurs | all | Researcher Monitor UI — registry (search/filter by unit, school, ORCID/OpenAlex/Infoscience linkage), per-researcher gap analysis, manual sync/harvest/analyze actions with live logs (see [Researcher Monitor](#researcher-monitor)) |
+| 🔎 OA Monitor | all | Harvest, enrichment, R&P (Read & Publish/APC) tracking, and NOAM export UI (see [OA Monitor](#oa-monitor)) |
+| 🧹 Nettoyage | admin, curator | Search and bulk-remove stray workspace/workflow items directly in DSpace (reject to draft or delete permanently) |
 | ⚙️ Configuration | admin | Environment variable status read directly from `.env.{env}` ; DuckDB file path and size; `.env` template |
+| 📖 Aide | all | Curator guide, rendered from a local Markdown documentation file |
 
 ### Dashboard charts
 
@@ -136,12 +144,13 @@ The environment selector in the sidebar switches between `dev`, `test`, and `pro
 
 ## Authentication
 
-The Streamlit UI requires login. Two roles are available:
+The Streamlit UI requires login. Three roles are available:
 
 | Role | Pages |
 |---|---|
 | `admin` | All pages |
-| `reporting` | Tableau de bord · Publications · Statistiques |
+| `curator` | Tableau de bord · Lancer un run · Publications · Statistiques · Chercheurs · OA Monitor · Nettoyage · Aide |
+| `reporting` | Tableau de bord · Publications · Statistiques · Chercheurs · OA Monitor · Aide |
 
 The CLI pipeline is **not** protected by authentication — credentials are only required for the web UI.
 
@@ -150,6 +159,7 @@ The CLI pipeline is **not** protected by authentication — credentials are only
 ```bash
 # Create the first users (passwords are prompted interactively)
 python -m ui.auth add admin    admin
+python -m ui.auth add curator  curator
 python -m ui.auth add reporter reporting
 
 # Other management commands
@@ -228,7 +238,7 @@ python3 data_pipeline/main.py
 python3 data_pipeline/main.py --sources scopus,wos,openalex
 ```
 
-Available: `wos`, `scopus`, `crossref`, `openalex`, `zenodo`, `epo`
+Available: `wos`, `scopus`, `crossref`, `openalex`, `openalex+crossref`, `datacite`, `zenodo`, `epo`
 
 ### Query overrides
 
@@ -294,6 +304,8 @@ Each flag also accepts a **file path** (one ID per line):
 python3 data_pipeline/main.py --scopus-ids ./ids/scopus_ids.txt
 ```
 
+> **Researcher Monitor internals:** `--run-type researcher_import`, `--forced-sciper`, `--exclude-dois`, `--exclude-openalex-ids`, and `--exclude-titles` are used internally by the [Researcher Monitor](#researcher-monitor) UI to launch a targeted, pre-filtered import for a single researcher — not intended for direct manual use.
+
 ### Run modes
 
 | Flag | Effect |
@@ -321,6 +333,76 @@ python3 data_pipeline/main.py \
   --wos-ids    "A-1234-2010" \
   --sources scopus,wos,openalex,crossref --dry-run
 ```
+
+---
+
+## Researcher Monitor
+
+A companion subsystem (`researcher_monitor/` package + 🧑‍🔬 **Chercheurs** UI page) that tracks individual researchers' publications and flags gaps against Infoscience — independent of the institution-wide harvest window used by the main pipeline.
+
+```bash
+# Sync the researcher registry from the EPFL People API (discover new + offboard departed)
+python -m researcher_monitor.main --action sync
+
+# Re-enrich existing registry entries by SCIPER (no discovery, no offboarding)
+python -m researcher_monitor.main --action refresh --sciper 349140
+
+# Harvest publications from OpenAlex / ORCID for active researchers
+python -m researcher_monitor.main --action harvest --sciper 349140,120091 --start-year 2020
+
+# Compare harvested publications against Infoscience and flag gaps
+python -m researcher_monitor.main --action analyze --sciper 349140
+
+# Run sync + harvest + analyze in sequence
+python -m researcher_monitor.main --action all
+```
+
+| Module | Responsibility |
+|---|---|
+| `registry.py` | Syncs the researcher registry from the EPFL People API (accreditation-based scope), merges per-SCIPER, batch-fetches ORCID IDs |
+| `person_harvester.py` | Harvests OpenAlex + ORCID publications per researcher, with DOI-based and title+year-fallback deduplication |
+| `gap_analyzer.py` | Compares harvested publications against Infoscience (via the CRIS `RELATION.Person.researchoutputs` relation), classifying each as matched / missing / ambiguous using the same type-aware rules as the main deduplicator |
+| `import_trigger.py` | Builds and launches a targeted `data_pipeline/main.py --run-type researcher_import` run for a single researcher, excluding already-matched or pre-rejected publications |
+
+Results (registry, harvested publications, gap analysis) are persisted in the same per-environment DuckDB (`data/pipeline_{env}.duckdb`) as the main pipeline, in dedicated tables, and browsed through the **Chercheurs** UI page — which also exposes manual sync/harvest/analyze actions with live log streaming and a one-click targeted import for a given researcher's missing publications.
+
+---
+
+## OA Monitor
+
+A companion subsystem (`oa_monitor/` package + 🔎 **OA Monitor** UI page) that monitors institution-wide Open Access compliance against the Swiss National OA Monitor (NOAM) typology, and tracks Read & Publish (R&P) / APC agreements against what has actually landed in Infoscience.
+
+```bash
+# Harvest Infoscience items for a year range into the OA Monitor DB
+python oa_monitor/run_oa_enricher.py --step harvest --year-from 2022 --year-to 2024
+
+# Enrich with OpenAlex + Unpaywall OA metadata and classify (Gold/Green/Hybrid/Diamond/Closed)
+python oa_monitor/run_oa_enricher.py --step enrich --year-from 2022 --year-to 2024
+
+# Export the NOAM-format CSVs + Excel report
+python oa_monitor/run_oa_enricher.py --step export-noam --year-from 2022 --year-to 2024
+
+# Consolidate Read & Publish / APC tracking workbooks (data/apc/{publisher}/{contract}/*.xlsx)
+python oa_monitor/run_oa_enricher.py --step consolidate-rap
+
+# Join R&P tracking against enriched Infoscience data to find gaps
+python oa_monitor/run_oa_enricher.py --step rap-gaps
+
+# Run everything in one pass
+python oa_monitor/run_oa_enricher.py --step all --year-from 2022 --year-to 2024
+```
+
+| Step | Description |
+|---|---|
+| `harvest` | Queries Infoscience (DSpace-CRIS/Solr) for items in the year range, via the COAR `types_authority` index rather than free-text `dc.type` (language-independent) |
+| `enrich` | Reconciles each item against OpenAlex and Unpaywall, resolves version/licence, and classifies OA status per the NOAM typology (Diamond → Gold → Hybrid → Green → Closed), including DOAJ membership as an independent Gold signal |
+| `export-noam` | Writes NOAM-format CSVs and an Excel summary to `data/noam/` |
+| `consolidate-rap` | Parses every publisher's R&P/APC tracking workbook under `data/apc/{publisher}/{contract}/*.xlsx` into a single consolidated table |
+| `rap-gaps` | Joins consolidated R&P tracking against enriched Infoscience data by DOI to flag articles that are missing, not yet open, or need manual review |
+| `inspect` | Prints a summary of what is currently available in the OA Monitor DB |
+| `purge` / `purge-rap` | Clear harvested/enriched data for a year range (or R&P tables) without touching the source workbooks in `data/apc/` |
+
+Data is persisted separately from the main pipeline, in `data/oa_work/oa_monitor_{env}.duckdb` — this avoids write-lock contention with the main pipeline's UI and database. The **OA Monitor** UI page exposes all of the above as a guided form (▶ Lancer), a compliance dashboard (📊 Baromètre) with OA/type/year breakdowns, and a filterable browser over enriched data and R&P gaps (📂 Résultats).
 
 ---
 
@@ -403,6 +485,17 @@ Copy `.sample.env` to the appropriate `.env.*` file(s) and fill in the values.
 | `OPENALEX_DATA_VERSION` | OpenAlex | API data version (default: `2`) |
 | `ZENODO_API_KEY` | [Zenodo](https://developers.zenodo.org/) | Authenticated rate limit |
 | `ORCID_API_TOKEN` | [ORCID](https://info.orcid.org/documentation/api-tutorials/) | Bearer token for author reconciliation |
+| `ORCID_REPOSITORY_SOURCE_NAME` | ORCID | Source name recorded when writing works back to a researcher's ORCID record |
+
+> [DataCite](https://support.datacite.org/docs/api) requires no API key — its REST API is public.
+
+### Researcher registry (Researcher Monitor)
+
+| Variable | Default | Description |
+|---|---|---|
+| `EPFL_ACCRED_CLASS_IDS` | `5,6,10` | Comma-separated EPFL accreditation class IDs in scope for the researcher registry sync |
+| `EPFL_ACCRED_POSITION_ID` | `65,70,123,146,181,184,182,186,187,189,1456,256,208` | Comma-separated EPFL accreditation position IDs in scope |
+| `EPFL_ACCRED_STATUS_ID` | `1` | `1` = internal staff, `2` = hosted researchers. Leave unset to include all statuses |
 
 ### Polite pool / HTTP
 
@@ -427,14 +520,33 @@ The pipeline follows a strict linear sequence: **Harvest → Deduplicate → Enr
 
 ```
 data_pipeline/
-├── main.py          Entry point — CLI args, orchestration, DuckDB persistence
-├── harvester.py     One Harvester subclass per source (WoS, Scopus, Crossref, …)
-├── deduplicator.py  Cross-source dedup + DSpace-aware dedup
-├── enricher.py      EPFL author reconciliation, OA/full-text enrichment
-├── loader.py        Builds DSpace-CRIS payloads, calls DSpaceClientWrapper
-└── reporting.py     Excel report generation + SMTP delivery
+├── main.py                     Entry point — CLI args, orchestration, DuckDB persistence
+├── harvester.py                One Harvester subclass per source (WoS, Scopus, Crossref, OpenAlex, DataCite, Zenodo, EPO)
+├── deduplicator.py             Cross-source dedup + DSpace-aware dedup
+├── enricher.py                 EPFL author reconciliation, OA/full-text enrichment
+├── loader.py                   Builds DSpace-CRIS payloads, calls DSpaceClientWrapper
+├── reporting.py                Excel report generation + SMTP delivery
+├── infoscience_status_sync.py  Re-checks imported item status (workspace/workflow/published/rejected) post-import
+└── PDFUpdater.py               Legacy PDF upload + file-metadata patch helper (not currently wired into main.py)
 
-clients/             One module per external API
+oa_monitor/          Open Access compliance monitoring (NOAM typology) + R&P/APC tracking — see [OA Monitor](#oa-monitor)
+├── oa_harvester.py      Infoscience (DSpace-CRIS/Solr) harvester, COAR authority-scoped
+├── oa_enricher.py       OpenAlex + Unpaywall reconciliation and NOAM export
+├── oa_classifier.py     Pure OA classification rules (Diamond/Gold/Hybrid/Green/Closed)
+├── type_mapping.py      COAR authority code ↔ NOAM resource type ↔ human-readable label
+├── rap_consolidator.py  Parses publisher R&P/APC tracking workbooks (data/apc/)
+├── rap_gap_analysis.py  Joins R&P tracking against enriched Infoscience data
+└── run_oa_enricher.py   CLI entry point (--step harvest|enrich|export-noam|consolidate-rap|rap-gaps|…)
+
+researcher_monitor/  Per-researcher publication tracking — see [Researcher Monitor](#researcher-monitor)
+├── registry.py          Syncs the researcher registry from the EPFL People API
+├── person_harvester.py  OpenAlex + ORCID harvesting per researcher, with dedup
+├── gap_analyzer.py       Compares harvested publications against Infoscience
+├── import_trigger.py    Launches a targeted data_pipeline/main.py import for one researcher
+└── main.py               CLI entry point (--action sync|refresh|harvest|analyze|all)
+
+clients/             One module per external API (scopus, wos, crossref, openalex, datacite,
+                     zenodo, epo_ops, unpaywall, orcid, api_epfl, doi, dspace_client_wrapper)
 config/
 ├── __init__.py      YAML loader — exposes source_order, default_queries, unit_types, …
 ├── pipeline.yaml    Default harvest queries, source priority order, unit filters, Scopus AF-IDs
@@ -446,22 +558,31 @@ config/
     └── types_authority.yaml  dc.type values → COAR authority identifiers
 mappings.py          Loads the above YAML files; exposes classify_record_type, get_version_mapping, …
 env_loader.py        Environment selection and .env.* loading
-db/pipeline_db.py    DuckDB persistence layer (run history, publications, authors)
+db/pipeline_db.py    DuckDB persistence layer (run history, publications, authors, researcher registry)
 ui/
 ├── constants.py     Design tokens (PRIMARY, SECONDARY, C_GREEN …), SOURCES list, lookup tables
 ├── helpers.py       Shared helpers — icons, badges, metric cards, fmt_dur/fmt_dt, get_db
 ├── pub_helpers.py   Publication business logic — is_weak, oa_text, lic_text, source_api_url
 ├── run_state.py     File-based mutex (one pipeline run at a time, per environment)
-├── auth.py          Streamlit authentication + role-based ACL
+├── auth.py          Streamlit authentication + role-based ACL (admin / curator / reporting)
 ├── styles.css       External stylesheet (CSS custom properties injected from app.py)
+├── components/
+│   ├── pub_table.py        Publications table rendering + per-row dialogs
+│   ├── run_table.py        Runs table — filterable, paginated, review tracking
+│   ├── researcher_table.py Researcher registry cards + gap-analysis detail view
+│   └── researcher_jobs.py  Job-lock + launch helpers for Researcher Monitor actions
 └── pages/
-    ├── dashboard.py      KPI tiles, trend charts, recent runs
-    ├── run_launcher.py   Pipeline launch form + live log streaming
-    ├── scheduling.py     Scheduled run CRUD
-    ├── publications.py   Filterable paginated publications table
-    ├── statistics.py     Per-run and global analytical charts
-    └── configuration.py  Environment variables status, DuckDB info
-app.py               Streamlit entry point — setup, sidebar, page router (~200 lines)
+    ├── dashboard.py          KPI tiles, trend charts, recent runs
+    ├── run_launcher.py       Pipeline launch form + live log streaming
+    ├── scheduling.py         Scheduled run CRUD
+    ├── publications.py       Filterable paginated publications table
+    ├── statistics.py         Per-run and global analytical charts
+    ├── researcher_monitor.py Researcher Monitor UI (Chercheurs)
+    ├── oa_monitor.py         OA Monitor UI (harvest/enrich form, barometer, data browser)
+    ├── cleanup.py            Bulk workspace/workflow item removal (Nettoyage)
+    ├── configuration.py      Environment variables status, DuckDB info
+    └── help.py               Curator guide (Aide)
+app.py               Streamlit entry point — setup, sidebar, page router
 ```
 
 **Key design points:**
@@ -473,8 +594,9 @@ app.py               Streamlit entry point — setup, sidebar, page router (~200
 - All data-driven configuration (queries, mappings, collection UUIDs) lives in `config/pipeline.yaml` and `config/mappings/*.yaml`. To add a new document type, update `doctypes.yaml`; to update a collection UUID after a DSpace migration, update `collections.yaml` — no Python changes required.
 - Source priority for deduplication merging is defined in `config/pipeline.yaml → source_order`.
 - The stylesheet lives in `ui/styles.css` (pure CSS); `app.py` injects colour tokens as CSS custom properties (`var(--primary)`, `var(--secondary)`, etc.) from `ui/constants.py` via a small inline `<style>` block — no Python templating in the stylesheet itself.
-- Each UI page is a standalone module under `ui/pages/` exposing a single `render(db, ...)` function. `app.py` is a thin router that calls the relevant `render()` after sidebar and authentication setup.
+- Each UI page is a standalone module under `ui/pages/` exposing a single `render(db, ...)` function. `app.py` is a thin router that calls the relevant `render()` after sidebar and authentication setup. Larger pages (Chercheurs, OA Monitor) extract reusable rendering/business logic into `ui/components/`.
 - The run launcher and scheduling pages check for `DS_API_ENDPOINT` and `DS_API_TOKEN` in the active `.env.{env}` file before allowing any run to start — a misconfigured environment blocks launch at the UI level, not at pipeline runtime.
+- `oa_monitor/` and `researcher_monitor/` are self-contained packages with their own CLI entry points, independent of `data_pipeline/main.py`'s harvest window and dedup pipeline. `oa_monitor` persists to its own DuckDB file (`data/oa_work/oa_monitor_{env}.duckdb`) to avoid write-lock contention; `researcher_monitor` shares `data/pipeline_{env}.duckdb` but writes to dedicated tables.
 
 ---
 
@@ -503,6 +625,12 @@ data/
 ```
 
 Run history, per-source statistics, publications, EPFL authors, and unit links are also written to DuckDB (`data/pipeline_{env}.duckdb`) and are browsable through the Streamlit UI.
+
+**OA Monitor and Researcher Monitor** use separate storage under `data/`:
+- `data/oa_work/oa_monitor_{env}.duckdb` — harvested/enriched OA data and R&P gap analysis (year-partitioned)
+- `data/noam/` — exported NOAM CSVs and Excel reports
+- `data/apc/{publisher}/{contract}/*.xlsx` — source Read & Publish/APC tracking workbooks (consolidated, never modified)
+- Researcher registry, harvested publications, and gap analysis are written to dedicated tables in the main `data/pipeline_{env}.duckdb`
 
 ---
 

@@ -15,7 +15,9 @@ from clients.openalex_client import OpenAlexClient
 from clients.crossref_client import CrossrefClient
 from clients.datacite_client import DataCiteClient
 from clients.epo_ops_client import EPOClient
+from clients.doi_client import resolve_agencies
 from utils import get_pipeline_logger
+import mappings as _mappings
 
 
 class Harvester(abc.ABC):
@@ -296,6 +298,40 @@ class ZenodoHarvester(Harvester):
 
         return df
 
+
+_ARXIV_URL_RE = re.compile(r'arxiv\.org/abs/([^\s?#]+)', re.IGNORECASE)
+_ARXIV_VERSION_RE = re.compile(r'v\d+$')
+_OAI_ARXIV_ID_RE = re.compile(r'^pmh:oai:arxiv\.org:(.+)$', re.IGNORECASE)
+
+
+def _extract_arxiv_id(url) -> str | None:
+    """Extract the arxiv ID from a landing page URL, stripping any version suffix.
+
+    Handles http/https and the old category format (e.g. math.AG/0601001).
+    Returns None for non-arxiv URLs, empty input, or None.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    m = _ARXIV_URL_RE.search(url)
+    if not m:
+        return None
+    arxiv_id = _ARXIV_VERSION_RE.sub('', m.group(1))
+    return arxiv_id if arxiv_id else None
+
+
+def _extract_arxiv_id_from_oai_id(oai_id) -> str | None:
+    """Extract the arxiv ID from an OpenAlex primary_location.id OAI-PMH identifier.
+
+    Format: "pmh:oai:arXiv.org:<arxiv_id>" — stable across modern and old-style
+    category IDs, never carries a version suffix. Preferred over landing-page
+    URL parsing when available.
+    """
+    if not oai_id or not isinstance(oai_id, str):
+        return None
+    m = _OAI_ARXIV_ID_RE.match(oai_id)
+    return m.group(1) if m else None
+
+
 class OpenAlexHarvester(Harvester):
     """
     OpenAlex Harvester.
@@ -305,6 +341,11 @@ class OpenAlexHarvester(Harvester):
         self, start_date: str, end_date: str, query: str, format: str = "ifs3"
     ):
         super().__init__("OpenAlex", start_date, end_date, query, format)
+
+    # Fields that are never overwritten by agency enrichment.
+    _ENRICH_KEEP = {"source", "internal_id", "authors"}
+    # Sentinel values considered "missing" for enrichment purposes.
+    _ENRICH_EMPTY = {None, "", "unknown"}
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
         """
@@ -322,38 +363,142 @@ class OpenAlexHarvester(Harvester):
         - `authors`: A list of authors, each represented as a dictionary.
         """
         self.logger.info("Fetching records from OpenAlex with query: %s", self.query)
-        # Formulate the filter for the query
         filters = (
             f"from_publication_date:{self.start_date},"
             f"to_publication_date:{self.end_date},"
             f"{self.query}"
         )
 
-        # Count total publications to manage progress logging
         total = OpenAlexClient.count_results(filter=filters)
         self.logger.info("[OpenAlex] %s result(s) found", total)
 
         try:
-            openalex_records = OpenAlexClient.fetch_records(
-                format=self.format, filter=filters
-            )
+            raw_records = OpenAlexClient.fetch_records(format="openalex", filter=filters)
         except Exception as e:
             self.logger.error("[OpenAlex] Failed to fetch records: %s", e)
             return pd.DataFrame()
 
-        if not openalex_records:
+        if not raw_records:
             self.logger.info("[OpenAlex] No records returned")
             return pd.DataFrame()
 
-        df = pd.DataFrame(openalex_records)
+        # Process to ifs3 in-place and track which DOIs lack type_crossref.
+        ifs3_records = []
+        dois_needing_enrichment: list[str] = []
+        for raw in raw_records:
+            rec = OpenAlexClient._process_record(raw, self.format)
+            if rec is None:
+                continue
+            rec["source"] = "openalex"
+            if not rec.get("doi"):
+                arxiv_id = _extract_arxiv_id_from_oai_id(
+                    rec.get("primary_location_id")
+                ) or _extract_arxiv_id(rec.get("primary_landing_page_url"))
+                if arxiv_id:
+                    rec["doi"] = f"10.48550/arXiv.{arxiv_id}"
+            ifs3_records.append(rec)
+            if not raw.get("type_crossref") and rec.get("doi"):
+                dois_needing_enrichment.append(rec["doi"])
 
+        if not ifs3_records:
+            return pd.DataFrame()
+
+        # Agency enrichment for records without type_crossref.
+        if dois_needing_enrichment:
+            ifs3_records = self._enrich_via_agency(ifs3_records, set(dois_needing_enrichment))
+
+        df = pd.DataFrame(ifs3_records)
         if "ifs3_collection" in df.columns:
             df = df.query('ifs3_collection != "unknown"')
 
-        df = df.copy()
-        df["source"] = "openalex"
-
         return df.reset_index(drop=True)
+
+    def _enrich_via_agency(self, records: list[dict], target_dois: set[str]) -> list[dict]:
+        """Resolve agency for target_dois then enrich matching records from Crossref or DataCite."""
+        agency_map = resolve_agencies(list(target_dois))
+        self.logger.info("[OpenAlex] Agency lookup: %d DOI(s) → %s", len(target_dois), agency_map)
+
+        doi_to_agency = {
+            doi.lower().lstrip("https://doi.org/").lstrip("http://dx.doi.org/"): ra
+            for doi, ra in agency_map.items()
+        }
+
+        result = []
+        for rec in records:
+            doi = rec.get("doi") or ""
+            doi_key = doi.lower().lstrip("https://doi.org/").lstrip("http://dx.doi.org/")
+            agency = doi_to_agency.get(doi_key) if doi_key in doi_to_agency else None
+
+            # Persist the resolved agency so the loader can select the correct
+            # DSpace external source without an additional doi.org/ra call.
+            rec["doi_agency"] = agency or ""
+
+            agency_rec = None
+
+            if agency == "crossref":
+                try:
+                    agency_rec = CrossrefClient.fetch_record_by_unique_id(doi=doi, format=self.format)
+                    if agency_rec:
+                        rec = self._merge_missing(rec, agency_rec)
+                        self.logger.debug("[OpenAlex] Crossref-enriched DOI %s", doi)
+                except Exception as exc:
+                    self.logger.warning("[OpenAlex] Crossref enrichment failed for %s: %s", doi, exc)
+
+            elif agency == "datacite":
+                try:
+                    agency_rec = DataCiteClient.fetch_record_by_unique_id(doi=doi, format=self.format)
+                    if agency_rec:
+                        rec = self._merge_missing(rec, agency_rec)
+                        self.logger.debug("[OpenAlex] DataCite-enriched DOI %s", doi)
+                except Exception as exc:
+                    self.logger.warning("[OpenAlex] DataCite enrichment failed for %s: %s", doi, exc)
+
+                # For Zenodo DOIs the DataCite record often lacks venue metadata.
+                # Fetch from Zenodo REST API as a secondary enrichment pass.
+                import re as _re
+                _m = _re.match(r"10\.5281/zenodo\.(\d+)$", doi_key, _re.I)
+                if _m:
+                    try:
+                        zenodo_rec = ZenodoClient.fetch_record_by_unique_id(
+                            _m.group(1), format=self.format
+                        )
+                        if zenodo_rec:
+                            rec = self._merge_missing(rec, zenodo_rec)
+                            # Zenodo type/collection takes final precedence for Zenodo DOIs.
+                            agency_rec = zenodo_rec
+                            self.logger.debug("[OpenAlex] Zenodo-enriched DOI %s", doi)
+                    except Exception as exc:
+                        self.logger.warning("[OpenAlex] Zenodo enrichment failed for %s: %s", doi, exc)
+
+            # The agency record is authoritative for type and collection: its DOI
+            # registration determines the correct DSpace form, which must be
+            # consistent with the external source used at load time.
+            # Exception: if the original OpenAlex doctype is explicitly rejected,
+            # preserve the rejection — the agency must not resurrect a filtered type.
+            if agency_rec:
+                oa_doctype = rec.get("doctype", "")
+                oa_entry = _mappings.doctypes_mapping_dict.get(
+                    "source_openalex", {}
+                ).get(oa_doctype, {})
+                if not oa_entry.get("rejected", False):
+                    for field in ("doctype", "dc.type", "dc.type_authority",
+                                  "ifs3_collection", "ifs3_collection_id"):
+                        val = agency_rec.get(field)
+                        if val and val not in self._ENRICH_EMPTY:
+                            rec[field] = val
+
+            result.append(rec)
+        return result
+
+    def _merge_missing(self, base: dict, supplement: dict) -> dict:
+        """Return base with empty/unknown fields filled from supplement."""
+        merged = dict(base)
+        for key, val in supplement.items():
+            if key in self._ENRICH_KEEP:
+                continue
+            if merged.get(key) in self._ENRICH_EMPTY and val not in self._ENRICH_EMPTY:
+                merged[key] = val
+        return merged
 
 class CrossrefHarvester(Harvester):
     """
@@ -601,17 +746,20 @@ class DataCiteHarvester(Harvester):
         self.filters = filters or {}
 
     def fetch_and_parse_publications(self) -> pd.DataFrame:
-        # Construct DataCite API filters with date range
-        api_filters = {
-            "published": f"{self.start_date},{self.end_date}",
-            "state": "findable",
-        }
+        # DataCite REST date filters (published/registered/created) only accept yyyy.
+        # For day-level precision on newly-registered DOIs, inject a Lucene range on
+        # the registered field into the query string. 'updated' is intentionally avoided
+        # because it matches metadata edits on old records, producing excessive noise.
+        date_clause = f"registered:[{self.start_date} TO {self.end_date}]"
+        combined_query = f"({self.query}) AND {date_clause}" if self.query else date_clause
+
+        api_filters = {"state": "findable"}
         api_filters.update(self.filters)
 
-        self.logger.debug("[DataCite] Filters: %s", api_filters)
+        self.logger.debug("[DataCite] Query: %s | Filters: %s", combined_query, api_filters)
 
         total = DataCiteClient.count_results(
-            query=self.query,
+            query=combined_query,
             filters=api_filters,
         )
         self.logger.info("[DataCite] %s result(s) found", total)
@@ -622,7 +770,7 @@ class DataCiteHarvester(Harvester):
         # Use classic page-number-based pagination to fetch all records
         recs = DataCiteClient.fetch_records(
             format=self.format,
-            query=self.query,
+            query=combined_query,
             filters=api_filters,
             page_size=100,  # Maximize efficiency
         )

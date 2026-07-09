@@ -11,7 +11,7 @@ import streamlit as st
 
 from db.pipeline_db import PipelineDB
 from ui.helpers import page_title
-from ui.pub_helpers import is_weak, oa_text, lic_text, source_api_url
+from ui.pub_helpers import is_weak, oa_text, lic_text, safe_int, source_api_url
 from ui.components.pub_table import render_pub_component
 from ui.constants import INFOSCIENCE_STATUS_LABELS, INFOSCIENCE_STATUSES
 
@@ -107,8 +107,14 @@ def _render_filters(db: PipelineDB) -> None:
             )
         with _r2[3]:
             st.selectbox(
-                "PDF récupéré", ["Tous", "Avec PDF", "Sans PDF"],
-                help="Filtre sur la présence d'un PDF en accès libre.", key="pf_pdf",
+                "PDF récupéré",
+                ["Tous", "Avec PDF", "Sans PDF", "Manquant (licence CC)"],
+                help=(
+                    "Filtre sur la présence d'un PDF en accès libre.\n"
+                    "« Manquant (licence CC) » : OA avec licence CC/public-domain "
+                    "mais sans PDF récupéré — même critère que les contrôles qualité post-import."
+                ),
+                key="pf_pdf",
             )
 
         # ── Ligne 3 : signaux qualité ─────────────────────────────────────────
@@ -197,7 +203,7 @@ def _render_filters(db: PipelineDB) -> None:
             st.markdown("<br>", unsafe_allow_html=True)
             st.button(
                 "Réinitialiser les filtres", icon=":material/refresh:",
-                on_click=_reset, use_container_width=True,
+                on_click=_reset, width="stretch",
                 help="Remettre tous les filtres à zéro",
             )
 
@@ -238,7 +244,12 @@ def _build_filter_kwargs(db: PipelineDB) -> dict:
         sciper             = resolved_sciper or None,
         unit_acronym       = sel_unit or None,
         search             = search_q.strip() or None,
-        has_pdf            = True if sel_pdf == "Avec PDF" else (False if sel_pdf == "Sans PDF" else None),
+        has_pdf            = (
+            True  if sel_pdf == "Avec PDF"  else
+            False if sel_pdf == "Sans PDF"  else
+            None
+        ),
+        missing_cc_pdf     = sel_pdf == "Manquant (licence CC)",
         oa_filter          = None if sel_oa == "Tous" else sel_oa,
         licence            = sel_licence or None,
         epfl_strength      = (
@@ -369,7 +380,13 @@ def _render_table(db: PipelineDB, role: str = "reporting") -> None:
 
     authors_by_row = _build_authors_modal_dict(d, db, sel_run)
 
-    render_pub_component(d, _cols, authors_by_row, ds_base, role=role, db=db)
+    _single_run = sel_run[0] if len(sel_run) == 1 else None
+    render_pub_component(
+        d, _cols, authors_by_row, ds_base,
+        role=role, db=db,
+        bulk_select=(len(sel_run) == 1 and role == "admin"),
+        run_id=_single_run,
+    )
 
     _render_downloads(db, filter_kwargs, sel_run)
 
@@ -389,24 +406,24 @@ def _enrich_dataframe(pub_df: pd.DataFrame, db: PipelineDB, sel_run: list, ds_ba
     )
     d["ws_url"] = d.apply(
         lambda r: (
-            f"{ds_base}/workspaceitems/{int(float(r['workspace_id']))}/edit"
-            if pd.notna(r.get("workspace_id")) and r.get("workspace_id") != ""
-            and (pd.isna(r.get("workflow_id")) or r.get("workflow_id") == "")
+            f"{ds_base}/workspaceitems/{safe_int(r.get('workspace_id'))}/edit"
+            if safe_int(r.get("workspace_id")) is not None
+            and safe_int(r.get("workflow_id")) is None
             else None
         ), axis=1,
     )
     d["wf_url"] = d.apply(
         lambda r: (
             f"{ds_base}/mydspace?configuration=workflow&spc.page=1&query=Item-{r['dspace_item_uuid']}"
-            if pd.notna(r.get("workflow_id")) and r.get("workflow_id") != ""
+            if safe_int(r.get("workflow_id")) is not None
             and pd.notna(r.get("dspace_item_uuid")) and r.get("dspace_item_uuid") != ""
             else None
         ), axis=1,
     )
     d["item_url"] = d.apply(
         lambda r: (
-            f"{ds_base}/workflowitems/{int(float(r['workflow_id']))}/view"
-            if pd.notna(r.get("workflow_id")) and r.get("workflow_id") != ""
+            f"{ds_base}/workflowitems/{safe_int(r.get('workflow_id'))}/view"
+            if safe_int(r.get("workflow_id")) is not None
             else (
                 f"{ds_base}/items/{r['dspace_item_uuid']}"
                 if "dspace_item_uuid" in r and pd.notna(r.get("dspace_item_uuid"))

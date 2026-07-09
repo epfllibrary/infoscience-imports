@@ -24,7 +24,10 @@ wos_api_base_url = "https://api.clarivate.com/api/wos"
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 wos_token = os.environ.get("WOS_TOKEN")
 
-accepted_doctypes = [key for key in mappings.doctypes_mapping_dict["source_wos"].keys()]
+accepted_doctypes = [
+    key for key, val in mappings.doctypes_mapping_dict["source_wos"].items()
+    if not val.get("rejected", False)
+]
 
 wos_authentication_method = HeaderAuthentication(
     token=wos_token,

@@ -11,16 +11,16 @@ from utils import get_pipeline_logger
 
 logger = get_pipeline_logger("loader")
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
 def _is_nan_like(x) -> bool:
-    """Return True if x behaves like a NaN (float('nan'), numpy.nan, pandas NA)."""
+    """Return True if x behaves like a NaN (float('nan'), numpy.nan, pd.NA, pd.NaT)."""
+    if x is pd.NA or x is pd.NaT:
+        return True
     try:
-        # NaN != NaN, while None == None
-        return x != x
+        return x != x  # NaN != NaN, while normal values equal themselves
     except Exception:
         return False
 
@@ -84,6 +84,40 @@ def _normalize_ws_response(resp, fallback=None):
 #  _process_and_add_contributors, and _construct_patch_operations)
 # ---------------------------------------------------------------------------
 
+# ISO 639-2/3 (3-letter) to ISO 639-1 (2-letter) mapping.
+# Used to normalize language codes from sources that may send 3-letter codes
+# (e.g., DataCite depositors using bibliographic ISO 639-2 codes).
+_ISO639_MAP: dict[str, str] = {
+    "eng": "en", "fre": "fr", "fra": "fr", "ger": "de", "deu": "de",
+    "ita": "it", "spa": "es", "por": "pt", "nld": "nl", "dut": "nl",
+    "swe": "sv", "nor": "no", "dan": "da", "fin": "fi", "rus": "ru",
+    "chi": "zh", "zho": "zh", "jpn": "ja", "kor": "ko", "ara": "ar",
+    "pol": "pl", "ces": "cs", "cze": "cs", "slk": "sk", "slo": "sk",
+    "hun": "hu", "rum": "ro", "ron": "ro", "tur": "tr", "ukr": "uk",
+    "cat": "ca", "hrv": "hr", "bul": "bg", "slv": "sl", "ell": "el",
+    "heb": "he", "hin": "hi", "vie": "vi", "ind": "id", "msa": "ms",
+}
+
+
+def _normalize_language(code) -> str | None:
+    """Normalize a language code to ISO 639-1 (2-letter lowercase).
+
+    Handles ISO 639-2/3 three-letter codes from sources like DataCite.
+    Returns None for blank or unrecognised codes longer than 2 characters.
+    """
+    if not code or not str(code).strip():
+        return None
+    normalized = str(code).strip().lower()
+    if len(normalized) == 2:
+        return normalized
+    if len(normalized) == 3:
+        mapped = _ISO639_MAP.get(normalized)
+        if mapped:
+            return mapped
+        # Unknown 3-letter code — drop it rather than send garbage to DSpace.
+        return None
+    return None
+
 def _build_metadata_value(
     value,
     display=None,
@@ -107,6 +141,22 @@ def _build_metadata_value(
         "confidence": confidence,
         "place": place,
     }
+
+
+def _format_sciper(sciper) -> str:
+    """Format a SCIPER id as a clean integer string.
+
+    sciper_id arrives as float64 (e.g. 329669.0) whenever the source column
+    has NaN elsewhere — pandas upcasts the whole column. Embedding that
+    directly in the SCIPER-ID authority string ('...SCIPER-ID::329669.0')
+    breaks DSpace's authority resolution and the submission is rejected.
+    """
+    if sciper is None or _is_nan_like(sciper):
+        return ""
+    try:
+        return str(int(float(sciper)))
+    except (TypeError, ValueError):
+        return str(sciper).strip()
 
 
 def _get_first_segment(
@@ -221,6 +271,7 @@ class Loader:
         affiliations_metadata = []
         orcid_metadata = []
         roles_metadata = []
+        corresponding_metadata = []
 
         # Build metadata blocks
         for _, author_row in subset.iterrows():
@@ -250,6 +301,12 @@ class Loader:
 
             roles_metadata.append(create_metadata("#PLACEHOLDER_PARENT_METADATA_VALUE#"))
 
+            is_corr = author_row.get("openalex_is_corresponding")
+            if pd.notna(is_corr) and bool(is_corr):
+                corresponding_metadata.append(create_metadata("yes"))
+            else:
+                corresponding_metadata.append(create_metadata("no"))
+
         # Authority enrichment
         for i, author in enumerate(authors_metadata):
             author_name = author["value"]
@@ -263,7 +320,7 @@ class Loader:
 
             for _, match in matching_epfl_author.iterrows():
                 if match.get("dspace_link_valid"):
-                    sciper = match.get("sciper_id")
+                    sciper = _format_sciper(match.get("sciper_id"))
                     prefix = (
                         "will be referenced::"
                         if pd.notna(match.get("dspace_uuid"))
@@ -297,6 +354,13 @@ class Loader:
                 "value": orcid_metadata,
             },
         ]
+
+        if form_section is not None and form_section not in ("report_", "dataset_") and corresponding_metadata:
+            patch_operations.append({
+                "op": "add",
+                "path": f"{base}/epfl.author.corresponding",
+                "value": corresponding_metadata,
+            })
 
         return patch_operations
 
@@ -380,7 +444,7 @@ class Loader:
                             if pd.notna(m.get("dspace_uuid"))
                             else "will be generated::"
                         )
-                        authority = f"{prefix}SCIPER-ID::{m.get('sciper_id')}"
+                        authority = f"{prefix}SCIPER-ID::{_format_sciper(m.get('sciper_id'))}"
                         confidence = 600
                         break
 
@@ -480,7 +544,8 @@ class Loader:
 
             # 3) Single PATCH: remove/reset ops first, then add ops, then dc.subject keywords.
             if not is_epo:
-                keywords_raw = str(row.get("keywords", "") or "").strip()
+                _kw = row.get("keywords", "")
+                keywords_raw = "" if (_kw is None or _is_nan_like(_kw)) else str(_kw).strip()
                 keyword_list = [k.strip() for k in keywords_raw.split("||") if k.strip()]
                 subject_values = [v for v in (_build_metadata_value(kw) for kw in keyword_list) if v]
                 patch_operations.append({
@@ -588,6 +653,17 @@ class Loader:
             "/sections/related_works/datacite.relatedIdentifier",
         ]
 
+        # Clear dc.type pre-populated by the external source importer so we can
+        # set the correct type for the target collection without conflicting values.
+        if form_section:
+            # conference_, book_, dataset_, report_ have no separate *_type section in DSpace
+            type_sect = (
+                f"{form_section}details"
+                if form_section in ("conference_", "book_", "dataset_", "report_")
+                else f"{form_section}type"
+            )
+            removable_metadata_paths.append(f"/sections/{type_sect}/dc.type")
+
         for path in removable_metadata_paths:
             if self._metadata_exists(path, workspace_response):
                 metadata_definitions.append({
@@ -603,8 +679,11 @@ class Loader:
         """Construct PATCH operations for metadata updates with optimized error handling."""
 
         def build_value(value, authority=None, language=None, confidence=-1, place=0):
-            """Helper to build a metadata value structure (skip blank strings/None)."""
-            if value is None or (isinstance(value, str) and not value.strip()):
+            """Helper to build a metadata value structure (skip blank strings/None/NaN)."""
+            if value is None or _is_nan_like(value):
+                logger.debug(f"Invalid value provided: {value}")
+                return None
+            if isinstance(value, str) and not value.strip():
                 logger.debug(f"Invalid value provided: {value}")
                 return None
 
@@ -616,6 +695,13 @@ class Loader:
                 "place": place,
             }
 
+        def safe_str(key, default=""):
+            """Return row[key] as a string, or default when the value is None/NaN."""
+            v = row.get(key, default)
+            if v is None or _is_nan_like(v):
+                return default
+            return str(v)
+
         def determine_operation(path, is_repeatable):
             """Return 'replace' for non-repeatable when exists, else 'add'."""
             if not is_repeatable and self._metadata_exists(path, workspace_response):
@@ -625,7 +711,7 @@ class Loader:
         def parse_conference_info(conference_info):
             """Parse 'confName::place::start::end::acronym[||...]' into structured metadata."""
             operations = []
-            if not conference_info:
+            if not isinstance(conference_info, str) or not conference_info.strip():
                 return operations
 
             # Choose section based on form_section
@@ -747,10 +833,10 @@ class Loader:
             - /sections/additional_fields/epfl.url.description → label
             """
             ops = []
-            if not additional_url:
+            if not isinstance(additional_url, str) or not additional_url.strip():
                 return ops
 
-            raw_entries = [e.strip() for e in str(additional_url).split("||") if e.strip()]
+            raw_entries = [e.strip() for e in additional_url.split("||") if e.strip()]
             if not raw_entries:
                 return ops
 
@@ -788,7 +874,7 @@ class Loader:
             """
             operations = []
             logger.debug("parse_related_works IN=%r", related_works)
-            if not related_works:
+            if not isinstance(related_works, str) or not related_works.strip():
                 return operations
 
             entries = [e.strip() for e in str(related_works).split("||") if e.strip()]
@@ -826,7 +912,7 @@ class Loader:
             """Parse 'Funder::GrantNo[||...]' into grants-related fields."""
             funders, funding_names, grant_nos, award_uris = [], [], [], []
 
-            if not funding_info:
+            if not isinstance(funding_info, str) or not funding_info.strip():
                 return []
 
             grants = funding_info.split("||")
@@ -856,7 +942,7 @@ class Loader:
 
         def parse_editors(editors):
             """Parse editors string 'A||B||...' into editor, affiliation, orcid placeholders."""
-            if not editors:
+            if not isinstance(editors, str) or not editors.strip():
                 return []
 
             editors_list, affiliations, orcids = [], [], []
@@ -889,18 +975,23 @@ class Loader:
                 )
             return operations
 
-        def parse_access_conditions(access_conditions: str):
+        def parse_access_conditions(access_conditions: str, embargo_date=None):
             """
             Build patch operation for /sections/itemAccessConditions/accessConditions.
-            - Ignore if empty value
+            Defaults to 'openaccess' when no value is provided. For 'embargo',
+            includes startDate (the embargo lift date) when available.
             """
-            if not access_conditions or not str(access_conditions).strip():
-                return []
+            if pd.isna(access_conditions) or not str(access_conditions).strip():
+                access_conditions = "openaccess"
+
+            value = {"name": str(access_conditions).strip()}
+            if value["name"] == "embargo" and not pd.isna(embargo_date) and str(embargo_date).strip():
+                value["startDate"] = str(embargo_date).strip()
 
             return [{
                 "op": "add",
                 "path": "/sections/itemAccessConditions/accessConditions",
-                "value": [{"name": str(access_conditions).strip()}],
+                "value": [value],
             }]
 
         def parse_language(language_code: str):
@@ -908,7 +999,7 @@ class Loader:
             Add dataset language without any mapping/conversion.
             Expects a 2-letter ISO code already prepared upstream (e.g., 'en').
             """
-            if not language_code or not str(language_code).strip():
+            if pd.isna(language_code) or not str(language_code).strip():
                 return []
             return [{
                 "op": "add",
@@ -926,7 +1017,7 @@ class Loader:
             """
             Add dataset version as-is (no mapping).
             """
-            if not version_str or not str(version_str).strip():
+            if pd.isna(version_str) or not str(version_str).strip():
                 return []
             return [{
                 "op": "add",
@@ -941,10 +1032,11 @@ class Loader:
             }]
 
         # Determine correct form_section and related sections
-        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_'] else 'type'}"
+        # conference_, book_, dataset_, report_ have no separate *_type section in DSpace
+        type_section = f"{form_section}{'details' if form_section in ['conference_', 'book_', 'dataset_', 'report_'] else 'type'}"
         dc_type = row.get("dc.type")
 
-        refereed = None if form_section in ("preprint_", "dataset_", "patent") else "REVIEWED"
+        refereed = None if form_section in ("preprint_", "dataset_", "patent", "report_") else "REVIEWED"
 
         if dc_type in [
             "text::book/monograph::book part or chapter",
@@ -963,7 +1055,11 @@ class Loader:
             )
             alter_id_section = "book_details"
         else:
-            pagination_section = "journalcontainer_details"
+            pagination_section = (
+                f"{form_section}details"
+                if form_section in ("preprint_", "report_")
+                else "journalcontainer_details"
+            )
             isbn_section = "bookcontainer_details"
             isbn_metadata = "dc.relation.isbn"
             alter_id_section = "alternative_identifiers"
@@ -972,12 +1068,16 @@ class Loader:
             publisher_container = "dataset_details"
         elif dc_type in ["text::preprint"]:
             publisher_container = "preprint_details"
+        elif form_section == "report_":
+            publisher_container = "report_details"
+        elif form_section == "article_":
+            publisher_container = "journalcontainer_details"
         else:
             publisher_container = "bookcontainer_details"
 
         metadata_definitions = []
 
-        journal_issn = str(row.get("journalISSN", ""))
+        journal_issn = safe_str("journalISSN")
         issn_list = [issn.strip() for issn in journal_issn.split("||") if issn.strip()]
         authority_journal = f"will be generated::ISSN::{issn_list[0]}" if issn_list else None
 
@@ -1018,41 +1118,6 @@ class Loader:
                 False,
             ),
             (
-                "/sections/journalcontainer_details/dc.relation.journal",
-                [
-                    build_value(
-                        row.get("journalTitle"),
-                        authority=authority_journal,
-                        confidence=500,
-                    )
-                ],
-                False,
-            ),
-            (
-                "/sections/journalcontainer_details/dc.relation.issn",
-                [
-                    build_value(issn)
-                    for issn in str(row.get("journalISSN", "")).split("||")
-                    if issn.strip()
-                ],
-                True,
-            ),
-            (
-                "/sections/journalcontainer_details/oaire.citation.volume",
-                [build_value(row.get("journalVolume"))],
-                False,
-            ),
-            (
-                "/sections/journalcontainer_details/oaire.citation.issue",
-                [build_value(row.get("issue"))],
-                False,
-            ),
-            (
-                "/sections/journalcontainer_details/oaire.citation.articlenumber",
-                [build_value(row.get("artno"))],
-                False,
-            ),
-            (
                 f"/sections/{pagination_section}/oaire.citation.startPage",
                 [build_value(row.get("startingPage"))],
                 False,
@@ -1076,9 +1141,7 @@ class Loader:
                 "/sections/bookcontainer_details/dc.relation.ispartofseries",
                 [
                     build_value(
-                        f"{row.get('seriesTitle', '')}; {row.get('seriesVolume', '')}".strip(
-                            "; "
-                        ),
+                        f"{safe_str('seriesTitle')}; {safe_str('seriesVolume')}".strip("; "),
                     )
                 ],
                 True,
@@ -1087,7 +1150,7 @@ class Loader:
                 "/sections/bookcontainer_details/dc.relation.serieissn",
                 [
                     build_value(issn)
-                    for issn in str(row.get("seriesISSN", "")).split("||")
+                    for issn in safe_str("seriesISSN").split("||")
                     if issn.strip()
                 ],
                 True,
@@ -1106,7 +1169,7 @@ class Loader:
                 f"/sections/{isbn_section}/{isbn_metadata}",
                 [
                     build_value(isbn)
-                    for isbn in str(row.get("bookISBN", "")).split("||")
+                    for isbn in safe_str("bookISBN").split("||")
                     if isbn.strip()
                 ],
                 True,
@@ -1115,7 +1178,7 @@ class Loader:
                 f"/sections/{form_section}details/dc.contributor",
                 [
                     build_value(corp)
-                    for corp in str(row.get("corporateAuthor", "")).split("||")
+                    for corp in safe_str("corporateAuthor").split("||")
                     if corp.strip()
                 ],
                 True,
@@ -1149,12 +1212,68 @@ class Loader:
             )
         ]
 
-        # --- Add ctb.oaireXXlicenseCondition (Zenodo only) ---
+        # Language: available from OpenAlex and Zenodo; other sources return None → no op generated.
+        # Datasets use parse_language() below (same section path); skip here to avoid duplicate.
+        # _normalize_language maps 3-letter ISO 639-2 codes (e.g. DataCite) to ISO 639-1.
+        if form_section != "dataset_":
+            fields.append((
+                f"/sections/{form_section}details/dc.language.iso",
+                [build_value(_normalize_language(row.get("language")))],
+                False,
+            ))
+
+        # Journal/proceedings container fields are not part of preprint, report, dataset, or book forms
+        if form_section not in ("preprint_", "report_", "dataset_", "book_"):
+            fields.extend([
+                (
+                    "/sections/journalcontainer_details/dc.relation.journal",
+                    [
+                        build_value(
+                            row.get("journalTitle"),
+                            authority=authority_journal,
+                            confidence=500 if authority_journal else -1,
+                        )
+                    ],
+                    False,
+                ),
+                (
+                    "/sections/journalcontainer_details/dc.relation.issn",
+                    [
+                        build_value(issn)
+                        for issn in safe_str("journalISSN").split("||")
+                        if issn.strip()
+                    ],
+                    True,
+                ),
+                (
+                    "/sections/journalcontainer_details/oaire.citation.volume",
+                    [build_value(row.get("journalVolume"))],
+                    False,
+                ),
+                (
+                    "/sections/journalcontainer_details/oaire.citation.issue",
+                    [build_value(row.get("issue"))],
+                    False,
+                ),
+                (
+                    "/sections/journalcontainer_details/oaire.citation.articlenumber",
+                    [build_value(row.get("artno"))],
+                    False,
+                ),
+            ])
+
+        # --- Add ctb.oaireXXlicenseCondition for dataset items, defaulting to
+        # N/A (Copyrighted) when no license is provided. Gated on form_section
+        # rather than source: an OpenAlex-harvested item hosted on Zenodo is
+        # still a dataset_ form and needs this field. ---
         raw_license = row.get("license")
-        mapped = licenses_mapping.get(raw_license, {}) if raw_license is not None else {}
-        license_val = (mapped.get("value") or raw_license) if raw_license is not None else None
-        has_license = isinstance(license_val, str) and license_val.strip() != ""
-        if str(row.get("source", "")).strip().lower() == "zenodo" and has_license:
+        has_raw_license = not pd.isna(raw_license) and str(raw_license).strip() != ""
+        if has_raw_license:
+            mapped = licenses_mapping.get(raw_license, {})
+            license_val = mapped.get("value") or raw_license
+        else:
+            license_val = licenses_mapping["NA"]["value"]
+        if form_section == "dataset_":
             fields.append(
                 (
                     "/sections/ctb-bitstream-metadata/ctb.oaireXXlicenseCondition",
@@ -1181,7 +1300,9 @@ class Loader:
             metadata_definitions.extend(parse_language(row.get("language")))
             metadata_definitions.extend(parse_version(row.get("version")))
             metadata_definitions.extend(parse_additional_link(row.get("additional_url")))
-            metadata_definitions.extend(parse_access_conditions(row.get("access_conditions")))
+            metadata_definitions.extend(
+                parse_access_conditions(row.get("access_conditions"), row.get("embargo_date"))
+            )
 
         metadata_definitions.extend(parse_related_works(row.get("related_works")))
         metadata_definitions.extend(parse_funding_info(row.get("fundings_info")))
@@ -1270,26 +1391,28 @@ class Loader:
         if title:
             ops.append({"op": "add", "path": f"{base}/dc.title", "value": [title]})
 
-        alt_fr = build_value(row.get("title_fr"), language="fr")
-        if alt_fr:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_fr]}
-            )
-        alt_de= build_value(row.get("title_de"), language="de")
-        if alt_de:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_de]}
-            )
-        alt_it = build_value(row.get("title_it"), language="it")
-        if alt_it:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.title.alternative", "value": [alt_it]}
-            )
-        abst = build_value(row.get("abstract"))
-        if abst:
-            ops.append(
-                {"op": "add", "path": f"{base}/dc.description.abstract", "value": [abst]}
-            )
+        alt_titles = [
+            v for lang, key in [("fr", "title_fr"), ("de", "title_de"), ("it", "title_it")]
+            for v in [build_value(row.get(key), language=lang)]
+            if v
+        ]
+        if alt_titles:
+            ops.append({"op": "add", "path": f"{base}/dc.title.alternative", "value": alt_titles})
+
+        abst_values = [
+            v for lang, key in [
+                ("en", "abstract_en"), ("fr", "abstract_fr"),
+                ("de", "abstract_de"), ("it", "abstract_it"),
+            ]
+            for v in [build_value(row.get(key), language=lang)]
+            if v
+        ]
+        if not abst_values:
+            v = build_value(row.get("abstract"))
+            if v:
+                abst_values.append(v)
+        if abst_values:
+            ops.append({"op": "add", "path": f"{base}/dc.description.abstract", "value": abst_values})
 
         # ------------------------------------------------------------------
         # RIGHT HOLDER from applicants (multi-valued)
@@ -1465,7 +1588,11 @@ class Loader:
         version_metadata = get_version_mapping(upw_version)
 
         if not license_metadata:
-            logger.error(f"License mapping for '{upw_license}' does not exist.")
+            logger.warning(
+                "No license mapping for '%s' — skipping file metadata patch for workspace %s",
+                upw_license, workspace_id,
+            )
+            return {}
 
         patch_operations = [
             {
@@ -1552,6 +1679,9 @@ class Loader:
         """Create complete publications including metadata and file uploads."""
         df_items_to_import = self._filter_publications_by_valid_affiliations()
         df_items_imported = df_items_to_import.copy()
+        for col in ("workspace_id", "dspace_item_uuid", "workflow_id"):
+            if col not in df_items_imported.columns:
+                df_items_imported[col] = pd.NA
 
         if df_items_to_import.empty:
             logger.error("No valid publications to process.")
@@ -1562,11 +1692,29 @@ class Loader:
             source = row.get("source", "")
             source_id = row.get("internal_id", "")
             collection_id = row.get("ifs3_collection_id", "")
+            use_blank_workspace = False
 
             if source == "openalex" or source == "zenodo":
-                source_id = row.get("doi", source_id)
+                doi = row.get("doi")
+                if doi and str(doi).strip():
+                    source_id = str(doi).strip()
             if source == "openalex+crossref":
                 source = "crossref"
+            elif source == "openalex":
+                doi = row.get("doi")
+                has_doi = bool(doi and str(doi).strip())
+                if has_doi:
+                    # Use the agency resolved via doi.org/ra during enrichment.
+                    # Only the two main DSpace external sources are supported;
+                    # unknown or missing agency falls back to crossref.
+                    agency = row.get("doi_agency", "")
+                    source = agency if agency in ("crossref", "datacite") else "crossref"
+                else:
+                    use_blank_workspace = True
+                    logger.info(
+                        "No DOI for OpenAlex item %s — creating blank workspace item",
+                        row.get("internal_id", ""),
+                    )
             elif source == "zenodo":
                 source = "datacite"
             if str(source).lower() == "epo":
@@ -1574,11 +1722,14 @@ class Loader:
                 if not internalid:
                     logger.error("EPO item without internal_id: cannot build source_id epodoc:<id>.")
                     continue
-                source_id = f"epodoc:{internalid}"         
+                source_id = f"epodoc:{internalid}"
 
-            workspace_response = self.dspace_wrapper.push_publication(
-                source, source_id, collection_id
-            )
+            if use_blank_workspace:
+                workspace_response = self.dspace_wrapper.create_blank_workspace(collection_id)
+            else:
+                workspace_response = self.dspace_wrapper.push_publication(
+                    source, source_id, collection_id
+                )
 
             valid_pdf = row.get("upw_valid_pdf", "")
             # If valid_pdf is already an absolute path, keep it as-is

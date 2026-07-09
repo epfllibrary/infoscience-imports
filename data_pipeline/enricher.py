@@ -105,10 +105,10 @@ class AuthorProcessor:
                     ]
                 else:
                     author_ids_to_check = [str(x).strip().lower() for x in author_ids_to_check]
-                author_ids_to_check = set(author_ids_to_check)
+                author_ids_to_check = {x.split("/")[-1] for x in author_ids_to_check}
 
                 def check_and_log(row):
-                    internal_id = str(row.get("internal_author_id", "")).strip().lower()
+                    internal_id = str(row.get("internal_author_id", "")).strip().lower().split("/")[-1]
                     orcid_id = str(row.get("orcid_id", "")).strip().lower()
                     if internal_id in author_ids_to_check or orcid_id in author_ids_to_check:
                         return True
@@ -262,26 +262,7 @@ class AuthorProcessor:
             name = parser(first_name + " " + last_name)
             return name
 
-        # Appliquer le parsing à chaque ligne
-        self.df.loc[:, "nameparse_firstname"] = self.df.apply(
-            lambda row: (
-                " ".join(
-                    [parser(row["author"]).first, parser(row["author"]).middle]
-                    if row["epfl_affiliation"]
-                    else None
-                ).strip()
-                if row["epfl_affiliation"]
-                else None
-            ),
-            axis=1,
-        )
-
-        self.df.loc[:, "nameparse_lastname"] = self.df.apply(
-            lambda row: parser(row["author"]).last if row["epfl_affiliation"] else None,
-            axis=1,
-        )
-
-        # Correction des cas où le nom n'est pas bien divisé
+        # Parse every author name unconditionally via Series.apply (no index alignment issues)
         self.df["nameparse_lastname"] = self.df["author"].apply(
             lambda x: parse_name(x).last
         )
@@ -855,28 +836,39 @@ class PublicationProcessor:
 
         Only downloads when the work is OA and carries an open licence (cc-* or
         public-domain), mirroring the conditions applied to Unpaywall PDFs.
-        Returns (content_url, local_filename) on success, or (None, None).
+        Returns (content_url, local_filename, oa_meta) on success, or (None, None, {}).
+        oa_meta contains upw_is_oa / upw_oa_status / upw_license / upw_version so the
+        caller can populate OA metadata even when Unpaywall does not know the DOI.
         """
         try:
             record = OpenAlexClient.fetch_record_by_unique_id(doi, format="digest")
             if not isinstance(record, dict) or not record.get("has_content_pdf"):
-                return None, None
+                return None, None, {}
 
             oa_is_oa = str(record.get("oa_is_oa", "")).lower() == "true"
             license_val = str(record.get("best_oa_license") or "").lower().strip()
             is_open_license = license_val.startswith("cc-") or license_val in ("public-domain", "pd")
             if not oa_is_oa or not is_open_license:
-                return None, None
+                return None, None, {}
 
             content_url = record.get("content_url_pdf", "")
             if not content_url:
-                return None, None
+                return None, None, {}
 
             filename = OpenAlexClient.download_content_pdf(content_url, doi)
-            return (content_url, filename) if filename else (None, None)
+            if not filename:
+                return None, None, {}
+
+            oa_meta = {
+                "upw_is_oa": oa_is_oa,
+                "upw_oa_status": record.get("oa_status") or None,
+                "upw_license": license_val or None,
+                "upw_version": record.get("best_oa_version") or None,
+            }
+            return content_url, filename, oa_meta
         except Exception as e:
             self.logger.warning("OpenAlex PDF fetch error for DOI %s: %s", doi, e)
-            return None, None
+            return None, None, {}
 
     def process(self, return_df=True):
         self.df = self.df.copy()
@@ -901,10 +893,16 @@ class PublicationProcessor:
         # === Pass 1: OpenAlex content API (primary PDF source) ===
         for idx, doi in zip(valid_indexes, valid_dois):
             if doi:
-                content_url, filename = self._fetch_openalex_pdf(doi)
+                content_url, filename, oa_meta = self._fetch_openalex_pdf(doi)
                 if filename:
                     self.df.at[idx, "upw_valid_pdf"] = filename
                     self.df.at[idx, "oa_content_url"] = content_url
+                    # Pre-populate OA metadata from OpenAlex; Unpaywall will override
+                    # in Pass 2 when it knows the DOI.  This prevents a crash in
+                    # _patch_file_metadata when Unpaywall has no record for the DOI.
+                    for field, value in oa_meta.items():
+                        if value is not None:
+                            self.df.at[idx, field] = value
                     self.logger.info(
                         "OpenAlex content PDF: %s → %s (%s)", doi, filename, content_url
                     )

@@ -25,7 +25,8 @@ scopus_api_key = os.environ.get("SCOPUS_API_KEY")
 scopus_inst_token = os.environ.get("SCOPUS_INST_TOKEN")
 
 accepted_doctypes = [
-    key for key in mappings.doctypes_mapping_dict["source_scopus"].keys()
+    key for key, val in mappings.doctypes_mapping_dict["source_scopus"].items()
+    if not val.get("rejected", False)
 ]
 
 scopus_authentication_method = HeaderAuthentication(

@@ -275,6 +275,54 @@ def _sync_jobs(scheduler: BackgroundScheduler) -> None:
 _INFOSCIENCE_SYNC_JOB_KEY = "infoscience_sync"
 _INFOSCIENCE_SYNC_JOB_ID  = "nightly_infoscience_sync"
 
+_RESEARCHER_SYNC_JOB_KEY = "researcher_registry_sync"
+_RESEARCHER_SYNC_JOB_ID  = "nightly_researcher_registry_sync"
+
+
+def run_researcher_registry_sync() -> None:
+    """Nightly job: sync researcher registry from EPFL People API."""
+    job_cfg = _read_json().get("system_jobs", {}).get(_RESEARCHER_SYNC_JOB_KEY, {})
+    if not job_cfg.get("enabled", True):
+        logger.info("Researcher registry sync is disabled — skipping.")
+        return
+
+    logger.info("Researcher registry sync starting.")
+    last_status = "failed"
+    try:
+        import env_loader
+        env_loader.load_env()
+        from db.pipeline_db import PipelineDB
+        from researcher_monitor.registry import RegistrySync
+        from clients.dspace_client_wrapper import DSpaceClientWrapper
+        from clients.openalex_client import OpenAlexClient
+
+        db = PipelineDB()
+
+        try:
+            dspace_client = DSpaceClientWrapper()
+        except Exception as exc:
+            logger.warning("DSpace client unavailable — Infoscience enrichment skipped: %s", exc)
+            dspace_client = None
+
+        try:
+            openalex_client = OpenAlexClient()
+        except Exception as exc:
+            logger.warning("OpenAlex client unavailable — OpenAlex enrichment skipped: %s", exc)
+            openalex_client = None
+
+        sync = RegistrySync(db=db, dspace_client=dspace_client, openalex_client=openalex_client)
+        scipers = sync.sync_all(enrich_orcid=True)
+        last_status = "completed"
+        logger.info("Researcher registry sync done: %d researchers upserted", len(scipers))
+    except Exception as exc:
+        logger.error("Researcher registry sync failed: %s", exc)
+    finally:
+        _patch_system_job(
+            _RESEARCHER_SYNC_JOB_KEY,
+            last_run_at=datetime.now().isoformat(),
+            last_run_status=last_status,
+        )
+
 
 def run_infoscience_sync() -> None:
     """Nightly job: check and update Infoscience statuses for imported items."""
@@ -318,6 +366,18 @@ def main() -> None:
         coalesce=True,
     )
     logger.info("Registered nightly Infoscience sync job (02:30 %s)", TIMEZONE)
+
+    # Fixed nightly researcher registry sync — not user-configurable.
+    scheduler.add_job(
+        run_researcher_registry_sync,
+        trigger=CronTrigger(hour=3, minute=0, timezone=TIMEZONE),
+        id=_RESEARCHER_SYNC_JOB_ID,
+        replace_existing=True,
+        name="Nightly researcher registry sync",
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    logger.info("Registered nightly researcher registry sync job (03:00 %s)", TIMEZONE)
 
     scheduler.start()
     logger.info("Scheduler started — polling %s every %ds", SCHEDULES_FILE, RELOAD_INTERVAL)
