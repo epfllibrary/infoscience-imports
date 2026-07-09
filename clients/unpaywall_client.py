@@ -141,18 +141,14 @@ class Client(APIClient):
         """
         rec = self._extract_advanced_oa_info(
             record
-        )  # includes basic OA info + license/version/host_type if available
+        )  # includes basic OA info + license/version/host_type if available;
+        # already logs a warning if best_oa_location is missing.
 
         best_oa_location = record.get("best_oa_location")
         if not best_oa_location:
-            logger.warning("No 'best_oa_location' found for DOI: %s", record.get("doi"))
             return rec
 
         logger.debug("Extracting OA metadata from best_oa_location.")
-
-        best_oa_location = record.get("best_oa_location")
-        if not best_oa_location:
-            return rec
 
         urls = [
             best_oa_location.get("url_for_pdf"),
